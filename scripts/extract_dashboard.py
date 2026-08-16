@@ -40,7 +40,7 @@ def as_dict_vars(variables) -> dict:
 def collect_entities(node, acc: set[str]) -> None:
     if isinstance(node, dict):
         for k, v in node.items():
-            if k in {"entity", "activity_entity", "battery", "home_sensor", "work_sensor", "graph"} and isinstance(v, str) and "." in v:
+            if k in {"entity", "activity_entity", "battery", "home_sensor", "work_sensor", "graph", "poster"} and isinstance(v, str) and "." in v:
                 acc.add(v)
             if k in {"entity_id", "entity_ids"}:
                 if isinstance(v, str) and "." in v and not v.startswith("["):
@@ -313,10 +313,27 @@ def convert_card(card, context: str = "") -> dict | list | None:
         inner["conditions"] = conditions
         return inner
 
+    if ctype == "custom:webrtc-camera":
+        poster = card.get("poster") or card.get("entity")
+        stream = card.get("url")
+        area = (card.get("view_layout") or {}).get("grid-area")
+        widget = {
+            "type": "camera",
+            "entity": poster,
+            "name": card.get("title") or card.get("name"),
+            "stream_server": card.get("server"),
+            "stream_name": stream if isinstance(stream, str) and not stream.startswith("http") else None,
+            "camera_view": "live",
+            "muted": card.get("muted", True),
+        }
+        if area:
+            widget["grid_area"] = area
+        return widget
+
     if ctype == "picture-entity":
         return {
             "type": "camera",
-            "entity": card.get("entity"),
+            "entity": card.get("entity") or card.get("camera_image"),
             "camera_view": card.get("camera_view", "live"),
             "show_state": card.get("show_state", False),
             "show_name": card.get("show_name", False),

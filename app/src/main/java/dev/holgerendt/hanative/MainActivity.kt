@@ -1,6 +1,11 @@
 package dev.holgerendt.hanative
 
+import android.Manifest
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -14,9 +19,12 @@ import dev.holgerendt.hanative.ui.theme.HaNativeTheme
 
 class MainActivity : ComponentActivity() {
     private val viewModel: HaViewModel by viewModels { HaViewModel.factory(application) }
+    private var askedStorage = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        (application as HaNativeApp).screenCapture.attach(this)
+        maybeRequestStorage()
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
@@ -26,9 +34,45 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        (application as HaNativeApp).screenCapture.attach(this)
+        viewModel.retryRestoreIfNeeded()
+    }
+
+    override fun onDestroy() {
+        (application as HaNativeApp).screenCapture.detach(this)
+        super.onDestroy()
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) hideSystemUi()
+    }
+
+    private fun maybeRequestStorage() {
+        if (askedStorage) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val needsRestore = viewModel.savedUrl.isBlank() || viewModel.savedToken.isBlank()
+            if (needsRestore && !Environment.isExternalStorageManager()) {
+                askedStorage = true
+                val intent = Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                runCatching { startActivity(intent) }
+            }
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val needed = listOf(
+                Manifest.permission.READ_EXTERNAL_STORAGE,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            ).filter { checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED }
+            if (needed.isNotEmpty()) {
+                askedStorage = true
+                requestPermissions(needed.toTypedArray(), 1001)
+            }
+        }
     }
 
     private fun hideSystemUi() {

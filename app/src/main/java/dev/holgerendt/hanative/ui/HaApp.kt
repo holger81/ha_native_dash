@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -50,6 +51,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -67,6 +69,7 @@ import dev.holgerendt.hanative.ui.theme.PopupCard
 import dev.holgerendt.hanative.ui.theme.ScreenBackground
 import dev.holgerendt.hanative.ui.theme.TextDark
 import dev.holgerendt.hanative.ui.theme.TextMuted
+import dev.holgerendt.hanative.ui.widgets.CameraPopup
 import dev.holgerendt.hanative.ui.widgets.ChipRow
 import dev.holgerendt.hanative.ui.widgets.PersonCard
 import dev.holgerendt.hanative.ui.widgets.PopupScaffold
@@ -157,7 +160,12 @@ private fun DrawerMenu(viewModel: HaViewModel) {
         ui.remoteUrls.firstOrNull()?.let {
             Text(it, color = Color.White, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
         }
-        Text("PIN ${ui.remotePin}", color = ActiveYellow, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
+        Text("PIN ${ui.remotePin}", color = ActiveYellow, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 4.dp, bottom = 4.dp))
+        if (ui.pinIsUserSet) {
+            Text("Saved PIN", color = ChipOnDark, fontSize = 12.sp, modifier = Modifier.padding(bottom = 12.dp))
+        } else {
+            Spacer(Modifier.height(8.dp))
+        }
         Text(
             "Home Assistant connection",
             color = ActiveYellow,
@@ -208,10 +216,104 @@ private fun HomeScreen(viewModel: HaViewModel) {
 
 @Composable
 private fun PopupHost(popup: PopupNode, viewModel: HaViewModel) {
-    PopupScaffold(popup, viewModel) {
+    val cameraPopup = popup.hash == "#camerafront_view"
+    PopupScaffold(popup, viewModel, scrollContent = !cameraPopup) {
         when (popup.hash) {
             "#weather" -> WeatherPopup(viewModel)
+            "#camerafront_view" -> CameraPopup(popup, viewModel)
+            "#settings" -> SettingsPopup(popup, viewModel)
             else -> WidgetTree(popup.cards, viewModel)
+        }
+    }
+}
+
+@Composable
+private fun SettingsPopup(popup: PopupNode, viewModel: HaViewModel) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        ManagementPinCard(viewModel)
+        WidgetTree(popup.cards, viewModel)
+    }
+}
+
+@Composable
+private fun ManagementPinCard(viewModel: HaViewModel) {
+    val ui by viewModel.ui.collectAsState()
+    var pin by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val fieldColors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = Color.White,
+        unfocusedTextColor = Color.White,
+        focusedBorderColor = ActiveYellow,
+        unfocusedBorderColor = ChipOnDark,
+        focusedLabelColor = ActiveYellow,
+        unfocusedLabelColor = ChipOnDark,
+        cursorColor = ActiveYellow,
+    )
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .background(ChipDark)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("Remote setup PIN", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            if (ui.pinIsUserSet) {
+                "This PIN is saved on the panel and survives reinstalls. It is required for the HTTPS admin page and live screen."
+            } else {
+                "A one-time PIN is generated until you set one here. After you save a PIN, it stays until you change it."
+            },
+            color = ChipOnDark,
+            fontSize = 14.sp,
+        )
+        Text("Current PIN ${ui.remotePin}", color = ActiveYellow, fontSize = 16.sp, fontFamily = FontFamily.Monospace)
+        OutlinedTextField(
+            value = pin,
+            onValueChange = { value ->
+                if (value.length <= 8 && value.all { it.isDigit() }) pin = value
+            },
+            label = { Text(if (ui.pinIsUserSet) "New PIN" else "PIN") },
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = fieldColors,
+        )
+        OutlinedTextField(
+            value = confirm,
+            onValueChange = { value ->
+                if (value.length <= 8 && value.all { it.isDigit() }) confirm = value
+            },
+            label = { Text("Confirm PIN") },
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = fieldColors,
+        )
+        error?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 13.sp) }
+        message?.let { Text(it, color = Color(0xFFC5E1A5), fontSize = 13.sp) }
+        Button(
+            onClick = {
+                val result = viewModel.setManagementPin(pin, confirm)
+                if (result.isSuccess) {
+                    error = null
+                    message = "PIN saved"
+                    pin = ""
+                    confirm = ""
+                } else {
+                    message = null
+                    error = result.exceptionOrNull()?.message ?: "Could not save PIN"
+                }
+            },
+            enabled = pin.isNotBlank() && confirm.isNotBlank(),
+            colors = ButtonDefaults.buttonColors(ActiveYellow),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (ui.pinIsUserSet) "Change PIN" else "Save PIN", color = Color.Black)
         }
     }
 }
@@ -371,7 +473,7 @@ fun SetupScreen(viewModel: HaViewModel) {
         ) {
             Text("Set up from your phone", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
             Text(
-                "Scan the QR code or open the URL on the same Wi‑Fi. Enter the PIN below, then paste the Home Assistant token.",
+                "Scan the QR code or open the HTTPS URL on the same Wi‑Fi. Accept the certificate warning, enter the PIN below, then paste the Home Assistant token.",
                 color = ChipOnDark,
                 fontSize = 14.sp,
                 textAlign = TextAlign.Center,
@@ -394,14 +496,18 @@ fun SetupScreen(viewModel: HaViewModel) {
             }
             Text("PIN", color = ChipOnDark, fontSize = 13.sp)
             Text(
-                ui.remotePin.chunked(3).joinToString(" "),
+                if (ui.pinIsUserSet) ui.remotePin else ui.remotePin.chunked(3).joinToString(" "),
                 color = ActiveYellow,
                 fontSize = 42.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
             )
-            TextButton(onClick = { viewModel.rotatePin() }) {
-                Text("New PIN", color = ChipOnDark)
+            if (ui.pinIsUserSet) {
+                Text("Saved PIN from Settings", color = ChipOnDark, fontSize = 13.sp)
+            } else {
+                TextButton(onClick = { viewModel.rotatePin() }) {
+                    Text("New PIN", color = ChipOnDark)
+                }
             }
             ui.managementError?.let { Text("Management server: $it", color = Color(0xFFFF8A80), fontSize = 12.sp) }
             if (!showOnDevice && error != null) {

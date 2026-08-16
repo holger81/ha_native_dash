@@ -12,12 +12,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -60,6 +56,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.holgerendt.hanative.data.EntityState
+import dev.holgerendt.hanative.data.hasLiveCameraSource
 import dev.holgerendt.hanative.model.PopupNode
 import dev.holgerendt.hanative.model.WidgetNode
 import dev.holgerendt.hanative.ui.HaViewModel
@@ -103,7 +100,6 @@ fun WidgetTree(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun WidgetItem(
     widget: WidgetNode,
@@ -154,6 +150,13 @@ fun WidgetItem(
         "vacuum_button" -> VacuumButton(widget, viewModel, modifier)
         "media_player" -> MediaCard(widget, viewModel, modifier)
         "camera" -> CameraCard(widget, viewModel, modifier)
+        "generic" -> if (widget.cardType == "custom:webrtc-camera" || widget.hasLiveCameraSource()) {
+            CameraCard(widget, viewModel, modifier)
+        } else if (widget.cards.isNotEmpty()) {
+            WidgetTree(widget.cards, viewModel, modifier)
+        } else if (widget.entity != null || widget.name != null) {
+            ToggleRow(widget, viewModel, modifier)
+        }
         "chart", "mini_graph", "energy_usage_graph", "energy_solar_graph" -> HistoryChart(widget, viewModel, modifier)
         "energy_date_selection" -> { /* native charts always show a rolling window */ }
         "energy_sources_table", "energy_solar_consumed_gauge", "energy_self_sufficiency_gauge" ->
@@ -626,31 +629,6 @@ fun MediaCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = M
 }
 
 @Composable
-fun CameraCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
-    var bytes by remember { mutableStateOf<ByteArray?>(null) }
-    LaunchedEffect(widget.entity) {
-        while (true) {
-            bytes = widget.entity?.let { viewModel.client.cameraSnapshot(it) }
-            delay(1000)
-        }
-    }
-    val bitmap = remember(bytes) { bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
-    Box(
-        modifier = modifier
-            .aspectRatio(16f / 9f)
-            .clip(CardShape)
-            .background(ChipDark),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (bitmap != null) {
-            Image(bitmap, contentDescription = widget.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        } else {
-            Text("Loading camera…", color = ChipOnDark)
-        }
-    }
-}
-
-@Composable
 fun HistoryChart(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val entity = widget.entity ?: widget.graphEntity ?: widget.series.firstOrNull()?.entity
     var points by remember { mutableStateOf(listOf<Pair<Long, Double>>()) }
@@ -765,6 +743,7 @@ fun EntityPicture(path: String?, viewModel: HaViewModel, modifier: Modifier) {
 fun PopupScaffold(
     popup: PopupNode,
     viewModel: HaViewModel,
+    scrollContent: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     Column(
@@ -797,7 +776,12 @@ fun PopupScaffold(
             }
         }
         Spacer(Modifier.height(12.dp))
-        Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        val bodyModifier = if (scrollContent) {
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+        } else {
+            Modifier.fillMaxSize()
+        }
+        Box(bodyModifier) {
             content()
         }
     }

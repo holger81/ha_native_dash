@@ -288,22 +288,41 @@
     "rooms": [
       {
         "type": "room_card",
-        "name": "Jonathan's\nRoom",
-        "icon": "mdi:alpha-j-circle-outline",
-        "path": "#jonathans_room",
+        "name": "Office",
+        "icon": "mdi:desk",
+        "path": "#office",
         "display": {
           "kind": "temp_hum",
-          "temp_entity": "sensor.jonathans_bedroom_9b3a_temperature",
-          "hum_entity": "sensor.jonathans_bedroom_9b3a_humidity",
+          "temp_entity": "sensor.office_abfd_temperature",
+          "hum_entity": "sensor.office_abfd_humidity",
           "climate_entity": null
         },
-        "accent": "orange",
+        "accent": "yellow",
+        "radius": "36px 36px 36px 36px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#office"
+        },
+        "grid_area": "office"
+      },
+      {
+        "type": "room_card",
+        "name": "Guestroom",
+        "icon": "mdi:bed",
+        "path": "#guestroom",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.guestroom_f628_temperature",
+          "hum_entity": "sensor.guestroom_f628_humidity",
+          "climate_entity": null
+        },
+        "accent": "pink",
         "radius": "6px 36px 36px 6px",
         "tap": {
           "type": "navigate",
-          "hash": "#jonathans_room"
+          "hash": "#guestroom"
         },
-        "grid_area": "jonathan"
+        "grid_area": "guestroom"
       },
       {
         "type": "room_card",
@@ -323,6 +342,25 @@
           "hash": "#great_room"
         },
         "grid_area": "greatroom"
+      },
+      {
+        "type": "room_card",
+        "name": "Hallway",
+        "icon": "mdi:door",
+        "path": "#hallway",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": null,
+          "hum_entity": null,
+          "climate_entity": "climate.hallway_room"
+        },
+        "accent": "yellow",
+        "radius": "36px 6px 6px 36px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#hallway"
+        },
+        "grid_area": "hallway"
       },
       {
         "type": "room_card",
@@ -364,25 +402,6 @@
       },
       {
         "type": "room_card",
-        "name": "Guestroom",
-        "icon": "mdi:bed",
-        "path": "#guestroom",
-        "display": {
-          "kind": "temp_hum",
-          "temp_entity": "sensor.guestroom_f628_temperature",
-          "hum_entity": "sensor.guestroom_f628_humidity",
-          "climate_entity": null
-        },
-        "accent": "pink",
-        "radius": "6px 36px 36px 6px",
-        "tap": {
-          "type": "navigate",
-          "hash": "#guestroom"
-        },
-        "grid_area": "guestroom"
-      },
-      {
-        "type": "room_card",
         "name": "Emilia's\nRoom",
         "icon": "mdi:alpha-e-circle-outline",
         "path": "#emilias_room",
@@ -402,44 +421,6 @@
       },
       {
         "type": "room_card",
-        "name": "Hallway",
-        "icon": "mdi:door",
-        "path": "#hallway",
-        "display": {
-          "kind": "temp_hum",
-          "temp_entity": null,
-          "hum_entity": null,
-          "climate_entity": "climate.hallway_room"
-        },
-        "accent": "yellow",
-        "radius": "36px 6px 6px 36px",
-        "tap": {
-          "type": "navigate",
-          "hash": "#hallway"
-        },
-        "grid_area": "hallway"
-      },
-      {
-        "type": "room_card",
-        "name": "Office",
-        "icon": "mdi:desk",
-        "path": "#office",
-        "display": {
-          "kind": "temp_hum",
-          "temp_entity": "sensor.office_abfd_temperature",
-          "hum_entity": "sensor.office_abfd_humidity",
-          "climate_entity": null
-        },
-        "accent": "yellow",
-        "radius": "36px 36px 36px 36px",
-        "tap": {
-          "type": "navigate",
-          "hash": "#office"
-        },
-        "grid_area": "office"
-      },
-      {
-        "type": "room_card",
         "name": "Main\nBath",
         "icon": "mdi:shower-head",
         "path": "#mainbath",
@@ -456,6 +437,25 @@
           "hash": "#mainbath"
         },
         "grid_area": "mainbath"
+      },
+      {
+        "type": "room_card",
+        "name": "Jonathan's\nRoom",
+        "icon": "mdi:alpha-j-circle-outline",
+        "path": "#jonathans_room",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.jonathans_bedroom_9b3a_temperature",
+          "hum_entity": "sensor.jonathans_bedroom_9b3a_humidity",
+          "climate_entity": null
+        },
+        "accent": "orange",
+        "radius": "6px 36px 36px 6px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#jonathans_room"
+        },
+        "grid_area": "jonathan"
       }
     ],
     "popups": [
@@ -2618,20 +2618,24 @@
             "areas": "\"door\"\n\"garage\"\n",
             "cards": [
               {
-                "type": "generic",
-                "card_type": "custom:webrtc-camera",
-                "entity": null,
-                "name": null,
-                "icon": null,
-                "tap": null
+                "type": "camera",
+                "entity": "camera.reolink_video_doorbell_poe_fluent",
+                "name": "Front door",
+                "stream_server": "http://192.168.10.31:1984/",
+                "stream_name": "frontdoor_sub",
+                "camera_view": "live",
+                "muted": true,
+                "grid_area": "door"
               },
               {
-                "type": "generic",
-                "card_type": "custom:webrtc-camera",
-                "entity": null,
-                "name": null,
-                "icon": null,
-                "tap": null
+                "type": "camera",
+                "entity": "camera.garagefront_2",
+                "name": "Garage",
+                "stream_server": "http://192.168.10.31:1984/",
+                "stream_name": "garagefront_sub",
+                "camera_view": "live",
+                "muted": true,
+                "grid_area": "garage"
               }
             ]
           }
@@ -2727,6 +2731,8 @@
   "entities": [
     "binary_sensor.envoy_battery_discharging",
     "binary_sensor.volkswagen_id_buzz_charging_cable_plugged_in",
+    "camera.garagefront_2",
+    "camera.reolink_video_doorbell_poe_fluent",
     "climate.emilias_room_room",
     "climate.great_room_room",
     "climate.guestroom_room",

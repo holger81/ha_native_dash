@@ -3,6 +3,7 @@ package dev.holgerendt.hanative.data
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -337,6 +338,29 @@ class HaClient {
             response.body?.bytes()
         }
     }
+
+    /** HLS playlist path from the stream integration (`camera/stream`). Null if unavailable. */
+    suspend fun cameraHlsUrl(entityId: String): String? {
+        if (!entityId.startsWith("camera.") || baseUrl.isBlank()) return null
+        return try {
+            withTimeout(15_000) {
+                val result = command {
+                    put("type", "camera/stream")
+                    put("entity_id", entityId)
+                    put("format", "hls")
+                }
+                val path = result.jsonObject["url"]?.jsonPrimitive?.contentOrNull ?: return@withTimeout null
+                if (path.startsWith("http://") || path.startsWith("https://")) path else "$baseUrl$path"
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun bearerHeaders(): Map<String, String> =
+        if (token.isBlank()) emptyMap() else mapOf("Authorization" to "Bearer $token")
 
     suspend fun authenticatedBytes(path: String): ByteArray? = withContext(Dispatchers.IO) {
         val url = if (path.startsWith("http")) path else baseUrl + path

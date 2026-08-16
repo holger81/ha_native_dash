@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import dev.holgerendt.hanative.HaNativeApp
 import dev.holgerendt.hanative.data.ConnectionState
 import dev.holgerendt.hanative.data.CredentialsStore
 import dev.holgerendt.hanative.data.DashboardLoader
@@ -11,6 +12,7 @@ import dev.holgerendt.hanative.data.EntityState
 import dev.holgerendt.hanative.data.HaClient
 import dev.holgerendt.hanative.data.LanAddresses
 import dev.holgerendt.hanative.data.ManagementServer
+import dev.holgerendt.hanative.data.ManagementTls
 import dev.holgerendt.hanative.model.ActionNode
 import dev.holgerendt.hanative.model.DashboardFile
 import dev.holgerendt.hanative.model.PopupNode
@@ -40,6 +42,7 @@ data class UiState(
     val setupError: String? = null,
     val setupBusy: Boolean = false,
     val remotePin: String = "",
+    val pinIsUserSet: Boolean = false,
     val remoteUrls: List<String> = emptyList(),
     val managementError: String? = null,
 )
@@ -63,7 +66,7 @@ class HaViewModel(
     private var reconnectJob: Job? = null
     private var managementServer: ManagementServer? = null
     private val random = SecureRandom()
-    @Volatile private var currentPin: String = newPin()
+    @Volatile private var currentPin: String = credentials.managementPin.ifBlank { newPin() }
 
     init {
         val (dashboard, loadError) = DashboardLoader.loadOrNull(app)
@@ -72,6 +75,7 @@ class HaViewModel(
             showSetup = !credentials.isConfigured,
             setupError = loadError,
             remotePin = currentPin,
+            pinIsUserSet = credentials.managementPin.isNotBlank(),
         )
         startManagementServer()
         if (credentials.isConfigured) {
@@ -87,20 +91,57 @@ class HaViewModel(
     private fun newPin(): String = "%06d".format(random.nextInt(1_000_000))
 
     fun rotatePin() {
+        if (credentials.managementPin.isNotBlank()) return
         currentPin = newPin()
-        _ui.value = _ui.value.copy(remotePin = currentPin)
+        _ui.value = _ui.value.copy(remotePin = currentPin, pinIsUserSet = false)
+    }
+
+    fun setManagementPin(pin: String, confirm: String): Result<Unit> {
+        if (pin.trim() != confirm.trim()) {
+            return Result.failure(IllegalArgumentException("PINs do not match"))
+        }
+        CredentialsStore.pinError(pin)?.let {
+            return Result.failure(IllegalArgumentException(it))
+        }
+        val normalized = pin.trim()
+        credentials.managementPin = normalized
+        currentPin = normalized
+        _ui.value = _ui.value.copy(remotePin = currentPin, pinIsUserSet = true)
+        return Result.success(Unit)
+    }
+
+    fun retryRestoreIfNeeded() {
+        if (credentials.isConfigured && credentials.managementPin.isNotBlank()) return
+        credentials.reloadFromExternal()
+        if (credentials.managementPin.isNotBlank() && currentPin != credentials.managementPin) {
+            currentPin = credentials.managementPin
+            _ui.value = _ui.value.copy(remotePin = currentPin, pinIsUserSet = true)
+        }
+        if (credentials.isConfigured && _ui.value.showSetup) {
+            viewModelScope.launch { connect(credentials.baseUrl, credentials.token) }
+        }
     }
 
     private fun startManagementServer() {
         refreshLanUrls()
+        val capture = (app as HaNativeApp).screenCapture
+        val ssl = runCatching { ManagementTls(app).sslServerSocketFactory() }
+        if (ssl.isFailure) {
+            _ui.value = _ui.value.copy(
+                managementError = "Could not enable HTTPS for remote setup",
+            )
+            return
+        }
         val server = ManagementServer(
             pinProvider = { currentPin },
             savedUrlProvider = { credentials.baseUrl },
+            screenshotProvider = { capture.captureJpeg() },
             onSubmit = { _, url, token ->
                 runBlocking {
                     withTimeout(20_000) { connect(url, token) }
                 }
             },
+            sslSocketFactory = ssl.getOrThrow(),
         )
         val started = runCatching { server.start(5000, false) }
         managementServer = if (started.isSuccess) server else null
@@ -116,7 +157,7 @@ class HaViewModel(
     }
 
     private fun refreshLanUrls() {
-        val urls = LanAddresses.ipv4().map { "http://$it:${ManagementServer.PORT}" }
+        val urls = LanAddresses.ipv4().map { "https://$it:${ManagementServer.PORT}" }
         if (urls != _ui.value.remoteUrls) {
             _ui.value = _ui.value.copy(remoteUrls = urls)
         }
@@ -138,12 +179,17 @@ class HaViewModel(
         credentials.baseUrl = url
         credentials.token = token
         client.connect(url, token)
-        currentPin = newPin()
+        if (credentials.managementPin.isBlank()) {
+            currentPin = newPin()
+        } else {
+            currentPin = credentials.managementPin
+        }
         _ui.value = _ui.value.copy(
             showSetup = false,
             setupBusy = false,
             setupError = null,
             remotePin = currentPin,
+            pinIsUserSet = credentials.managementPin.isNotBlank(),
             drawerOpen = false,
         )
         reconnectJob?.cancel()
