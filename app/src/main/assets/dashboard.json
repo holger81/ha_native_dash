@@ -1,0 +1,2911 @@
+{
+  "version": 1,
+  "source": "greatroom-wall.yaml",
+  "home": {
+    "title": "Home",
+    "people": [
+      {
+        "type": "person",
+        "entity": "person.holger",
+        "name": "Holger",
+        "battery": "device_tracker.holgers_iphone",
+        "home_sensor": "sensor.home_holger_distance",
+        "show_entity_picture": true,
+        "tap": {
+          "type": "more_info"
+        }
+      },
+      {
+        "type": "person",
+        "entity": "person.bettina",
+        "name": "Bettina",
+        "battery": "device_tracker.bettinas_iphone_2",
+        "home_sensor": "sensor.home_bettina_distance",
+        "show_entity_picture": true,
+        "tap": {
+          "type": "more_info"
+        }
+      }
+    ],
+    "header": [
+      {
+        "type": "menu_button",
+        "entity": "input_boolean.greatroom_sidebar_menu",
+        "icon": "mdi:menu",
+        "tap": {
+          "type": "menu_toggle"
+        },
+        "hold": {
+          "type": "call_service",
+          "service": "input_boolean.toggle",
+          "entity_id": "input_boolean.kiosk_mode_greatroom",
+          "data": null
+        },
+        "grid_area": "button"
+      },
+      {
+        "type": "weather_header",
+        "entity": "weather.forecast_tankerland_ct",
+        "temp_entity": "sensor.st_00063154_temperature",
+        "sun_entity": "sun.sun",
+        "tap": {
+          "type": "navigate",
+          "hash": "#weather"
+        },
+        "grid_area": "weather"
+      }
+    ],
+    "chips": {
+      "type": "chip_row",
+      "chips": [
+        {
+          "type": "status_chip",
+          "name": "Frontdoor",
+          "icon": "mdi:door",
+          "entity": "lock.front_door",
+          "layout": "icon|name",
+          "tap": {
+            "type": "toggle"
+          },
+          "visibility": {
+            "kind": "always"
+          },
+          "state": {
+            "kind": "state",
+            "entity": "lock.front_door"
+          },
+          "emphasize_unlocked": true
+        },
+        {
+          "type": "status_chip",
+          "name": null,
+          "icon": "mdi:face-mask-outline",
+          "entity": "sensor.home_outdoor_aqi_5min_mean",
+          "layout": "icon|state",
+          "tap": null,
+          "visibility": {
+            "kind": "numeric_gte",
+            "entity": "sensor.home_outdoor_aqi_5min_mean",
+            "value": 50.0
+          },
+          "state": {
+            "kind": "number",
+            "entity": "sensor.home_outdoor_aqi_5min_mean",
+            "decimals": 0,
+            "suffix": "AQI"
+          },
+          "emphasize_unlocked": false
+        },
+        {
+          "type": "status_chip",
+          "name": null,
+          "icon": "mdi:tumble-dryer",
+          "entity": "sensor.dryer",
+          "layout": "icon|state",
+          "tap": null,
+          "visibility": {
+            "kind": "state_in",
+            "entity": "sensor.dryer",
+            "states": [
+              "on"
+            ]
+          },
+          "state": {
+            "kind": "attribute",
+            "entity": "sensor.dryer",
+            "attribute": "remain_time"
+          },
+          "emphasize_unlocked": false
+        },
+        {
+          "type": "status_chip",
+          "name": null,
+          "icon": "mdi:washing-machine",
+          "entity": "sensor.front_load_washer",
+          "layout": "icon|state",
+          "tap": null,
+          "visibility": {
+            "kind": "state_in",
+            "entity": "sensor.front_load_washer",
+            "states": [
+              "on"
+            ]
+          },
+          "state": {
+            "kind": "attribute",
+            "entity": "sensor.front_load_washer",
+            "attribute": "remain_time"
+          },
+          "emphasize_unlocked": false
+        },
+        {
+          "type": "status_chip",
+          "name": null,
+          "icon": "mdi:dishwasher",
+          "entity": "sensor.bosch_dishwasher_operation_state",
+          "layout": "icon|state",
+          "tap": null,
+          "visibility": {
+            "kind": "state_in",
+            "entity": "sensor.bosch_dishwasher_operation_state",
+            "states": [
+              "run"
+            ]
+          },
+          "state": {
+            "kind": "minutes_from_hours",
+            "entity": "sensor.bosch_dishwasher_remaining_program_time",
+            "suffix": "min"
+          },
+          "emphasize_unlocked": false
+        },
+        {
+          "type": "status_chip",
+          "name": "Vacuum",
+          "icon": "mdi:vacuum",
+          "entity": "vacuum.s8_maxv_ultra",
+          "layout": "icon",
+          "tap": {
+            "type": "navigate",
+            "hash": "#staubinator"
+          },
+          "visibility": {
+            "kind": "state_not",
+            "entity": "vacuum.s8_maxv_ultra",
+            "states": [
+              "docked"
+            ]
+          },
+          "state": null,
+          "emphasize_unlocked": false
+        },
+        {
+          "type": "status_chip",
+          "name": null,
+          "icon": "mdi:printer-3d",
+          "entity": "sensor.octoprint_job_percentage",
+          "layout": "icon|state",
+          "tap": null,
+          "visibility": {
+            "kind": "state_in",
+            "entity": "sensor.octoprint_current_state",
+            "states": [
+              "Printing"
+            ]
+          },
+          "state": {
+            "kind": "number",
+            "entity": "sensor.octoprint_job_percentage",
+            "decimals": 1,
+            "suffix": "%"
+          },
+          "emphasize_unlocked": false
+        },
+        {
+          "type": "status_chip",
+          "name": null,
+          "icon": "mdi:car-electric-outline",
+          "entity": "sensor.tankerland_ev_charger_power_minute_average",
+          "layout": "icon|state",
+          "tap": null,
+          "visibility": {
+            "kind": "numeric_gte",
+            "entity": "sensor.tankerland_ev_charger_power_minute_average",
+            "value": 0.05
+          },
+          "state": {
+            "kind": "number",
+            "entity": "sensor.tankerland_ev_charger_power_minute_average",
+            "scale": 0.001,
+            "decimals": 2,
+            "suffix": "kW"
+          },
+          "emphasize_unlocked": false
+        },
+        {
+          "type": "status_chip",
+          "name": null,
+          "icon": "mdi:solar-power-variant-outline",
+          "entity": "sensor.envoy_202234122877_current_power_production",
+          "layout": "icon|state",
+          "tap": null,
+          "visibility": {
+            "kind": "numeric_gte",
+            "entity": "sensor.envoy_202234122877_current_power_production",
+            "value": 0.05
+          },
+          "state": {
+            "kind": "number",
+            "entity": "sensor.envoy_202234122877_current_power_production",
+            "decimals": 2,
+            "suffix": "kW"
+          },
+          "emphasize_unlocked": false
+        },
+        {
+          "type": "status_chip",
+          "name": null,
+          "icon": "mdi:transmission-tower",
+          "entity": "sensor.envoy_202234122877_current_net_power_consumption",
+          "layout": "icon|state",
+          "tap": null,
+          "visibility": {
+            "kind": "always"
+          },
+          "state": {
+            "kind": "number",
+            "entity": "sensor.envoy_202234122877_current_net_power_consumption",
+            "decimals": 2,
+            "suffix": "kW"
+          },
+          "emphasize_unlocked": false
+        },
+        {
+          "type": "status_chip",
+          "name": null,
+          "icon": "mdi:home-battery-outline",
+          "entity": "input_number.battery_energy_helper",
+          "layout": "icon|state",
+          "tap": null,
+          "visibility": {
+            "kind": "state_in",
+            "entity": "binary_sensor.envoy_battery_discharging",
+            "states": [
+              "on"
+            ]
+          },
+          "state": {
+            "kind": "number",
+            "entity": "input_number.battery_energy_helper",
+            "scale": 0.001,
+            "decimals": 2,
+            "suffix": "kW"
+          },
+          "emphasize_unlocked": false
+        }
+      ]
+    },
+    "rooms": [
+      {
+        "type": "room_card",
+        "name": "Jonathan's\nRoom",
+        "icon": "mdi:alpha-j-circle-outline",
+        "path": "#jonathans_room",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.jonathans_bedroom_9b3a_temperature",
+          "hum_entity": "sensor.jonathans_bedroom_9b3a_humidity",
+          "climate_entity": null
+        },
+        "accent": "orange",
+        "radius": "6px 36px 36px 6px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#jonathans_room"
+        },
+        "grid_area": "jonathan"
+      },
+      {
+        "type": "room_card",
+        "name": "Great\nRoom",
+        "icon": "mdi:seat-outline",
+        "path": "#great_room",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.great_room_4afa_temperature",
+          "hum_entity": "sensor.great_room_4afa_humidity",
+          "climate_entity": null
+        },
+        "accent": "blue",
+        "radius": "6px 36px 36px 6px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#great_room"
+        },
+        "grid_area": "greatroom"
+      },
+      {
+        "type": "room_card",
+        "name": "Main\nBedroom",
+        "icon": "mdi:bed-king",
+        "path": "#mainbedroom",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.main_bedroom_6671_temperature",
+          "hum_entity": "sensor.main_bedroom_6671_humidity",
+          "climate_entity": null
+        },
+        "accent": "purple",
+        "radius": "36px 6px 6px 36px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#mainbedroom"
+        },
+        "grid_area": "mainbed"
+      },
+      {
+        "type": "room_card",
+        "name": "Second\nBath",
+        "icon": "mdi:toilet",
+        "path": "#secondbath",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.second_bathroom_8ee5_temperature",
+          "hum_entity": "sensor.second_bathroom_8ee5_humidity",
+          "climate_entity": null
+        },
+        "accent": "blue-dark",
+        "radius": "36px 6px 6px 36px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#secondbath"
+        },
+        "grid_area": "secondbath"
+      },
+      {
+        "type": "room_card",
+        "name": "Guestroom",
+        "icon": "mdi:bed",
+        "path": "#guestroom",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.guestroom_f628_temperature",
+          "hum_entity": "sensor.guestroom_f628_humidity",
+          "climate_entity": null
+        },
+        "accent": "pink",
+        "radius": "6px 36px 36px 6px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#guestroom"
+        },
+        "grid_area": "guestroom"
+      },
+      {
+        "type": "room_card",
+        "name": "Emilia's\nRoom",
+        "icon": "mdi:alpha-e-circle-outline",
+        "path": "#emilias_room",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.emilias_room_2733_temperature",
+          "hum_entity": "sensor.emilias_room_2733_humidity",
+          "climate_entity": null
+        },
+        "accent": "green",
+        "radius": "36px 6px 6px 36px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#emilias_room"
+        },
+        "grid_area": "emilia"
+      },
+      {
+        "type": "room_card",
+        "name": "Hallway",
+        "icon": "mdi:door",
+        "path": "#hallway",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": null,
+          "hum_entity": null,
+          "climate_entity": "climate.hallway_room"
+        },
+        "accent": "yellow",
+        "radius": "36px 6px 6px 36px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#hallway"
+        },
+        "grid_area": "hallway"
+      },
+      {
+        "type": "room_card",
+        "name": "Office",
+        "icon": "mdi:desk",
+        "path": "#office",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.office_abfd_temperature",
+          "hum_entity": "sensor.office_abfd_humidity",
+          "climate_entity": null
+        },
+        "accent": "yellow",
+        "radius": "36px 36px 36px 36px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#office"
+        },
+        "grid_area": "office"
+      },
+      {
+        "type": "room_card",
+        "name": "Main\nBath",
+        "icon": "mdi:shower-head",
+        "path": "#mainbath",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.main_bathroom_6eca_temperature",
+          "hum_entity": "sensor.main_bathroom_6eca_humidity",
+          "climate_entity": null
+        },
+        "accent": "red",
+        "radius": "6px 36px 36px 6px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#mainbath"
+        },
+        "grid_area": "mainbath"
+      }
+    ],
+    "popups": [
+      {
+        "type": "popup",
+        "name": "Weather",
+        "icon": "mdi:weather-partly-snowy-rainy",
+        "hash": "#weather",
+        "accent": null,
+        "cards": [
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "gap",
+                "height": 12
+              },
+              {
+                "type": "grid",
+                "columns": 1,
+                "cards": [
+                  {
+                    "type": "weather_header",
+                    "entity": "weather.forecast_tankerland_ct",
+                    "temp_entity": "sensor.st_00063154_temperature",
+                    "sun_entity": "sun.sun",
+                    "tap": {
+                      "type": "fire-dom-event",
+                      "raw": {
+                        "action": "fire-dom-event",
+                        "local_conditional_card": {
+                          "action": "set",
+                          "ids": [
+                            {
+                              "vaer_naa": "hide"
+                            },
+                            {
+                              "vaer_idag": "show"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "grid_area": null
+                  }
+                ],
+                "visibility_entity": null,
+                "visibility_state": null
+              },
+              {
+                "type": "grid",
+                "columns": 1,
+                "cards": [
+                  {
+                    "type": "entity_button",
+                    "entity": "sensor.weather_forecast_daily",
+                    "name": null,
+                    "icon": null,
+                    "label": null,
+                    "tap": {
+                      "type": "fire-dom-event",
+                      "raw": {
+                        "action": "fire-dom-event",
+                        "local_conditional_card": {
+                          "action": "set",
+                          "ids": [
+                            {
+                              "vaer_naa": "show"
+                            },
+                            {
+                              "vaer_idag": "hide"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "hold": null,
+                    "show_entity_picture": null
+                  }
+                ],
+                "visibility_entity": null,
+                "visibility_state": null
+              },
+              {
+                "type": "gap",
+                "height": 20
+              },
+              {
+                "type": "entity_button",
+                "entity": "sensor.weather_forecast_daily",
+                "name": null,
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "type": "entity_button",
+                "entity": "sensor.weather_forecast_daily",
+                "name": null,
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "type": "entity_button",
+                "entity": "sensor.weather_forecast_daily",
+                "name": null,
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "type": "entity_button",
+                "entity": "sensor.weather_forecast_daily",
+                "name": null,
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "type": "entity_button",
+                "entity": "sensor.weather_forecast_daily",
+                "name": null,
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "type": "gap",
+                "height": 30
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "popup",
+        "name": "Settings",
+        "icon": "mdi:cog",
+        "hash": "#settings",
+        "accent": null,
+        "cards": [
+          {
+            "type": "gap",
+            "height": 12
+          },
+          {
+            "name": "Feriemodus",
+            "icon": "mdi:airplane-takeoff",
+            "entity": "input_boolean.kiosk_mode",
+            "background": null,
+            "type": "button_toggle",
+            "tap": {
+              "type": "toggle"
+            }
+          },
+          {
+            "type": "tabs",
+            "default_tab": 0,
+            "tabs": [
+              {
+                "title": "Push varsler",
+                "icon": "mdi:cellphone-information",
+                "cards": [
+                  {
+                    "type": "grid",
+                    "columns": 1,
+                    "cards": [
+                      {
+                        "name": "Alle varsler",
+                        "icon": "mdi:cellphone",
+                        "entity": "input_boolean.kiosk_mode_greatroom",
+                        "background": null,
+                        "type": "button_toggle",
+                        "tap": {
+                          "type": "toggle"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "type": "grid",
+                    "columns": 1,
+                    "cards": [
+                      {
+                        "name": "Alle varsler",
+                        "icon": "mdi:cellphone",
+                        "entity": "input_boolean.kiosk_mode_greatroom",
+                        "background": null,
+                        "type": "button_toggle",
+                        "tap": {
+                          "type": "toggle"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "popup",
+        "name": "Staubinator",
+        "icon": "mdi:vacuum",
+        "hash": "#staubinator",
+        "accent": null,
+        "cards": [
+          {
+            "type": "gap",
+            "height": 12
+          },
+          {
+            "type": "layout_grid",
+            "columns": null,
+            "rows": null,
+            "areas": null,
+            "cards": [
+              {
+                "type": "layout_grid",
+                "columns": "66.666666% 1fr",
+                "rows": null,
+                "areas": "\"header header\"",
+                "cards": [
+                  {
+                    "type": "entity_button",
+                    "entity": null,
+                    "name": "Status",
+                    "icon": null,
+                    "label": null,
+                    "tap": null,
+                    "hold": null,
+                    "show_entity_picture": null,
+                    "grid_area": "header"
+                  },
+                  {
+                    "type": "gap",
+                    "height": 0
+                  }
+                ]
+              },
+              {
+                "type": "layout_grid",
+                "columns": "66.666666% 1fr",
+                "rows": "1fr 1fr",
+                "areas": "\"left start\"\n\"left start\"\n",
+                "cards": [
+                  {
+                    "type": "swipe",
+                    "cards": [
+                      {
+                        "type": "layout_grid",
+                        "columns": "1fr 1fr",
+                        "rows": "1fr 1fr",
+                        "areas": "\"one two\"\n\"three four\"\n\"five six\"\n",
+                        "cards": [
+                          {
+                            "name": "Dining Area",
+                            "icon": "mdi:silverware-fork-knife",
+                            "entity": "input_boolean.vacuum_room_dining_18",
+                            "background": null,
+                            "type": "vacuum_button",
+                            "label": "Some time ago",
+                            "tap": {
+                              "type": "toggle"
+                            },
+                            "grid_area": "one"
+                          },
+                          {
+                            "name": "Kitchen",
+                            "icon": "mdi:pot-steam-outline",
+                            "entity": "input_boolean.vacuum_room_kitchen_27",
+                            "background": null,
+                            "type": "vacuum_button",
+                            "label": "Some time ago",
+                            "tap": {
+                              "type": "toggle"
+                            },
+                            "grid_area": "two"
+                          },
+                          {
+                            "name": "Couch Area",
+                            "icon": "mdi:sofa-outline",
+                            "entity": "input_boolean.vacuum_room_living_19",
+                            "background": null,
+                            "type": "vacuum_button",
+                            "label": "Some time ago",
+                            "tap": {
+                              "type": "toggle"
+                            },
+                            "grid_area": "three"
+                          },
+                          {
+                            "name": "Entryway",
+                            "icon": "mdi:shoe-print",
+                            "entity": "input_boolean.vacuum_room_entryway_24",
+                            "background": null,
+                            "type": "vacuum_button",
+                            "label": "Some time ago",
+                            "tap": {
+                              "type": "toggle"
+                            },
+                            "grid_area": "four"
+                          },
+                          {
+                            "name": "Second Bathroom",
+                            "icon": "mdi:toilet",
+                            "entity": "input_boolean.vacuum_room_secondbath_22",
+                            "background": null,
+                            "type": "vacuum_button",
+                            "label": "Some time ago",
+                            "tap": {
+                              "type": "toggle"
+                            },
+                            "grid_area": "five"
+                          },
+                          {
+                            "name": "Hallway",
+                            "icon": "mdi:metronome-tick",
+                            "entity": "input_boolean.vacuum_room_hallway_25",
+                            "background": null,
+                            "type": "vacuum_button",
+                            "label": "Some time ago",
+                            "tap": {
+                              "type": "toggle"
+                            },
+                            "grid_area": "six"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "layout_grid",
+                        "columns": "1fr 1fr",
+                        "rows": "1fr 1fr",
+                        "areas": "\"seven eight\"\n\"nine ten\"\n\"eleven twelve\"\n",
+                        "cards": [
+                          {
+                            "name": "Main Bedroom",
+                            "icon": "mdi:bed-double-outline",
+                            "entity": "input_boolean.vacuum_room_mainbed_21",
+                            "background": null,
+                            "type": "vacuum_button",
+                            "label": "Some time ago",
+                            "tap": {
+                              "type": "toggle"
+                            },
+                            "grid_area": "seven"
+                          },
+                          {
+                            "name": "Main Bathroom",
+                            "icon": "mdi:shower-head",
+                            "entity": "input_boolean.vacuum_room_mainbath_26",
+                            "background": null,
+                            "type": "vacuum_button",
+                            "label": "Some time ago",
+                            "tap": {
+                              "type": "toggle"
+                            },
+                            "grid_area": "eight"
+                          },
+                          {
+                            "name": "Emilias Room",
+                            "icon": "mdi:alpha-e-circle-outline",
+                            "entity": "input_boolean.vacuum_room_emilia_17",
+                            "background": null,
+                            "type": "vacuum_button",
+                            "label": "Some time ago",
+                            "tap": {
+                              "type": "toggle"
+                            },
+                            "grid_area": "nine"
+                          },
+                          {
+                            "name": "Jonathans Room",
+                            "icon": "mdi:alpha-j-circle-outline",
+                            "entity": "input_boolean.vacuum_room_jonathan_20",
+                            "background": null,
+                            "type": "vacuum_button",
+                            "label": "Some time ago",
+                            "tap": {
+                              "type": "toggle"
+                            },
+                            "grid_area": "ten"
+                          },
+                          {
+                            "name": "Office",
+                            "icon": "mdi:laptop-account",
+                            "entity": "input_boolean.vacuum_room_office_16",
+                            "background": null,
+                            "type": "vacuum_button",
+                            "label": "Some time ago",
+                            "tap": {
+                              "type": "toggle"
+                            },
+                            "grid_area": "eleven"
+                          },
+                          {
+                            "name": "Guest Room",
+                            "icon": "mdi:bag-suitcase",
+                            "entity": "input_boolean.vacuum_room_guest_23",
+                            "background": null,
+                            "type": "vacuum_button",
+                            "label": "Some time ago",
+                            "tap": {
+                              "type": "toggle"
+                            },
+                            "grid_area": "twelve"
+                          }
+                        ]
+                      }
+                    ],
+                    "conditions": [
+                      {
+                        "condition": "state",
+                        "entity": "vacuum.s8_maxv_ultra",
+                        "state": "docked"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "camera",
+                    "entity": "image.s8_maxv_ultra_map_0",
+                    "camera_view": "live",
+                    "show_state": false,
+                    "show_name": false,
+                    "conditions": [
+                      {
+                        "condition": "state",
+                        "entity": "vacuum.s8_maxv_ultra",
+                        "state_not": "docked"
+                      }
+                    ]
+                  },
+                  {
+                    "name": "Start",
+                    "icon": "mdi:vacuum-outline",
+                    "entity": "script.clean_house",
+                    "background": null,
+                    "type": "vacuum_button",
+                    "label": null,
+                    "tap": {
+                      "type": "toggle"
+                    },
+                    "grid_area": "start"
+                  }
+                ],
+                "visibility_entity": null,
+                "visibility_state": null
+              },
+              {
+                "type": "layout_grid",
+                "columns": "66.666666% 1fr",
+                "rows": "1fr 1fr",
+                "areas": "\"left1 start1\"\n\"left2 start1\"\n",
+                "cards": [
+                  {
+                    "name": "Stop",
+                    "icon": "mdi:vacuum-outline",
+                    "entity": "vacuum.s8_maxv_ultra",
+                    "background": null,
+                    "type": "vacuum_button",
+                    "label": null,
+                    "tap": {
+                      "type": "toggle"
+                    },
+                    "grid_area": "start1"
+                  }
+                ],
+                "visibility_entity": null,
+                "visibility_state": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "popup",
+        "name": "Power",
+        "icon": "mdi:power-plug",
+        "hash": "#power",
+        "accent": null,
+        "cards": [
+          {
+            "type": "gap",
+            "height": 12
+          },
+          {
+            "type": "tabs",
+            "default_tab": 1,
+            "tabs": [
+              {
+                "title": "Consumption",
+                "icon": "mdi:transmission-tower",
+                "cards": [
+                  {
+                    "type": "grid",
+                    "columns": 2,
+                    "cards": [
+                      {
+                        "name": "Netto Export",
+                        "icon": "mdi:home-lightning-bolt",
+                        "entity": null,
+                        "background": "var(--popupBG)",
+                        "type": "sensor_big_2columns",
+                        "tap": null
+                      },
+                      {
+                        "name": "Netto Import",
+                        "icon": "mdi:home-lightning-bolt",
+                        "entity": null,
+                        "background": "var(--popupBG)",
+                        "type": "sensor_big",
+                        "label": "[[[\n  const v = parseFloat(states['sensor.emporia_vue_3_total_power'].state || 0);\n  return v.toFixed(2) + '<span style=\"font-size:14px\"> W</span>';\n]]]\n"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "energy_date_selection",
+                    "title": "energy-date-selection"
+                  },
+                  {
+                    "type": "energy_usage_graph",
+                    "title": "energy-usage-graph"
+                  },
+                  {
+                    "type": "gap",
+                    "height": 12
+                  },
+                  {
+                    "type": "energy_sources_table",
+                    "title": "energy-sources-table"
+                  },
+                  {
+                    "type": "gap",
+                    "height": 30
+                  }
+                ]
+              },
+              {
+                "title": "Solarcells",
+                "icon": "mdi:solar-power-variant",
+                "cards": [
+                  {
+                    "type": "grid",
+                    "columns": 2,
+                    "cards": [
+                      {
+                        "name": "Production now",
+                        "icon": "mdi:solar-power-variant-outline",
+                        "entity": null,
+                        "background": "var(--popupBG)",
+                        "type": "sensor_big",
+                        "label": "[[[\n  const v = parseFloat(states['sensor.envoy_202234122877_current_power_production'].state || 0);\n  return v.toFixed(2) + '<span style=\"font-size:14px\"> W</span>';\n]]]\n"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "gap",
+                    "height": 12
+                  },
+                  {
+                    "type": "energy_date_selection",
+                    "title": "energy-date-selection"
+                  },
+                  {
+                    "type": "energy_solar_graph",
+                    "title": "energy-solar-graph"
+                  },
+                  {
+                    "type": "gap",
+                    "height": 12
+                  },
+                  {
+                    "type": "grid",
+                    "columns": 2,
+                    "cards": [
+                      {
+                        "type": "energy_solar_consumed_gauge",
+                        "title": "energy-solar-consumed-gauge"
+                      },
+                      {
+                        "type": "energy_self_sufficiency_gauge",
+                        "title": "energy-self-sufficiency-gauge"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "gap",
+                    "height": 30
+                  }
+                ]
+              },
+              {
+                "title": "Prices",
+                "icon": "mdi:cash",
+                "cards": [
+                  {
+                    "type": "grid",
+                    "columns": 2,
+                    "cards": [
+                      {
+                        "name": "Power Price Now",
+                        "icon": "mdi:lightning-bolt",
+                        "entity": null,
+                        "background": "var(--popupBG)",
+                        "type": "sensor_big",
+                        "label": "[[[\n  const s = states['sensor.current_electrical_energy_import_cost']?.state;\n  const value = s === undefined || s === 'unknown' || s === 'unavailable'\n    ? 0\n    : parseFloat(s);\n  const rounded = Math.round(value * 1000) / 1000;\n  return rounded + '<span style=\"font-size:14px\"> USD/kWh</span>';\n]]]\n"
+                      },
+                      {
+                        "name": "Estimated Electricity Bill",
+                        "icon": "mdi:receipt-text",
+                        "entity": null,
+                        "background": "var(--popupBG)",
+                        "type": "sensor_big",
+                        "label": "[[[\n  const parseNumber = (entityId) => {\n    const value = states[entityId]?.state;\n    if (value === undefined || value === null || value === '' || value === 'unknown' || value === 'unavailable') {\n      return null;\n    }\n    const parsed = parseFloat(value);\n    return Number.isFinite(parsed) ? parsed : null;\n  };\n  const forecastedCost = parseNumber('sensor.current_bill_electric_forecasted_cost');\n  const costToDate = parseNumber('sensor.current_bill_electric_cost_to_date');\n  const forecastedUsage = parseNumber('sensor.current_bill_electric_forecasted_usage');\n  const usageToDate = parseNumber('sensor.current_bill_electric_usage_to_date');\n  const importRate = parseNumber('sensor.current_electrical_energy_import_cost');\n  let estimate = null;\n\n  if (forecastedCost !== null && forecastedCost > 0) {\n    estimate = forecastedCost;\n  } else if (forecastedUsage !== null && importRate !== null) {\n    estimate = forecastedUsage * importRate;\n  } else if (costToDate !== null && costToDate > 0) {\n    estimate = costToDate;\n  } else if (usageToDate !== null && importRate !== null) {\n    estimate = usageToDate * importRate;\n  }\n\n  if (estimate === null) {\n    return '--<span style=\"font-size:14px\"> USD</span>';\n  }\n\n  return estimate.toFixed(2) + '<span style=\"font-size:14px\"> USD</span>';\n]]]\n"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "popup",
+        "name": "Cars",
+        "icon": "mdi:car-outline",
+        "hash": "#bil",
+        "accent": null,
+        "cards": [
+          {
+            "type": "gap",
+            "height": 12
+          },
+          {
+            "type": "tabs",
+            "default_tab": 1,
+            "tabs": [
+              {
+                "title": "Tesla",
+                "icon": "mdi:car-electric",
+                "cards": [
+                  {
+                    "type": "entity_button",
+                    "entity": null,
+                    "name": "Tesla Model 3",
+                    "icon": "mdi:car-electric",
+                    "label": null,
+                    "tap": {
+                      "type": "more_info"
+                    },
+                    "hold": null,
+                    "show_entity_picture": null
+                  },
+                  {
+                    "type": "grid",
+                    "columns": 2,
+                    "cards": [
+                      {
+                        "type": "entity_button",
+                        "entity": null,
+                        "name": null,
+                        "icon": null,
+                        "label": null,
+                        "tap": {
+                          "type": "more_info"
+                        },
+                        "hold": null,
+                        "show_entity_picture": null
+                      },
+                      {
+                        "type": "entity_button",
+                        "entity": null,
+                        "name": null,
+                        "icon": null,
+                        "label": null,
+                        "tap": {
+                          "type": "more_info"
+                        },
+                        "hold": null,
+                        "show_entity_picture": null
+                      }
+                    ]
+                  },
+                  {
+                    "type": "grid",
+                    "columns": 2,
+                    "cards": [
+                      {
+                        "type": "entity_button",
+                        "entity": null,
+                        "name": null,
+                        "icon": null,
+                        "label": null,
+                        "tap": {
+                          "type": "more_info"
+                        },
+                        "hold": null,
+                        "show_entity_picture": null
+                      },
+                      {
+                        "type": "entity_button",
+                        "entity": null,
+                        "name": null,
+                        "icon": null,
+                        "label": null,
+                        "tap": {
+                          "type": "more_info"
+                        },
+                        "hold": null,
+                        "show_entity_picture": null
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tabs",
+                    "default_tab": 1,
+                    "tabs": [
+                      {
+                        "title": "Miles",
+                        "icon": null,
+                        "cards": [
+                          {
+                            "type": "grid",
+                            "columns": 2,
+                            "cards": [
+                              {
+                                "type": "entity_button",
+                                "entity": null,
+                                "name": null,
+                                "icon": null,
+                                "label": null,
+                                "tap": {
+                                  "type": "more_info"
+                                },
+                                "hold": null,
+                                "show_entity_picture": null
+                              },
+                              {
+                                "type": "entity_button",
+                                "entity": null,
+                                "name": null,
+                                "icon": null,
+                                "label": null,
+                                "tap": {
+                                  "type": "more_info"
+                                },
+                                "hold": null,
+                                "show_entity_picture": null
+                              }
+                            ]
+                          },
+                          {
+                            "type": "chart",
+                            "hours_to_show": "7d",
+                            "series": [
+                              {
+                                "entity": "sensor.tesla_miles_daily",
+                                "name": "Miles",
+                                "type": "column"
+                              }
+                            ],
+                            "header": "Miles / day (7 days)"
+                          }
+                        ]
+                      },
+                      {
+                        "title": "Climate",
+                        "icon": null,
+                        "cards": [
+                          {
+                            "type": "grid",
+                            "columns": 2,
+                            "cards": [
+                              {
+                                "type": "entity_button",
+                                "entity": "climate.model_3_climate",
+                                "name": null,
+                                "icon": null,
+                                "label": null,
+                                "tap": {
+                                  "type": "call_service",
+                                  "service": "climate.set_hvac_mode",
+                                  "entity_id": "climate.model_3_climate",
+                                  "data": {
+                                    "hvac_mode": "heat_cool"
+                                  }
+                                },
+                                "hold": {
+                                  "type": "call_service",
+                                  "service": "climate.turn_off",
+                                  "entity_id": "climate.model_3_climate",
+                                  "data": null
+                                },
+                                "show_entity_picture": null
+                              },
+                              {
+                                "type": "entity_button",
+                                "entity": "switch.model_3_defrost",
+                                "name": null,
+                                "icon": null,
+                                "label": null,
+                                "tap": {
+                                  "type": "toggle"
+                                },
+                                "hold": {
+                                  "type": "more_info"
+                                },
+                                "show_entity_picture": null
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "title": "Charging",
+                        "icon": null,
+                        "cards": [
+                          {
+                            "type": "grid",
+                            "columns": 5,
+                            "cards": [
+                              {
+                                "type": "entity_button",
+                                "entity": null,
+                                "name": "50%",
+                                "icon": null,
+                                "label": null,
+                                "tap": {
+                                  "type": "call_service",
+                                  "service": "number.set_value",
+                                  "entity_id": "number.model_3_charge_limit",
+                                  "data": {
+                                    "value": 50
+                                  }
+                                },
+                                "hold": null,
+                                "show_entity_picture": null
+                              },
+                              {
+                                "type": "entity_button",
+                                "entity": null,
+                                "name": "60%",
+                                "icon": null,
+                                "label": null,
+                                "tap": {
+                                  "type": "call_service",
+                                  "service": "number.set_value",
+                                  "entity_id": "number.model_3_charge_limit",
+                                  "data": {
+                                    "value": 60
+                                  }
+                                },
+                                "hold": null,
+                                "show_entity_picture": null
+                              },
+                              {
+                                "type": "entity_button",
+                                "entity": null,
+                                "name": "70%",
+                                "icon": null,
+                                "label": null,
+                                "tap": {
+                                  "type": "call_service",
+                                  "service": "number.set_value",
+                                  "entity_id": "number.model_3_charge_limit",
+                                  "data": {
+                                    "value": 70
+                                  }
+                                },
+                                "hold": null,
+                                "show_entity_picture": null
+                              },
+                              {
+                                "type": "entity_button",
+                                "entity": null,
+                                "name": "80%",
+                                "icon": null,
+                                "label": null,
+                                "tap": {
+                                  "type": "call_service",
+                                  "service": "number.set_value",
+                                  "entity_id": "number.model_3_charge_limit",
+                                  "data": {
+                                    "value": 80
+                                  }
+                                },
+                                "hold": null,
+                                "show_entity_picture": null
+                              },
+                              {
+                                "type": "entity_button",
+                                "entity": null,
+                                "name": "100%",
+                                "icon": null,
+                                "label": null,
+                                "tap": {
+                                  "type": "call_service",
+                                  "service": "number.set_value",
+                                  "entity_id": "number.model_3_charge_limit",
+                                  "data": {
+                                    "value": 100
+                                  }
+                                },
+                                "hold": null,
+                                "show_entity_picture": null
+                              }
+                            ]
+                          },
+                          {
+                            "type": "markdown",
+                            "content": "{% set current = states('sensor.model_3_battery_level')|float(0) %} {% set target = states('number.model_3_charge_limit')|float(100) %} {% set price = states('sensor.current_electrical_energy_import_cost')|float(0) %} {% set charger_power = states('sensor.model_3_charger_power')|float(0) %} {% set needed_pct = [target - current, 0]|max %} {% set needed_kwh = 75 * needed_pct / 100 %} {% if charger_power > 0 %}\n  {% set hours = needed_kwh / charger_power %}\n  {% set duration = ((hours | int) ~ ' h ' ~ (((hours - (hours|int)) * 60) | round(0) | int) ~ ' min') %}\n{% else %}\n  {% set duration = '--' %}\n{% endif %} About **{{ duration }}** to charge to **{{ target|round(0)|int }}%**, ~**${{ (needed_kwh * price)|round(0)|int }}**\n"
+                          },
+                          {
+                            "type": "entity_button",
+                            "entity": "switch.model_3_charge",
+                            "name": "Smart Charging",
+                            "icon": "mdi:battery-charging",
+                            "label": null,
+                            "tap": {
+                              "type": "toggle"
+                            },
+                            "hold": {
+                              "type": "more_info"
+                            },
+                            "show_entity_picture": null
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "title": "Volkswagen",
+                "icon": "mdi:van-passenger",
+                "cards": [
+                  {
+                    "type": "entity_button",
+                    "entity": null,
+                    "name": "Volkswagen ID. Buzz",
+                    "icon": "mdi:van-passenger",
+                    "label": null,
+                    "tap": {
+                      "type": "more_info"
+                    },
+                    "hold": null,
+                    "show_entity_picture": null
+                  },
+                  {
+                    "type": "grid",
+                    "columns": 2,
+                    "cards": [
+                      {
+                        "type": "entity_button",
+                        "entity": null,
+                        "name": null,
+                        "icon": null,
+                        "label": null,
+                        "tap": {
+                          "type": "more_info"
+                        },
+                        "hold": null,
+                        "show_entity_picture": null
+                      },
+                      {
+                        "type": "entity_button",
+                        "entity": null,
+                        "name": null,
+                        "icon": null,
+                        "label": null,
+                        "tap": {
+                          "type": "more_info"
+                        },
+                        "hold": null,
+                        "show_entity_picture": null
+                      }
+                    ]
+                  },
+                  {
+                    "type": "grid",
+                    "columns": 2,
+                    "cards": [
+                      {
+                        "type": "entity_button",
+                        "entity": null,
+                        "name": null,
+                        "icon": null,
+                        "label": null,
+                        "tap": {
+                          "type": "more_info"
+                        },
+                        "hold": null,
+                        "show_entity_picture": null
+                      },
+                      {
+                        "type": "entity_button",
+                        "entity": null,
+                        "name": null,
+                        "icon": null,
+                        "label": null,
+                        "tap": {
+                          "type": "more_info"
+                        },
+                        "hold": null,
+                        "show_entity_picture": null
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tabs",
+                    "default_tab": 1,
+                    "tabs": [
+                      {
+                        "title": "Miles",
+                        "icon": null,
+                        "cards": [
+                          {
+                            "type": "grid",
+                            "columns": 2,
+                            "cards": [
+                              {
+                                "type": "entity_button",
+                                "entity": null,
+                                "name": null,
+                                "icon": null,
+                                "label": null,
+                                "tap": {
+                                  "type": "more_info"
+                                },
+                                "hold": null,
+                                "show_entity_picture": null
+                              },
+                              {
+                                "type": "entity_button",
+                                "entity": null,
+                                "name": null,
+                                "icon": null,
+                                "label": null,
+                                "tap": {
+                                  "type": "more_info"
+                                },
+                                "hold": null,
+                                "show_entity_picture": null
+                              }
+                            ]
+                          },
+                          {
+                            "type": "chart",
+                            "hours_to_show": "7d",
+                            "series": [
+                              {
+                                "entity": "sensor.vw_miles_daily",
+                                "name": "Miles",
+                                "type": "column"
+                              }
+                            ],
+                            "header": "Miles / day (7 days)"
+                          }
+                        ]
+                      },
+                      {
+                        "title": "Status",
+                        "icon": null,
+                        "cards": [
+                          {
+                            "type": "grid",
+                            "columns": 2,
+                            "cards": [
+                              {
+                                "type": "entity_button",
+                                "entity": "sensor.volkswagen_id_buzz_charging_status",
+                                "name": null,
+                                "icon": null,
+                                "label": null,
+                                "tap": {
+                                  "type": "more_info"
+                                },
+                                "hold": null,
+                                "show_entity_picture": null
+                              },
+                              {
+                                "type": "entity_button",
+                                "entity": "binary_sensor.volkswagen_id_buzz_charging_cable_plugged_in",
+                                "name": null,
+                                "icon": null,
+                                "label": null,
+                                "tap": {
+                                  "type": "more_info"
+                                },
+                                "hold": null,
+                                "show_entity_picture": null
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "title": "Charging",
+                        "icon": null,
+                        "cards": [
+                          {
+                            "type": "markdown",
+                            "content": "{% set battery = states('sensor.volkswagen_id_buzz_battery') %} {% set range = states('sensor.volkswagen_id_buzz_range') %} {% set charging = states('sensor.volkswagen_id_buzz_charging_status') %} Battery **{{ battery if battery not in ['unknown','unavailable','none'] else '--' }}%** and range **{{ (range | float(0)) | round(0) if range not in ['unknown','unavailable','none'] else '--' }} mi**. Charging is **{{ charging | lower | replace('_', ' ') if charging not in ['unknown','unavailable','none'] else 'waiting' }}**.\n"
+                          },
+                          {
+                            "type": "entity_button",
+                            "entity": "switch.volkswagen_id_buzz_charging",
+                            "name": "Smart Charging",
+                            "icon": "mdi:battery-charging",
+                            "label": null,
+                            "tap": {
+                              "type": "toggle"
+                            },
+                            "hold": {
+                              "type": "more_info"
+                            },
+                            "show_entity_picture": null
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "popup",
+        "name": "Great Room",
+        "icon": "mdi:seat-outline",
+        "hash": "#great_room",
+        "accent": "green",
+        "cards": [
+          {
+            "type": "gap",
+            "height": 12
+          },
+          {
+            "type": "room_conditions",
+            "entity": "sensor.great_room_4afa_temperature",
+            "display": {
+              "kind": "temp_hum",
+              "temp_entity": "sensor.great_room_4afa_temperature",
+              "hum_entity": "sensor.great_room_4afa_humidity",
+              "climate_entity": null
+            }
+          },
+          {
+            "type": "tabs",
+            "default_tab": 1,
+            "tabs": [
+              {
+                "title": "Light",
+                "icon": "mdi:lamp",
+                "cards": [
+                  {
+                    "type": "grid",
+                    "columns": 2,
+                    "cards": [
+                      {
+                        "name": "Livingspace Floorlamp",
+                        "icon": "mdi:floor-lamp-torchiere",
+                        "entity": "light.livingroom_standlamp",
+                        "background": "var(--popupBG)",
+                        "type": "light_slider",
+                        "tap": {
+                          "type": "toggle"
+                        },
+                        "hold": {
+                          "type": "more_info"
+                        }
+                      },
+                      {
+                        "name": "Livingspace Light",
+                        "icon": "mdi:sofa",
+                        "entity": "light.living_room_lights_ceiling",
+                        "background": "var(--popupBG)",
+                        "type": "light_slider",
+                        "tap": {
+                          "type": "toggle"
+                        },
+                        "hold": {
+                          "type": "more_info"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "type": "grid",
+                    "columns": 2,
+                    "cards": [
+                      {
+                        "name": "Entertainment Light",
+                        "icon": "mdi:television-ambient-light",
+                        "entity": "light.entertainment",
+                        "background": "var(--popupBG)",
+                        "type": "light_slider",
+                        "tap": {
+                          "type": "toggle"
+                        },
+                        "hold": {
+                          "type": "more_info"
+                        }
+                      },
+                      {
+                        "name": "Diningspace Light",
+                        "icon": "mdi:table-furniture",
+                        "entity": "light.dining_room_lights_ceiling",
+                        "background": "var(--popupBG)",
+                        "type": "light_slider",
+                        "tap": {
+                          "type": "toggle"
+                        },
+                        "hold": {
+                          "type": "more_info"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "type": "grid",
+                    "columns": 2,
+                    "cards": [
+                      {
+                        "name": "Kitchenspace Light",
+                        "icon": "mdi:silverware-variant",
+                        "entity": "light.kitchen_light",
+                        "background": "var(--popupBG)",
+                        "type": "light_slider",
+                        "tap": {
+                          "type": "toggle"
+                        },
+                        "hold": {
+                          "type": "more_info"
+                        }
+                      },
+                      {
+                        "name": "Air Purifier",
+                        "icon": "mdi:air-purifier",
+                        "entity": "fan.blue_pure_fan",
+                        "background": "var(--popupBG)",
+                        "type": "light_toggle",
+                        "tap": {
+                          "type": "toggle"
+                        },
+                        "hold": {
+                          "type": "more_info"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "type": "grid",
+                    "columns": 2,
+                    "cards": [
+                      {
+                        "name": "Kitchen Cabinets",
+                        "icon": "mdi:light-recessed",
+                        "entity": "light.kitchen_cabinet_lights",
+                        "background": "var(--popupBG)",
+                        "type": "light_toggle",
+                        "tap": {
+                          "type": "toggle"
+                        },
+                        "hold": {
+                          "type": "more_info"
+                        }
+                      },
+                      {
+                        "name": "Patio lights",
+                        "icon": "mdi:torch",
+                        "entity": "switch.foyer_main_lights",
+                        "background": "var(--popupBG)",
+                        "type": "light_toggle",
+                        "tap": {
+                          "type": "toggle"
+                        },
+                        "hold": {
+                          "type": "more_info"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "name": "Entrance Light",
+                    "icon": "mdi:light-recessed",
+                    "entity": "light.entrance_light_ceiling",
+                    "background": "var(--popupBG)",
+                    "type": "light_toggle",
+                    "tap": {
+                      "type": "toggle"
+                    },
+                    "hold": {
+                      "type": "more_info"
+                    }
+                  },
+                  {
+                    "type": "vertical_stack",
+                    "cards": [
+                      {
+                        "type": "entity_button",
+                        "entity": null,
+                        "name": "Scenes",
+                        "icon": null,
+                        "label": null,
+                        "tap": null,
+                        "hold": null,
+                        "show_entity_picture": null
+                      },
+                      {
+                        "type": "layout_grid",
+                        "columns": "max-content max-content max-content",
+                        "rows": "min-content",
+                        "areas": "\"one two three\"\n",
+                        "cards": [
+                          {
+                            "name": "Movie Night",
+                            "icon": "mdi:movie-open",
+                            "entity": null,
+                            "background": null,
+                            "type": "action_chip",
+                            "style": "chips_big",
+                            "tap": {
+                              "type": "call_service",
+                              "service": "scene.turn_on",
+                              "entity_id": "scene.tv_mode",
+                              "data": {
+                                "transition": 2
+                              }
+                            },
+                            "grid_area": "one"
+                          },
+                          {
+                            "name": "All Off",
+                            "icon": "mdi:power",
+                            "entity": null,
+                            "background": null,
+                            "type": "action_chip",
+                            "style": "chips_big",
+                            "tap": {
+                              "type": "call_service",
+                              "service": "homeassistant.turn_off",
+                              "entity_id": [
+                                "light.livingroom_standlamp",
+                                "light.living_room_lights_ceiling",
+                                "light.entertainment",
+                                "light.dining_room_lights_ceiling",
+                                "light.kitchen_light",
+                                "light.kitchen_cabinet_lights",
+                                "light.entrance_light_ceiling",
+                                "switch.foyer_main_lights"
+                              ],
+                              "data": null
+                            },
+                            "grid_area": "two"
+                          },
+                          {
+                            "name": "Night",
+                            "icon": "mdi:sleep",
+                            "entity": null,
+                            "background": null,
+                            "type": "action_chip",
+                            "style": "chips_big",
+                            "tap": {
+                              "type": "call_service",
+                              "service": "homeassistant.turn_off",
+                              "entity_id": [
+                                "light.livingroom_standlamp",
+                                "light.living_room_lights_ceiling",
+                                "light.entertainment",
+                                "light.dining_room_lights_ceiling",
+                                "light.kitchen_light",
+                                "light.kitchen_cabinet_lights",
+                                "switch.foyer_main_lights"
+                              ],
+                              "data": null
+                            },
+                            "grid_area": "three"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "title": "Climate",
+                "icon": "mdi:thermostat",
+                "cards": [
+                  {
+                    "type": "vents_group",
+                    "name": "Great Room Vents",
+                    "icon": "mdi:air-filter",
+                    "entity_ids": [
+                      "cover.great_room_edc5_vent",
+                      "cover.great_room_large_b09b_vent"
+                    ],
+                    "tap": {
+                      "type": "call_service",
+                      "service": "[[[\n  const ventStates = [\n    states['cover.great_room_edc5_vent']?.state,\n    states['cover.great_room_large_b09b_vent']?.state\n  ];\n  return ventStates.some((state) => state === 'open' || state === 'opening')\n    ? 'cover.close_cover_tilt'\n    : 'cover.open_cover_tilt';\n]]]\n",
+                      "entity_id": [
+                        "cover.great_room_edc5_vent",
+                        "cover.great_room_large_b09b_vent"
+                      ],
+                      "data": null
+                    }
+                  },
+                  {
+                    "type": "climate",
+                    "entity": "climate.great_room_room",
+                    "name": "Great Room",
+                    "activity_entity": "select.great_room_activity_status"
+                  }
+                ]
+              },
+              {
+                "title": "Media",
+                "icon": "mdi:television-classic",
+                "cards": [
+                  {
+                    "type": "media_player",
+                    "entity": "media_player.living_room",
+                    "companion_entity": "media_player.living_room_appletv",
+                    "name": "TV",
+                    "icon": "mdi:television-classic",
+                    "tap": {
+                      "type": "toggle"
+                    }
+                  },
+                  {
+                    "type": "generic",
+                    "card_type": "custom:firemote-card",
+                    "entity": "media_player.living_room_appletv",
+                    "name": null,
+                    "icon": null,
+                    "tap": null
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "popup",
+        "name": "Emilia's Room",
+        "icon": "mdi:alpha-e-circle-outline",
+        "hash": "#emilias_room",
+        "accent": "blue",
+        "cards": [
+          {
+            "type": "gap",
+            "height": 12
+          },
+          {
+            "type": "room_conditions",
+            "entity": "sensor.emilias_room_2733_temperature",
+            "display": {
+              "kind": "temp_hum",
+              "temp_entity": "sensor.emilias_room_2733_temperature",
+              "hum_entity": "sensor.emilias_room_2733_humidity",
+              "climate_entity": null
+            }
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "entity_button",
+                "entity": null,
+                "name": "Light",
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "name": "Ceiling Lights",
+                "icon": "mdi:light-recessed",
+                "entity": "light.emilias_bedroom_lights",
+                "background": "var(--popupBG)",
+                "type": "light_slider",
+                "tap": {
+                  "type": "toggle"
+                },
+                "hold": {
+                  "type": "more_info"
+                }
+              },
+              {
+                "name": "Wallflower",
+                "icon": "mdi:flower-outline",
+                "entity": "light.emilias_wallflower",
+                "background": "var(--popupBG)",
+                "type": "light_slider",
+                "tap": {
+                  "type": "toggle"
+                },
+                "hold": {
+                  "type": "more_info"
+                }
+              }
+            ]
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "entity_button",
+                "entity": null,
+                "name": "Climate",
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "name": "Room Vent",
+                "icon": null,
+                "entity": "cover.emilias_room_ca08_vent",
+                "background": "var(--popupBG)",
+                "type": "vent_toggle",
+                "tap": {
+                  "type": "vent_tilt_toggle"
+                },
+                "hold": {
+                  "type": "more_info"
+                }
+              },
+              {
+                "type": "climate",
+                "entity": "climate.emilias_room_room",
+                "name": "Emilias Room",
+                "activity_entity": "select.emilias_room_activity_status"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "popup",
+        "name": "Hallway",
+        "icon": "mdi:door",
+        "hash": "#hallway",
+        "accent": "yellow",
+        "cards": [
+          {
+            "type": "gap",
+            "height": 12
+          },
+          {
+            "type": "room_conditions",
+            "entity": "sensor.hallway_temperature",
+            "display": {
+              "kind": "temp_hum",
+              "temp_entity": null,
+              "hum_entity": null,
+              "climate_entity": "climate.hallway_room"
+            }
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "entity_button",
+                "entity": null,
+                "name": "Lights",
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "type": "climate",
+                "entity": "climate.hallway_room",
+                "name": "Hallway",
+                "activity_entity": "select.hallway_activity_status"
+              }
+            ]
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "entity_button",
+                "entity": null,
+                "name": "Info",
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "type": "grid",
+                "columns": 2,
+                "cards": [
+                  {
+                    "name": "Front Door",
+                    "icon": "mdi:fridge",
+                    "entity": "lock.front_door",
+                    "background": "var(--popupBG)",
+                    "type": "sensor_big",
+                    "label": null
+                  },
+                  {
+                    "name": "Hallway Temperature",
+                    "icon": "mdi:thermometer",
+                    "entity": "sensor.nspanelhallway_temperature",
+                    "background": "var(--popupBG)",
+                    "type": "sensor_big",
+                    "label": null
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "popup",
+        "name": "Guestroom",
+        "icon": "mdi:bed",
+        "hash": "#guestroom",
+        "accent": "pink",
+        "cards": [
+          {
+            "type": "gap",
+            "height": 12
+          },
+          {
+            "type": "room_conditions",
+            "entity": "sensor.guestroom_f628_temperature",
+            "display": {
+              "kind": "temp_hum",
+              "temp_entity": "sensor.guestroom_f628_temperature",
+              "hum_entity": "sensor.guestroom_f628_humidity",
+              "climate_entity": null
+            }
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "entity_button",
+                "entity": null,
+                "name": "Controls",
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "name": "Ceiling Lights",
+                "icon": "mdi:ceiling-light",
+                "entity": "light.guest_bedroom_main_lights",
+                "background": "var(--popupBG)",
+                "type": "light_slider",
+                "tap": {
+                  "type": "toggle"
+                },
+                "hold": {
+                  "type": "more_info"
+                }
+              },
+              {
+                "name": "Window",
+                "icon": "mdi:window-closed-variant",
+                "entity": "cover.guestroom_front",
+                "background": "var(--popupBG)",
+                "type": "cover_toggle",
+                "tap": {
+                  "type": "toggle"
+                },
+                "hold": {
+                  "type": "more_info"
+                }
+              }
+            ]
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "entity_button",
+                "entity": null,
+                "name": "Climate",
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "name": "Guestroom Vents",
+                "icon": null,
+                "entity": null,
+                "background": "var(--popupBG)",
+                "type": "vents_group",
+                "entity_ids": [
+                  "cover.guestroom_7fcf_vent",
+                  "cover.guestroom_garden_9bbb_vent"
+                ]
+              },
+              {
+                "type": "climate",
+                "entity": "climate.guestroom_room",
+                "name": "Guestroom",
+                "activity_entity": "select.guestroom_activity_status"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "popup",
+        "name": "Main Bathroom",
+        "icon": "mdi:shower-head",
+        "hash": "#mainbath",
+        "accent": "red",
+        "cards": [
+          {
+            "type": "gap",
+            "height": 12
+          },
+          {
+            "type": "room_conditions",
+            "entity": "sensor.main_bathroom_6eca_temperature",
+            "display": {
+              "kind": "temp_hum",
+              "temp_entity": "sensor.main_bathroom_6eca_temperature",
+              "hum_entity": "sensor.main_bathroom_6eca_humidity",
+              "climate_entity": null
+            }
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "entity_button",
+                "entity": null,
+                "name": "Light",
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "name": "Bathroom Light",
+                "icon": "mdi:ceiling-light-multiple-outline",
+                "entity": "light.main_bathroom_light",
+                "background": "var(--popupBG)",
+                "type": "light_slider",
+                "tap": {
+                  "type": "toggle"
+                },
+                "hold": {
+                  "type": "more_info"
+                }
+              }
+            ]
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "entity_button",
+                "entity": null,
+                "name": "Climate",
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "name": "Bathroom Vent",
+                "icon": null,
+                "entity": "cover.main_bathroom_72c5_vent",
+                "background": "var(--popupBG)",
+                "type": "vent_toggle",
+                "tap": {
+                  "type": "vent_tilt_toggle"
+                },
+                "hold": {
+                  "type": "more_info"
+                }
+              },
+              {
+                "type": "climate",
+                "entity": "climate.main_bathroom_room",
+                "name": "Main Bathroom",
+                "activity_entity": "select.main_bathroom_activity_status"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "popup",
+        "name": "Second Bathroom",
+        "icon": "mdi:toilet",
+        "hash": "#secondbath",
+        "accent": "blue-dark",
+        "cards": [
+          {
+            "type": "gap",
+            "height": 12
+          },
+          {
+            "type": "room_conditions",
+            "entity": "sensor.second_bathroom_8ee5_temperature",
+            "display": {
+              "kind": "temp_hum",
+              "temp_entity": "sensor.second_bathroom_8ee5_temperature",
+              "hum_entity": "sensor.second_bathroom_8ee5_humidity",
+              "climate_entity": null
+            }
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "entity_button",
+                "entity": null,
+                "name": "Light",
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "name": "Bathroom Light",
+                "icon": "mdi:ceiling-light",
+                "entity": "light.second_bathroom_lightswitch",
+                "background": "var(--popupBG)",
+                "type": "light_slider",
+                "tap": {
+                  "type": "toggle"
+                },
+                "hold": {
+                  "type": "more_info"
+                }
+              }
+            ]
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "entity_button",
+                "entity": null,
+                "name": "Climate",
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "name": "Bathroom Vent",
+                "icon": null,
+                "entity": "cover.second_bathroom_afb5_vent",
+                "background": "var(--popupBG)",
+                "type": "vent_toggle",
+                "tap": {
+                  "type": "vent_tilt_toggle"
+                },
+                "hold": {
+                  "type": "more_info"
+                }
+              },
+              {
+                "type": "climate",
+                "entity": "climate.second_bathroom_room",
+                "name": "Second Bathroom",
+                "activity_entity": "select.second_bathroom_activity_status"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "popup",
+        "name": "Jonathan's Room",
+        "icon": "mdi:desk",
+        "hash": "#jonathans_room",
+        "accent": "blue",
+        "cards": [
+          {
+            "type": "gap",
+            "height": 12
+          },
+          {
+            "type": "room_conditions",
+            "entity": "sensor.jonathans_bedroom_9b3a_temperature",
+            "display": {
+              "kind": "temp_hum",
+              "temp_entity": "sensor.jonathans_bedroom_9b3a_temperature",
+              "hum_entity": "sensor.jonathans_bedroom_9b3a_humidity",
+              "climate_entity": null
+            }
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "entity_button",
+                "entity": null,
+                "name": "Light",
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "name": "Ceiling Lights",
+                "icon": "mdi:light-recessed",
+                "entity": "light.jonathans_room_lights",
+                "background": "var(--popupBG)",
+                "type": "light_slider",
+                "tap": {
+                  "type": "toggle"
+                },
+                "hold": {
+                  "type": "more_info"
+                }
+              }
+            ]
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "entity_button",
+                "entity": null,
+                "name": "Controls",
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "type": "grid",
+                "columns": 2,
+                "cards": [
+                  {
+                    "name": "Ceiling Fan",
+                    "icon": "mdi:fan",
+                    "entity": "fan.ceiling_fan",
+                    "background": "var(--popupBG)",
+                    "type": "light_toggle",
+                    "tap": {
+                      "type": "toggle"
+                    },
+                    "hold": {
+                      "type": "more_info"
+                    }
+                  },
+                  {
+                    "type": "entity_button",
+                    "entity": "cover.jonathan",
+                    "name": "Patio Door",
+                    "icon": "mdi:door-sliding",
+                    "label": null,
+                    "tap": {
+                      "type": "toggle"
+                    },
+                    "hold": {
+                      "type": "more_info"
+                    },
+                    "show_entity_picture": null
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "entity_button",
+                "entity": null,
+                "name": "Climate",
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "name": "Room Vent",
+                "icon": null,
+                "entity": "cover.jonathans_bedroom_f623_vent",
+                "background": "var(--popupBG)",
+                "type": "vent_toggle",
+                "tap": {
+                  "type": "vent_tilt_toggle"
+                },
+                "hold": {
+                  "type": "more_info"
+                }
+              },
+              {
+                "type": "climate",
+                "entity": "climate.jonathans_bedroom_room",
+                "name": "Jonathan's Room",
+                "activity_entity": "select.jonathans_bedroom_activity_status"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "popup",
+        "name": "Main Bedroom",
+        "icon": "mdi:bed-king",
+        "hash": "#mainbedroom",
+        "accent": "blue",
+        "cards": [
+          {
+            "type": "gap",
+            "height": 12
+          },
+          {
+            "type": "room_conditions",
+            "entity": "sensor.main_bedroom_6671_temperature",
+            "display": {
+              "kind": "temp_hum",
+              "temp_entity": "sensor.main_bedroom_6671_temperature",
+              "hum_entity": "sensor.main_bedroom_6671_humidity",
+              "climate_entity": null
+            }
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "entity_button",
+                "entity": null,
+                "name": "Light",
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "name": "Ceiling Lights",
+                "icon": "mdi:light-recessed",
+                "entity": "light.master_bedroom_main_lights",
+                "background": "var(--popupBG)",
+                "type": "light_slider",
+                "tap": {
+                  "type": "toggle"
+                },
+                "hold": {
+                  "type": "more_info"
+                }
+              },
+              {
+                "name": "Bedside Light",
+                "icon": "mdi:lamp",
+                "entity": "light.main_bedroom_lightswitch",
+                "background": "var(--popupBG)",
+                "type": "light_slider",
+                "tap": {
+                  "type": "toggle"
+                },
+                "hold": {
+                  "type": "more_info"
+                }
+              }
+            ]
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "entity_button",
+                "entity": null,
+                "name": "Climate",
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "name": "Room Vent",
+                "icon": null,
+                "entity": "cover.main_bedroom_97a9_vent",
+                "background": "var(--popupBG)",
+                "type": "vent_toggle",
+                "tap": {
+                  "type": "vent_tilt_toggle"
+                },
+                "hold": {
+                  "type": "more_info"
+                }
+              },
+              {
+                "type": "climate",
+                "entity": "climate.main_bedroom_room",
+                "name": "Main Bedroom",
+                "activity_entity": "select.main_bedroom_activity_status"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "popup",
+        "name": "Camera Front",
+        "icon": "mdi:video",
+        "hash": "#camerafront_view",
+        "accent": "blue",
+        "cards": [
+          {
+            "type": "gap",
+            "height": 12
+          },
+          {
+            "type": "entity_button",
+            "entity": null,
+            "name": null,
+            "icon": null,
+            "label": null,
+            "tap": null,
+            "hold": null,
+            "show_entity_picture": null
+          },
+          {
+            "type": "layout_grid",
+            "columns": "1fr",
+            "rows": "minmax(0, 2fr) minmax(0, 1fr)",
+            "areas": "\"door\"\n\"garage\"\n",
+            "cards": [
+              {
+                "type": "generic",
+                "card_type": "custom:webrtc-camera",
+                "entity": null,
+                "name": null,
+                "icon": null,
+                "tap": null
+              },
+              {
+                "type": "generic",
+                "card_type": "custom:webrtc-camera",
+                "entity": null,
+                "name": null,
+                "icon": null,
+                "tap": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "popup",
+        "name": "Office",
+        "icon": "mdi:alpha-j-circle-outline",
+        "hash": "#office",
+        "accent": "blue",
+        "cards": [
+          {
+            "type": "gap",
+            "height": 12
+          },
+          {
+            "type": "room_conditions",
+            "entity": "sensor.office_abfd_temperature",
+            "display": {
+              "kind": "temp_hum",
+              "temp_entity": "sensor.office_abfd_temperature",
+              "hum_entity": "sensor.office_abfd_humidity",
+              "climate_entity": null
+            }
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "entity_button",
+                "entity": null,
+                "name": "Light",
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "name": "Ceiling Lights",
+                "icon": "mdi:light-recessed",
+                "entity": "light.office_lights",
+                "background": "var(--popupBG)",
+                "type": "light_slider",
+                "tap": {
+                  "type": "toggle"
+                },
+                "hold": {
+                  "type": "more_info"
+                }
+              }
+            ]
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "entity_button",
+                "entity": null,
+                "name": "Climate",
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "name": "Office Vent",
+                "icon": null,
+                "entity": "cover.office_7d51_vent",
+                "background": "var(--popupBG)",
+                "type": "vent_toggle",
+                "tap": {
+                  "type": "vent_tilt_toggle"
+                },
+                "hold": {
+                  "type": "more_info"
+                }
+              },
+              {
+                "type": "climate",
+                "entity": "climate.office_room",
+                "name": "Office",
+                "activity_entity": "select.office_activity_status"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "entities": [
+    "binary_sensor.envoy_battery_discharging",
+    "binary_sensor.volkswagen_id_buzz_charging_cable_plugged_in",
+    "climate.emilias_room_room",
+    "climate.great_room_room",
+    "climate.guestroom_room",
+    "climate.hallway_room",
+    "climate.jonathans_bedroom_room",
+    "climate.main_bathroom_room",
+    "climate.main_bedroom_room",
+    "climate.model_3_climate",
+    "climate.office_room",
+    "climate.second_bathroom_room",
+    "cover.emilias_room_ca08_vent",
+    "cover.great_room_edc5_vent",
+    "cover.great_room_large_b09b_vent",
+    "cover.guestroom_7fcf_vent",
+    "cover.guestroom_front",
+    "cover.guestroom_garden_9bbb_vent",
+    "cover.jonathan",
+    "cover.jonathans_bedroom_f623_vent",
+    "cover.main_bathroom_72c5_vent",
+    "cover.main_bedroom_97a9_vent",
+    "cover.office_7d51_vent",
+    "cover.second_bathroom_afb5_vent",
+    "device_tracker.bettinas_iphone_2",
+    "device_tracker.holgers_iphone",
+    "fan.blue_pure_fan",
+    "fan.ceiling_fan",
+    "image.s8_maxv_ultra_map_0",
+    "input_boolean.greatroom_sidebar_menu",
+    "input_boolean.kiosk_mode",
+    "input_boolean.kiosk_mode_greatroom",
+    "input_boolean.vacuum_room_dining_18",
+    "input_boolean.vacuum_room_emilia_17",
+    "input_boolean.vacuum_room_entryway_24",
+    "input_boolean.vacuum_room_guest_23",
+    "input_boolean.vacuum_room_hallway_25",
+    "input_boolean.vacuum_room_jonathan_20",
+    "input_boolean.vacuum_room_kitchen_27",
+    "input_boolean.vacuum_room_living_19",
+    "input_boolean.vacuum_room_mainbath_26",
+    "input_boolean.vacuum_room_mainbed_21",
+    "input_boolean.vacuum_room_office_16",
+    "input_boolean.vacuum_room_secondbath_22",
+    "input_number.battery_energy_helper",
+    "light.dining_room_lights_ceiling",
+    "light.emilias_bedroom_lights",
+    "light.emilias_wallflower",
+    "light.entertainment",
+    "light.entrance_light_ceiling",
+    "light.guest_bedroom_main_lights",
+    "light.jonathans_room_lights",
+    "light.kitchen_cabinet_lights",
+    "light.kitchen_light",
+    "light.living_room_lights_ceiling",
+    "light.livingroom_standlamp",
+    "light.main_bathroom_light",
+    "light.main_bedroom_lightswitch",
+    "light.master_bedroom_main_lights",
+    "light.office_lights",
+    "light.second_bathroom_lightswitch",
+    "lock.front_door",
+    "media_player.living_room",
+    "media_player.living_room_appletv",
+    "number.model_3_charge_limit",
+    "person.bettina",
+    "person.holger",
+    "scene.tv_mode",
+    "script.clean_house",
+    "select.emilias_room_activity_status",
+    "select.great_room_activity_status",
+    "select.guestroom_activity_status",
+    "select.hallway_activity_status",
+    "select.jonathans_bedroom_activity_status",
+    "select.main_bathroom_activity_status",
+    "select.main_bedroom_activity_status",
+    "select.office_activity_status",
+    "select.second_bathroom_activity_status",
+    "sensor.bosch_dishwasher_operation_state",
+    "sensor.bosch_dishwasher_remaining_program_time",
+    "sensor.current_electrical_energy_import_cost",
+    "sensor.dryer",
+    "sensor.emilias_room_2733_temperature",
+    "sensor.emporia_vue_3_total_power",
+    "sensor.envoy_202234122877_current_net_power_consumption",
+    "sensor.envoy_202234122877_current_power_production",
+    "sensor.front_load_washer",
+    "sensor.great_room_4afa_temperature",
+    "sensor.guestroom_f628_temperature",
+    "sensor.hallway_temperature",
+    "sensor.home_bettina_distance",
+    "sensor.home_holger_distance",
+    "sensor.home_outdoor_aqi_5min_mean",
+    "sensor.jonathans_bedroom_9b3a_temperature",
+    "sensor.main_bathroom_6eca_temperature",
+    "sensor.main_bedroom_6671_temperature",
+    "sensor.nspanelhallway_temperature",
+    "sensor.octoprint_current_state",
+    "sensor.octoprint_job_percentage",
+    "sensor.office_abfd_temperature",
+    "sensor.second_bathroom_8ee5_temperature",
+    "sensor.tankerland_ev_charger_power_minute_average",
+    "sensor.tesla_miles_daily",
+    "sensor.volkswagen_id_buzz_charging_status",
+    "sensor.vw_miles_daily",
+    "sensor.weather_forecast_daily",
+    "switch.foyer_main_lights",
+    "switch.model_3_charge",
+    "switch.model_3_defrost",
+    "switch.volkswagen_id_buzz_charging",
+    "vacuum.s8_maxv_ultra",
+    "weather.forecast_tankerland_ct"
+  ],
+  "icons": [
+    "mdi:air-filter",
+    "mdi:air-purifier",
+    "mdi:airplane-takeoff",
+    "mdi:alpha-e-circle-outline",
+    "mdi:alpha-j-circle-outline",
+    "mdi:bag-suitcase",
+    "mdi:battery-charging",
+    "mdi:bed",
+    "mdi:bed-double-outline",
+    "mdi:bed-king",
+    "mdi:car-electric",
+    "mdi:car-electric-outline",
+    "mdi:car-outline",
+    "mdi:cash",
+    "mdi:ceiling-light",
+    "mdi:ceiling-light-multiple-outline",
+    "mdi:cellphone",
+    "mdi:cellphone-information",
+    "mdi:cog",
+    "mdi:desk",
+    "mdi:dishwasher",
+    "mdi:door",
+    "mdi:door-sliding",
+    "mdi:face-mask-outline",
+    "mdi:fan",
+    "mdi:floor-lamp-torchiere",
+    "mdi:flower-outline",
+    "mdi:fridge",
+    "mdi:home-battery-outline",
+    "mdi:home-lightning-bolt",
+    "mdi:lamp",
+    "mdi:laptop-account",
+    "mdi:light-recessed",
+    "mdi:lightning-bolt",
+    "mdi:menu",
+    "mdi:metronome-tick",
+    "mdi:movie-open",
+    "mdi:pot-steam-outline",
+    "mdi:power",
+    "mdi:power-plug",
+    "mdi:printer-3d",
+    "mdi:receipt-text",
+    "mdi:seat-outline",
+    "mdi:shoe-print",
+    "mdi:shower-head",
+    "mdi:silverware-fork-knife",
+    "mdi:silverware-variant",
+    "mdi:sleep",
+    "mdi:sofa",
+    "mdi:sofa-outline",
+    "mdi:solar-power-variant",
+    "mdi:solar-power-variant-outline",
+    "mdi:table-furniture",
+    "mdi:television-ambient-light",
+    "mdi:television-classic",
+    "mdi:thermometer",
+    "mdi:thermostat",
+    "mdi:toilet",
+    "mdi:torch",
+    "mdi:transmission-tower",
+    "mdi:tumble-dryer",
+    "mdi:vacuum",
+    "mdi:vacuum-outline",
+    "mdi:van-passenger",
+    "mdi:video",
+    "mdi:washing-machine",
+    "mdi:weather-partly-snowy-rainy",
+    "mdi:window-closed-variant"
+  ]
+}
