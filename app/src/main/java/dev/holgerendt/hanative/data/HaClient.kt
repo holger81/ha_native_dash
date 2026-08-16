@@ -21,6 +21,7 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -29,7 +30,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import java.net.URLEncoder
 import java.time.Instant
+import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -59,6 +62,25 @@ data class EntityState(
     val entityPicture: String?
         get() = attrString("entity_picture")
 }
+
+data class HaCalendarEvent(
+    val entityId: String = "",
+    val summary: String,
+    val description: String? = null,
+    val location: String? = null,
+    val start: Instant? = null,
+    val end: Instant? = null,
+    val allDay: Boolean = false,
+    val startDate: LocalDate? = null,
+    val endDate: LocalDate? = null,
+    val uid: String? = null,
+    val keyFrame: String? = null,
+    val cameraName: String? = null,
+    val category: String? = null,
+    val label: String? = null,
+    val color: String? = null,
+    val icon: String? = null,
+)
 
 sealed interface ConnectionState {
     data object Disconnected : ConnectionState
@@ -371,6 +393,161 @@ class HaClient {
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return@use null
             response.body?.bytes()
+        }
+    }
+
+    suspend fun calendarEvents(entityId: String, start: Instant, end: Instant): List<HaCalendarEvent> {
+        val startEnc = URLEncoder.encode(start.toString(), "UTF-8")
+        val endEnc = URLEncoder.encode(end.toString(), "UTF-8")
+        val root = restGet("/api/calendars/$entityId?start=$startEnc&end=$endEnc") as? JsonArray
+            ?: return emptyList()
+        return root.mapNotNull { parseCalendarEvent(it as? JsonObject ?: return@mapNotNull null, entityId) }
+    }
+
+    suspend fun llmVisionEvents(
+        entityId: String = "calendar.llm_vision_timeline",
+        limit: Int = 5,
+        hours: Int? = 24,
+        days: Int? = null,
+    ): List<HaCalendarEvent> {
+        val params = buildList {
+            add("limit=$limit")
+            if (hours != null && hours > 0) add("hours=$hours")
+            if (days != null && days > 0) add("days=$days")
+            add("include_no_activity=false")
+        }.joinToString("&")
+        val root = restGet("/api/llmvision/timeline/events?$params")
+        val items = when (root) {
+            is JsonObject -> root["events"] as? JsonArray
+            is JsonArray -> root
+            else -> null
+        }
+        if (items != null) {
+            return items.mapNotNull { parseLlmVisionEvent(it as? JsonObject ?: return@mapNotNull null) }
+        }
+        val now = Instant.now()
+        val lookbackHours = (hours ?: ((days ?: 1) * 24)).coerceAtLeast(1)
+        return calendarEvents(entityId, now.minus(lookbackHours.toLong(), ChronoUnit.HOURS), now)
+            .sortedByDescending { it.start ?: Instant.EPOCH }
+            .take(limit)
+    }
+
+    suspend fun resolveMediaUrl(path: String): String? {
+        if (path.isBlank()) return null
+        if (path.startsWith("http://") || path.startsWith("https://")) return path
+        val mediaId = when {
+            path.startsWith("media-source://") -> path
+            path.startsWith("/media/") -> "media-source://media_source/local/" + path.removePrefix("/media/")
+            path.startsWith("media/") -> "media-source://media_source/local/" + path.removePrefix("media/")
+            else -> "media-source://media_source/local/$path"
+        }
+        return try {
+            val result = command {
+                put("type", "media_source/resolve_media")
+                put("media_content_id", mediaId)
+                put("expires", 60 * 60 * 3)
+            }
+            val url = result.jsonObject["url"]?.jsonPrimitive?.contentOrNull ?: return path
+            if (url.startsWith("http://") || url.startsWith("https://")) url else "$baseUrl$url"
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            if (path.startsWith("/")) "$baseUrl$path" else path
+        }
+    }
+
+    suspend fun mediaBytes(path: String): ByteArray? {
+        val url = resolveMediaUrl(path) ?: return null
+        return authenticatedBytes(url) ?: authenticatedBytes(path)
+    }
+
+    private suspend fun restGet(path: String): JsonElement? = withContext(Dispatchers.IO) {
+        if (baseUrl.isBlank() || token.isBlank()) return@withContext null
+        val request = Request.Builder()
+            .url(if (path.startsWith("http")) path else "$baseUrl$path")
+            .addHeader("Authorization", "Bearer $token")
+            .build()
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return@use null
+            val body = response.body?.string().orEmpty()
+            if (body.isBlank()) return@use null
+            json.parseToJsonElement(body)
+        }
+    }
+
+    private fun parseCalendarEvent(obj: JsonObject, entityId: String): HaCalendarEvent? {
+        val summary = obj["summary"]?.jsonPrimitive?.contentOrNull
+            ?: obj["title"]?.jsonPrimitive?.contentOrNull
+            ?: return null
+        val startBound = parseTimeBound(obj["start"])
+        val endBound = parseTimeBound(obj["end"])
+        return HaCalendarEvent(
+            entityId = entityId,
+            summary = summary,
+            description = obj["description"]?.jsonPrimitive?.contentOrNull,
+            location = obj["location"]?.jsonPrimitive?.contentOrNull,
+            start = startBound.first,
+            end = endBound.first,
+            allDay = startBound.second != null && startBound.first == null,
+            startDate = startBound.second,
+            endDate = endBound.second,
+            uid = obj["uid"]?.jsonPrimitive?.contentOrNull,
+            keyFrame = obj["key_frame"]?.jsonPrimitive?.contentOrNull
+                ?: obj["location"]?.jsonPrimitive?.contentOrNull?.takeIf { it.contains("/media/") },
+            cameraName = obj["camera_name"]?.jsonPrimitive?.contentOrNull,
+        )
+    }
+
+    private fun parseLlmVisionEvent(obj: JsonObject): HaCalendarEvent? {
+        val summary = obj["title"]?.jsonPrimitive?.contentOrNull
+            ?: obj["summary"]?.jsonPrimitive?.contentOrNull
+            ?: return null
+        val startBound = parseTimeBound(obj["start"] ?: obj["startTime"])
+        val endBound = parseTimeBound(obj["end"] ?: obj["endTime"])
+        return HaCalendarEvent(
+            entityId = "calendar.llm_vision_timeline",
+            summary = summary,
+            description = obj["description"]?.jsonPrimitive?.contentOrNull,
+            start = startBound.first,
+            end = endBound.first,
+            allDay = false,
+            startDate = startBound.second,
+            endDate = endBound.second,
+            uid = obj["uid"]?.jsonPrimitive?.contentOrNull ?: obj["id"]?.jsonPrimitive?.contentOrNull,
+            keyFrame = obj["key_frame"]?.jsonPrimitive?.contentOrNull,
+            cameraName = obj["camera_name"]?.jsonPrimitive?.contentOrNull
+                ?: obj["cameraName"]?.jsonPrimitive?.contentOrNull,
+            category = obj["category"]?.jsonPrimitive?.contentOrNull,
+            label = obj["label"]?.jsonPrimitive?.contentOrNull,
+        )
+    }
+
+    private fun parseTimeBound(element: JsonElement?): Pair<Instant?, LocalDate?> {
+        if (element == null || element is JsonNull) return null to null
+        if (element is JsonPrimitive) {
+            return parseInstantOrDate(element) to null
+        }
+        val obj = element as? JsonObject ?: return null to null
+        obj["dateTime"]?.jsonPrimitive?.let { return parseInstantOrDate(it) to null }
+        obj["date"]?.jsonPrimitive?.contentOrNull?.let { text ->
+            val date = runCatching { LocalDate.parse(text.take(10)) }.getOrNull()
+            return null to date
+        }
+        return parseInstantOrDate(obj["start"]?.jsonPrimitive ?: obj["value"]?.jsonPrimitive) to null
+    }
+
+    private fun parseInstantOrDate(primitive: JsonPrimitive?): Instant? {
+        if (primitive == null) return null
+        primitive.longOrNull?.let { epoch ->
+            return if (epoch > 10_000_000_000L) Instant.ofEpochMilli(epoch) else Instant.ofEpochSecond(epoch)
+        }
+        primitive.doubleOrNull?.let { epoch ->
+            val value = epoch.toLong()
+            return if (value > 10_000_000_000L) Instant.ofEpochMilli(value) else Instant.ofEpochSecond(value)
+        }
+        val text = primitive.contentOrNull ?: return null
+        return runCatching { Instant.parse(text) }.getOrElse {
+            runCatching { Instant.parse(text.replace(" ", "T")) }.getOrNull()
         }
     }
 

@@ -21,6 +21,8 @@ data class HomeDashboard(
     val people: List<WidgetNode> = emptyList(),
     val header: List<WidgetNode> = emptyList(),
     val chips: WidgetNode? = null,
+    val calendar: WidgetNode? = null,
+    val timeline: WidgetNode? = null,
     val rooms: List<WidgetNode> = emptyList(),
     val popups: List<PopupNode> = emptyList(),
 )
@@ -64,6 +66,9 @@ data class WidgetNode(
     val columns: JsonElement? = null,
     val height: Int? = null,
     val hours: Int? = null,
+    val days: Int? = null,
+    @SerialName("number_of_events") val numberOfEvents: Int? = null,
+    @SerialName("number_of_hours") val numberOfHours: Int? = null,
     @SerialName("hours_to_show") val hoursToShow: String? = null,
     @SerialName("grid_area") val gridArea: String? = null,
     @SerialName("activity_entity") val activityEntity: String? = null,
@@ -86,6 +91,13 @@ data class WidgetNode(
     val chips: List<WidgetNode> = emptyList(),
     val tabs: List<TabNode> = emptyList(),
     val series: List<SeriesNode> = emptyList(),
+    val calendars: List<CalendarSourceNode> = emptyList(),
+    @SerialName("weather_entity") val weatherEntity: String? = null,
+    @SerialName("show_navigation") val showNavigation: Boolean? = null,
+    @SerialName("combine_similar") val combineSimilar: Boolean? = null,
+    @SerialName("show_condition") val showCondition: Boolean? = null,
+    @SerialName("show_temperature") val showTemperature: Boolean? = null,
+    @SerialName("show_low_temperature") val showLowTemperature: Boolean? = null,
     val conditions: List<JsonObject> = emptyList(),
 ) {
     fun columnCount(): Int =
@@ -132,4 +144,11 @@ data class SeriesNode(
     val entity: String? = null,
     val name: String? = null,
     val type: String? = null,
+)
+
+@Serializable
+data class CalendarSourceNode(
+    val entity: String? = null,
+    val color: String? = null,
+    val icon: String? = null,
 )

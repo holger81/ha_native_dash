@@ -1,9 +1,11 @@
 package dev.holgerendt.hanative.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,8 +58,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import dev.holgerendt.hanative.data.ConnectionState
 import dev.holgerendt.hanative.data.QrCodes
 import dev.holgerendt.hanative.model.PopupNode
@@ -74,7 +74,9 @@ import dev.holgerendt.hanative.ui.widgets.ChipRow
 import dev.holgerendt.hanative.ui.widgets.PersonCard
 import dev.holgerendt.hanative.ui.widgets.PopupScaffold
 import dev.holgerendt.hanative.ui.widgets.RoomGrid
+import dev.holgerendt.hanative.ui.widgets.VisionTimeline
 import dev.holgerendt.hanative.ui.widgets.WeatherHeader
+import dev.holgerendt.hanative.ui.widgets.WeekPlanner
 import dev.holgerendt.hanative.ui.widgets.WidgetTree
 import kotlin.math.roundToInt
 
@@ -93,39 +95,38 @@ fun HaApp(viewModel: HaViewModel) {
     LaunchedEffect(drawerState.currentValue) {
         viewModel.setDrawer(drawerState.currentValue == DrawerValue.Open)
     }
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-            ModalDrawerSheet(drawerContainerColor = ChipDark) {
-                DrawerMenu(viewModel)
-            }
-        },
-    ) {
-        Box(Modifier.fillMaxSize().background(ScreenBackground)) {
-            HomeScreen(viewModel)
-            val popup = viewModel.popup(ui.popupHash)
-            if (popup != null) {
-                Dialog(
-                    onDismissRequest = { viewModel.closePopup() },
-                    properties = DialogProperties(usePlatformDefaultWidth = false),
-                ) {
-                    PopupHost(popup, viewModel)
+    Box(Modifier.fillMaxSize()) {
+        ModalNavigationDrawer(
+            drawerState = drawerState,
+            drawerContent = {
+                ModalDrawerSheet(drawerContainerColor = ChipDark) {
+                    DrawerMenu(viewModel)
+                }
+            },
+        ) {
+            Box(Modifier.fillMaxSize().background(ScreenBackground)) {
+                HomeScreen(viewModel)
+                if (connection !is ConnectionState.Connected) {
+                    Text(
+                        text = when (connection) {
+                            is ConnectionState.Connecting -> "Connecting…"
+                            is ConnectionState.Error -> (connection as ConnectionState.Error).message
+                            else -> "Disconnected"
+                        },
+                        color = ActiveYellow,
+                        fontSize = 12.sp,
+                        modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
+                    )
                 }
             }
-            ui.moreInfoId?.let { MoreInfoDialog(it, viewModel) }
-            if (connection !is ConnectionState.Connected) {
-                Text(
-                    text = when (connection) {
-                        is ConnectionState.Connecting -> "Connecting…"
-                        is ConnectionState.Error -> (connection as ConnectionState.Error).message
-                        else -> "Disconnected"
-                    },
-                    color = ActiveYellow,
-                    fontSize = 12.sp,
-                    modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
-                )
+        }
+        val popup = viewModel.popup(ui.popupHash)
+        if (popup != null) {
+            InWindowOverlay(onDismiss = { viewModel.closePopup() }) {
+                PopupHost(popup, viewModel)
             }
         }
+        ui.moreInfoId?.let { MoreInfoDialog(it, viewModel) }
     }
 }
 
@@ -209,8 +210,16 @@ private fun HomeScreen(viewModel: HaViewModel) {
             Spacer(Modifier.height(16.dp))
             ChipRow(it, viewModel)
         }
+        home.calendar?.let {
+            Spacer(Modifier.height(12.dp))
+            WeekPlanner(it, viewModel, Modifier.fillMaxWidth())
+        }
         Spacer(Modifier.height(12.dp))
-        RoomGrid(home.rooms, viewModel, Modifier.fillMaxSize())
+        RoomGrid(home.rooms, viewModel, Modifier.weight(1f).fillMaxWidth())
+        home.timeline?.let {
+            Spacer(Modifier.height(8.dp))
+            VisionTimeline(it, viewModel, Modifier.fillMaxWidth())
+        }
     }
 }
 
@@ -381,12 +390,22 @@ private fun WeatherPopup(viewModel: HaViewModel) {
 private fun MoreInfoDialog(entityId: String, viewModel: HaViewModel) {
     val states by viewModel.states.collectAsState()
     val entity = states[entityId]
-    Dialog(onDismissRequest = { viewModel.closeMoreInfo() }) {
+    InWindowOverlay(
+        onDismiss = { viewModel.closeMoreInfo() },
+        dismissOnScrim = true,
+        scrim = Color.Black.copy(alpha = 0.5f),
+    ) {
         Column(
             modifier = Modifier
+                .padding(horizontal = 24.dp)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(28.dp))
                 .background(CardLight)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                )
                 .padding(24.dp)
                 .verticalScroll(rememberScrollState()),
         ) {
@@ -429,6 +448,29 @@ private fun MoreInfoDialog(entityId: String, viewModel: HaViewModel) {
                 Text("$key: ${value.toString().take(80)}", color = TextMuted, fontSize = 12.sp)
             }
         }
+    }
+}
+
+@Composable
+private fun InWindowOverlay(
+    onDismiss: () -> Unit,
+    dismissOnScrim: Boolean = false,
+    scrim: Color = Color.Transparent,
+    content: @Composable () -> Unit,
+) {
+    BackHandler(onBack = onDismiss)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(scrim)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = { if (dismissOnScrim) onDismiss() },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        content()
     }
 }
 

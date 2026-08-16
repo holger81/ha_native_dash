@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.holgerendt.hanative.data.EntityState
+import dev.holgerendt.hanative.data.HaCalendarEvent
 import dev.holgerendt.hanative.data.hasLiveCameraSource
 import dev.holgerendt.hanative.model.PopupNode
 import dev.holgerendt.hanative.model.WidgetNode
@@ -84,6 +85,10 @@ import dev.holgerendt.hanative.ui.theme.accentColor
 import dev.holgerendt.hanative.ui.weatherIcon
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.jsonPrimitive
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 
 private val CardShape = RoundedCornerShape(28.dp)
@@ -137,6 +142,8 @@ fun WidgetItem(
         "person" -> PersonCard(widget, viewModel, modifier)
         "weather_header" -> WeatherHeader(widget, viewModel, modifier)
         "room_card" -> RoomCard(widget, viewModel, modifier)
+        "week_planner" -> WeekPlanner(widget, viewModel, modifier)
+        "vision_timeline" -> VisionTimeline(widget, viewModel, modifier)
         "light_slider" -> LightSlider(widget, viewModel, modifier)
         "light_toggle", "cover_toggle", "entity_button" -> ToggleRow(widget, viewModel, modifier)
         "vent_toggle" -> VentRow(widget, viewModel, modifier, listOfNotNull(widget.entity))
@@ -350,6 +357,354 @@ fun RoomGrid(rooms: List<WidgetNode>, viewModel: HaViewModel, modifier: Modifier
             placeable.forEach { (p, origin) -> p.place(origin.first, origin.second) }
         }
     }
+}
+
+@Composable
+fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
+    val zone = remember { ZoneId.systemDefault() }
+    val columns = widget.columnCount().coerceIn(1, 7)
+    val dayCount = widget.days ?: 10
+    val sources = widget.calendars
+    var dayOffset by remember { mutableIntStateOf(0) }
+    var events by remember { mutableStateOf(listOf<HaCalendarEvent>()) }
+    var forecasts by remember { mutableStateOf(listOf<Map<String, String>>()) }
+    val weatherEntity = widget.weatherEntity ?: "weather.forecast_tankerland_ct"
+    LaunchedEffect(sources, dayOffset, viewModel.client.currentBaseUrl) {
+        while (true) {
+            val startDay = LocalDate.now(zone).plusDays(dayOffset.toLong())
+            val rangeStart = startDay.atStartOfDay(zone).toInstant()
+            val rangeEnd = startDay.plusDays(dayCount.toLong()).atStartOfDay(zone).toInstant()
+            val loaded = sources.flatMap { source ->
+                val entity = source.entity ?: return@flatMap emptyList()
+                runCatching { viewModel.client.calendarEvents(entity, rangeStart, rangeEnd) }
+                    .getOrDefault(emptyList())
+                    .map { event -> event.copy(color = source.color, icon = source.icon, entityId = entity) }
+            }
+            events = if (widget.combineSimilar == true) {
+                loaded.distinctBy { Triple(it.start, it.end, it.summary.lowercase()) }
+            } else {
+                loaded
+            }
+            if (widget.showCondition != false || widget.showTemperature == true) {
+                val raw = runCatching { viewModel.client.weatherForecast(weatherEntity) }.getOrDefault(emptyList())
+                forecasts = raw.map { obj ->
+                    mapOf(
+                        "condition" to (obj["condition"]?.jsonPrimitive?.content ?: ""),
+                        "temp" to (obj["temperature"]?.jsonPrimitive?.content ?: ""),
+                        "templow" to (obj["templow"]?.jsonPrimitive?.content ?: ""),
+                        "datetime" to (obj["datetime"]?.jsonPrimitive?.content ?: ""),
+                    )
+                }
+            }
+            delay(60_000)
+        }
+    }
+    val today = LocalDate.now(zone)
+    val days = (0 until dayCount).map { today.plusDays(dayOffset.toLong() + it) }
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (widget.showNavigation == true) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .clickable { dayOffset -= dayCount },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MdiIcon("mdi:chevron-left", tint = Color.White, size = 22.dp)
+                }
+                Text(
+                    text = days.firstOrNull()?.format(DateTimeFormatter.ofPattern("MMM d")) ?: "",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .clickable { dayOffset += dayCount },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MdiIcon("mdi:chevron-right", tint = Color.White, size = 22.dp)
+                }
+            }
+        }
+        days.chunked(columns).forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                row.forEach { day ->
+                    WeekPlannerDay(
+                        day = day,
+                        today = today,
+                        events = events.filter { eventOverlapsDay(it, day, zone) }
+                            .sortedWith(compareBy<HaCalendarEvent> { !it.allDay }.thenBy { it.start ?: Instant.EPOCH }),
+                        forecast = forecasts.firstOrNull { it["datetime"].orEmpty().startsWith(day.toString()) },
+                        showCondition = widget.showCondition != false,
+                        showTemperature = widget.showTemperature == true,
+                        showLowTemperature = widget.showLowTemperature == true,
+                        modifier = Modifier.weight(1f).height(148.dp),
+                    )
+                }
+                repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WeekPlannerDay(
+    day: LocalDate,
+    today: LocalDate,
+    events: List<HaCalendarEvent>,
+    forecast: Map<String, String>?,
+    showCondition: Boolean,
+    showTemperature: Boolean,
+    showLowTemperature: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val weekday = when (day) {
+        today -> "Today"
+        today.plusDays(1) -> "Tomorrow"
+        today.minusDays(1) -> "Yesterday"
+        else -> day.format(DateTimeFormatter.ofPattern("EEE"))
+    }
+    Column(
+        modifier = modifier.padding(horizontal = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text(weekday, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                Text(day.dayOfMonth.toString(), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Light)
+            }
+            if (showCondition || showTemperature) {
+                Column(horizontalAlignment = Alignment.End) {
+                    if (showCondition) {
+                        MdiIcon(weatherIcon(forecast?.get("condition"), true), tint = Color.White, size = 18.dp)
+                    }
+                    if (showTemperature) {
+                        val high = forecast?.get("temp")
+                        val low = forecast?.get("templow")
+                        val temp = buildString {
+                            if (!high.isNullOrBlank()) append("${high.trim('"')}°")
+                            if (showLowTemperature && !low.isNullOrBlank()) append(" / ${low.trim('"')}°")
+                        }
+                        if (temp.isNotBlank()) {
+                            Text(temp, color = ChipOnDark, fontSize = 10.sp, maxLines = 1)
+                        }
+                    }
+                }
+            }
+        }
+        if (events.isEmpty()) {
+            Text("No events", color = ChipOnDark.copy(alpha = 0.55f), fontSize = 11.sp)
+        } else {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                events.forEach { event ->
+                    val background = accentColor(event.color?.removePrefix("var(--")?.removeSuffix(")"))
+                        .takeIf { event.color != null } ?: ChipDark
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(background)
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        if (!event.icon.isNullOrBlank()) {
+                            MdiIcon(event.icon, tint = if (event.color != null) Color.Black else ChipOnDark, size = 12.dp)
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = event.summary,
+                                color = if (event.color != null) Color.Black else Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = if (event.allDay) "Entire day" else event.start?.atZone(ZoneId.systemDefault())
+                                    ?.format(DateTimeFormatter.ofPattern("HH:mm")) ?: "",
+                                color = if (event.color != null) Color.Black.copy(alpha = 0.7f) else ChipOnDark,
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
+    val states by viewModel.states.collectAsState()
+    val limit = widget.numberOfEvents ?: 5
+    val hours = widget.numberOfHours ?: widget.hours
+    val days = widget.days
+    val entityId = widget.entity ?: "calendar.llm_vision_timeline"
+    var events by remember { mutableStateOf(listOf<HaCalendarEvent>()) }
+    var expandedId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(entityId, limit, hours, days, viewModel.client.currentBaseUrl) {
+        while (true) {
+            val loaded = runCatching {
+                viewModel.client.llmVisionEvents(entityId, limit, hours, days)
+            }.getOrDefault(emptyList())
+            events = loaded.sortedByDescending { it.start ?: Instant.EPOCH }.take(limit)
+            delay(20_000)
+        }
+    }
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        events.groupBy { event -> event.start?.atZone(ZoneId.systemDefault())?.toLocalDate() }.forEach { (date, dayEvents) ->
+            date?.let {
+                Text(visionDateLabel(it), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            }
+            dayEvents.forEach { event ->
+                val start = event.start?.atZone(ZoneId.systemDefault())
+                val cameraLabel = event.cameraName?.let { id ->
+                    states[id]?.friendlyName ?: id.substringAfter('.').replace('_', ' ')
+                }
+                val timeLabel = start?.format(DateTimeFormatter.ofPattern("HH:mm")).orEmpty()
+                val subtitle = listOfNotNull(
+                    timeLabel.takeIf { it.isNotBlank() },
+                    cameraLabel?.takeIf { it.isNotBlank() && it != "clip" },
+                ).joinToString(" • ")
+                val style = timelineStyle(event)
+                val eventKey = event.uid ?: "${event.start}-${event.summary}"
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(75.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(ChipDark)
+                        .clickable { expandedId = if (expandedId == eventKey) null else eventKey }
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(style.second.copy(alpha = 0.22f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        MdiIcon(style.first, tint = style.second, size = 20.dp)
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            event.summary,
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (subtitle.isNotBlank()) {
+                            Text(subtitle, color = ChipOnDark, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    if (!event.keyFrame.isNullOrBlank()) {
+                        TimelineSnapshot(
+                            path = event.keyFrame,
+                            viewModel = viewModel,
+                            modifier = Modifier
+                                .size(59.dp)
+                                .clip(RoundedCornerShape(12.dp)),
+                        )
+                    }
+                }
+                if (expandedId == eventKey && !event.description.isNullOrBlank()) {
+                    Text(
+                        text = event.description.orEmpty(),
+                        color = ChipOnDark,
+                        fontSize = 13.sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(ChipDark.copy(alpha = 0.7f))
+                            .padding(12.dp),
+                    )
+                }
+            }
+        }
+        if (events.isEmpty()) {
+            Text(
+                text = if (hours != null) "No events in the last $hours hours" else "No events",
+                color = ChipOnDark,
+                fontSize = 14.sp,
+                modifier = Modifier.padding(vertical = 12.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun TimelineSnapshot(path: String?, viewModel: HaViewModel, modifier: Modifier) {
+    var bytes by remember(path) { mutableStateOf<ByteArray?>(null) }
+    LaunchedEffect(path, viewModel.client.currentBaseUrl) {
+        if (!path.isNullOrBlank()) {
+            bytes = viewModel.client.mediaBytes(path)
+        }
+    }
+    val bitmap = remember(bytes) { bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
+    if (bitmap != null) {
+        Image(bitmap, contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop)
+    } else {
+        Box(modifier.background(CardLight.copy(alpha = 0.12f)))
+    }
+}
+
+private fun visionDateLabel(date: LocalDate): String {
+    val today = LocalDate.now()
+    return when (date) {
+        today -> "Today"
+        today.minusDays(1) -> "Yesterday"
+        else -> date.format(DateTimeFormatter.ofPattern("MMM d"))
+    }
+}
+
+private fun timelineStyle(event: HaCalendarEvent): Pair<String, Color> {
+    val haystack = listOfNotNull(event.category, event.label, event.summary).joinToString(" ").lowercase()
+    return when {
+        "package" in haystack || "delivery" in haystack -> "mdi:package-variant-closed" to Color(0xFFEA580C)
+        "car" in haystack || "vehicle" in haystack || "truck" in haystack -> "mdi:car" to Color(0xFF64748B)
+        "dog" in haystack -> "mdi:dog" to Color(0xFF00DD51)
+        "cat" in haystack -> "mdi:cat" to Color(0xFF00DD51)
+        "person" in haystack -> "mdi:walk" to Color(0xFF3B82F6)
+        "door" in haystack -> "mdi:door-closed" to Color(0xFF8B5CF6)
+        else -> "mdi:motion-sensor" to AccentBlue
+    }
+}
+
+private fun eventOverlapsDay(event: HaCalendarEvent, day: LocalDate, zone: ZoneId): Boolean {
+    if (event.allDay || event.startDate != null) {
+        val start = event.startDate ?: return false
+        val endExclusive = event.endDate ?: start.plusDays(1)
+        return !day.isBefore(start) && day.isBefore(endExclusive.coerceAtLeast(start.plusDays(1)))
+    }
+    val start = event.start?.atZone(zone)?.toLocalDate() ?: return false
+    val endInstant = event.end ?: event.start
+    val end = endInstant?.atZone(zone)?.toLocalDate() ?: start
+    val endInclusive = if (endInstant != null && endInstant.atZone(zone).toLocalTime() == java.time.LocalTime.MIDNIGHT && end.isAfter(start)) {
+        end.minusDays(1)
+    } else {
+        end
+    }
+    return !day.isBefore(start) && !day.isAfter(endInclusive)
 }
 
 @Composable

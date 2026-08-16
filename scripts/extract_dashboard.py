@@ -386,6 +386,53 @@ def convert_card(card, context: str = "") -> dict | list | None:
     if ctype == "heading":
         return {"type": "heading", "text": card.get("heading") or card.get("name")}
 
+    if ctype == "custom:week-planner-card":
+        calendars = []
+        for cal in card.get("calendars") or []:
+            if isinstance(cal, str):
+                calendars.append({"entity": cal})
+            elif isinstance(cal, dict) and cal.get("entity"):
+                calendars.append(
+                    {
+                        "entity": cal.get("entity"),
+                        "color": stringify(cal.get("color")),
+                        "icon": stringify(cal.get("icon")),
+                    }
+                )
+        weather = card.get("weather") if isinstance(card.get("weather"), dict) else {}
+        columns = card.get("columns") if isinstance(card.get("columns"), dict) else {}
+        medium = columns.get("medium")
+        days_raw = card.get("days", 10)
+        days = 10 if str(days_raw).lower() == "month" else int(str(days_raw).split()[0] or 10)
+        return {
+            "type": "week_planner",
+            "calendars": calendars,
+            "weather_entity": weather.get("entity"),
+            "days": days,
+            "columns": int(str(medium or 5).split()[0] or 5),
+            "show_navigation": bool(card.get("showNavigation", False)),
+            "combine_similar": bool(card.get("combineSimilarEvents", False)),
+            "locale": card.get("locale"),
+            "show_condition": weather.get("showCondition", True),
+            "show_temperature": weather.get("showTemperature", False),
+            "show_low_temperature": weather.get("showLowTemperature", False),
+            "grid_area": (card.get("view_layout") or {}).get("grid-area"),
+        }
+
+    if ctype == "custom:llmvision-card":
+        hours = card.get("number_of_hours")
+        days = card.get("number_of_days")
+        return {
+            "type": "vision_timeline",
+            "entity": card.get("entity") or card.get("calendar_entity") or "calendar.llm_vision_timeline",
+            "hours": int(hours) if hours is not None else None,
+            "days": int(days) if days is not None else None,
+            "number_of_events": int(card.get("number_of_events") or 5),
+            "number_of_hours": int(hours) if hours is not None else None,
+            "name": stringify(card.get("header")),
+            "grid_area": (card.get("view_layout") or {}).get("grid-area"),
+        }
+
     # Fallback: keep enough to render a generic entity tile
     entity = card.get("entity")
     if entity or ctype:
@@ -669,6 +716,8 @@ def convert_home(view: dict) -> dict:
     rooms = []
     header_cards = []
     popups = []
+    calendar = None
+    timeline = None
     home_nodes = []
 
     for card in view.get("cards") or []:
@@ -691,6 +740,10 @@ def convert_home(view: dict) -> dict:
             header_cards.append(node)
         elif kind == "chip_row":
             chips = node
+        elif kind == "week_planner" and calendar is None:
+            calendar = node
+        elif kind == "vision_timeline" and timeline is None:
+            timeline = node
         elif kind == "room_card" or area in ROOM_AREAS:
             rooms.append(node)
 
@@ -698,7 +751,7 @@ def convert_home(view: dict) -> dict:
     order = {name: index for index, name in enumerate(ROOM_AREAS)}
     rooms.sort(key=lambda item: order.get(item.get("grid_area"), 99))
 
-    return {
+    home = {
         "title": view.get("title", "Home"),
         "people": people,
         "header": header_cards,
@@ -706,6 +759,11 @@ def convert_home(view: dict) -> dict:
         "rooms": rooms,
         "popups": popups,
     }
+    if calendar:
+        home["calendar"] = calendar
+    if timeline:
+        home["timeline"] = timeline
+    return home
 
 
 def main() -> int:
@@ -730,7 +788,11 @@ def main() -> int:
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(model, indent=2))
     print(f"Wrote {dest} ({dest.stat().st_size} bytes)")
-    print(f"rooms={len(home['rooms'])} popups={len(home['popups'])} people={len(home['people'])}")
+    print(
+        f"rooms={len(home['rooms'])} popups={len(home['popups'])} people={len(home['people'])} "
+        f"calendar={home.get('calendar', {}).get('type') if home.get('calendar') else None} "
+        f"timeline={home.get('timeline', {}).get('type') if home.get('timeline') else None}"
+    )
     print(f"entities={len(entities)} icons={len(icons)}")
     print("popup hashes:", [p.get("hash") for p in home["popups"]])
     types = {}

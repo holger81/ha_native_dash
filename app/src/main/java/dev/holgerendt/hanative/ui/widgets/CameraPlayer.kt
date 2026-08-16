@@ -277,7 +277,10 @@ private fun HlsPlayer(
             view.useController = false
             view
         },
-        update = { it.player = player },
+        update = { view ->
+            view.player = player
+            view.useController = false
+        },
         modifier = modifier,
     )
 }
