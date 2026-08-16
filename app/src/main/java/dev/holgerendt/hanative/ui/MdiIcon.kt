@@ -28,12 +28,13 @@ fun MdiIcon(
 ) {
     val context = LocalContext.current
     val font = remember {
-        cachedFont ?: FontFamily(
-            Typeface.createFromAsset(context.assets, "fonts/materialdesignicons-webfont.ttf"),
-        ).also { cachedFont = it }
+        cachedFont ?: runCatching {
+            FontFamily(Typeface.createFromAsset(context.assets, "fonts/materialdesignicons-webfont.ttf"))
+        }.getOrDefault(FontFamily.Default).also { cachedFont = it }
     }
     val codes = remember {
-        cachedCodes ?: DashboardLoader.loadCodepoints(context).also { cachedCodes = it }
+        cachedCodes ?: runCatching { DashboardLoader.loadCodepoints(context) }.getOrDefault(emptyMap())
+            .also { cachedCodes = it }
     }
     val key = name?.let { if (it.startsWith("mdi:")) it else "mdi:$it" }
     val hex = key?.let { codes[it] }

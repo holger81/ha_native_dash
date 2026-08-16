@@ -16,6 +16,10 @@ object DashboardLoader {
         return json.decodeFromString(DashboardFile.serializer(), raw)
     }
 
+    fun loadOrNull(context: Context): Pair<DashboardFile?, String?> =
+        runCatching { load(context) to null }
+            .getOrElse { null to (it.message ?: it::class.simpleName) }
+
     fun loadCodepoints(context: Context): Map<String, String> {
         val raw = context.assets.open("mdi_codepoints.json").bufferedReader().use { it.readText() }
         return json.decodeFromString<Map<String, String>>(raw)

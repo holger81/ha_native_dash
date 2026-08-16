@@ -23,7 +23,7 @@
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="true"
             android:keepScreenOn="true"
-            android:screenOrientation="sensorLandscape"
+            android:screenOrientation="sensorPortrait"
             android:theme="@style/Theme.HaNativeDash"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>

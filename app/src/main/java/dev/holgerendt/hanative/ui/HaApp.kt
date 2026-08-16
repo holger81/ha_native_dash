@@ -79,8 +79,7 @@ import kotlin.math.roundToInt
 fun HaApp(viewModel: HaViewModel) {
     val ui by viewModel.ui.collectAsState()
     val connection by viewModel.connection.collectAsState()
-    val dashboard = ui.dashboard ?: return
-    if (ui.showSetup) {
+    if (ui.showSetup || ui.dashboard == null) {
         SetupScreen(viewModel)
         return
     }
@@ -341,7 +340,7 @@ fun SetupScreen(viewModel: HaViewModel) {
     var showOnDevice by remember { mutableStateOf(false) }
     val setupUrl = ui.remoteUrls.firstOrNull().orEmpty()
     val qr = remember(setupUrl) {
-        if (setupUrl.isBlank()) null else QrCodes.bitmap(setupUrl).asImageBitmap()
+        if (setupUrl.isBlank()) null else runCatching { QrCodes.bitmap(setupUrl).asImageBitmap() }.getOrNull()
     }
     val fieldColors = OutlinedTextFieldDefaults.colors(
         focusedTextColor = Color.White,
@@ -352,20 +351,21 @@ fun SetupScreen(viewModel: HaViewModel) {
         unfocusedLabelColor = ChipOnDark,
         cursorColor = ActiveYellow,
     )
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .background(ScreenBackground)
-            .padding(28.dp),
-        horizontalArrangement = Arrangement.spacedBy(28.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Column(
             modifier = Modifier
-                .weight(1f)
+                .fillMaxWidth()
                 .clip(RoundedCornerShape(28.dp))
                 .background(ChipDark)
-                .padding(28.dp),
+                .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -381,7 +381,7 @@ fun SetupScreen(viewModel: HaViewModel) {
                     bitmap = qr,
                     contentDescription = "Setup QR code",
                     modifier = Modifier
-                        .size(220.dp)
+                        .size(200.dp)
                         .clip(RoundedCornerShape(16.dp)),
                     contentScale = ContentScale.Fit,
                 )
@@ -404,14 +404,16 @@ fun SetupScreen(viewModel: HaViewModel) {
                 Text("New PIN", color = ChipOnDark)
             }
             ui.managementError?.let { Text("Management server: $it", color = Color(0xFFFF8A80), fontSize = 12.sp) }
+            if (!showOnDevice && error != null) {
+                Text(error, color = Color(0xFFFF8A80), fontSize = 13.sp, textAlign = TextAlign.Center)
+            }
         }
         Column(
             modifier = Modifier
-                .weight(1f)
+                .fillMaxWidth()
                 .clip(RoundedCornerShape(28.dp))
                 .background(ChipDark)
-                .padding(28.dp)
-                .verticalScroll(rememberScrollState()),
+                .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("On this panel", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)

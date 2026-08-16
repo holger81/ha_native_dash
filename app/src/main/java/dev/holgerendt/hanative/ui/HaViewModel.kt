@@ -66,9 +66,11 @@ class HaViewModel(
     @Volatile private var currentPin: String = newPin()
 
     init {
+        val (dashboard, loadError) = DashboardLoader.loadOrNull(app)
         _ui.value = _ui.value.copy(
-            dashboard = DashboardLoader.load(app),
+            dashboard = dashboard,
             showSetup = !credentials.isConfigured,
+            setupError = loadError,
             remotePin = currentPin,
         )
         startManagementServer()

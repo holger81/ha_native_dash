@@ -1,17 +1,22 @@
 package dev.holgerendt.hanative.data
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
 class CredentialsStore(context: Context) {
-    private val prefs = EncryptedSharedPreferences.create(
-        context,
-        "ha_native_credentials",
-        MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-    )
+    private val prefs: SharedPreferences = runCatching {
+        EncryptedSharedPreferences.create(
+            context,
+            "ha_native_credentials",
+            MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+    }.getOrElse {
+        context.getSharedPreferences("ha_native_credentials_plain", Context.MODE_PRIVATE)
+    }
 
     var baseUrl: String
         get() = prefs.getString(KEY_URL, "")?.trim().orEmpty()

@@ -120,7 +120,7 @@ fun WidgetItem(
             widget.cards.forEach { WidgetItem(it, viewModel, Modifier.weight(1f)) }
         }
         "grid" -> {
-            val columns = (widget.columns ?: 2).coerceAtLeast(1)
+            val columns = widget.columnCount()
             Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 widget.cards.chunked(columns).forEach { row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -321,9 +321,9 @@ fun RoomGrid(rooms: List<WidgetNode>, viewModel: HaViewModel, modifier: Modifier
         },
     ) { measurables, constraints ->
         val gap = 8.dp.roundToPx()
-        val width = constraints.maxWidth
-        val height = constraints.maxHeight
-        val col = (width - gap) / 2
+        val width = constraints.maxWidth.coerceAtLeast(1)
+        val height = constraints.maxHeight.coerceAtLeast(1)
+        val col = ((width - gap) / 2).coerceAtLeast(1)
         val unit = ((height - gap * 6) / 7f).toInt().coerceAtLeast(1)
         fun h(rows: Int, extraGaps: Int) = unit * rows + gap * extraGaps
         val specs = listOf(
@@ -337,10 +337,11 @@ fun RoomGrid(rooms: List<WidgetNode>, viewModel: HaViewModel, modifier: Modifier
             Triple("guestroom", col + gap to h(5, 4) + gap, col to h(2, 1)),
             Triple("secondbath", 0 to h(6, 5) + gap, col to unit),
         )
-        val order = listOf("emilia", "greatroom", "jonathan", "mainbed", "office", "hallway", "mainbath", "guestroom", "secondbath")
         val placeable = measurables.mapIndexed { index, measurable ->
-            val spec = specs[index]
-            measurable.measure(Constraints.fixed(spec.third.first, spec.third.second)) to spec.second
+            val spec = specs.getOrNull(index) ?: specs.last()
+            val childWidth = spec.third.first.coerceAtLeast(1)
+            val childHeight = spec.third.second.coerceAtLeast(1)
+            measurable.measure(Constraints.fixed(childWidth, childHeight)) to spec.second
         }
         layout(width, height) {
             placeable.forEach { (p, origin) -> p.place(origin.first, origin.second) }

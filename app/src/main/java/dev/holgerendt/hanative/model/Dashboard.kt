@@ -4,6 +4,8 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.intOrNull
 
 @Serializable
 data class DashboardFile(
@@ -54,7 +56,7 @@ data class WidgetNode(
     val background: String? = null,
     val label: String? = null,
     val layout: String? = null,
-    val columns: Int? = null,
+    val columns: JsonElement? = null,
     val height: Int? = null,
     val hours: Int? = null,
     @SerialName("hours_to_show") val hoursToShow: String? = null,
@@ -80,7 +82,10 @@ data class WidgetNode(
     val tabs: List<TabNode> = emptyList(),
     val series: List<SeriesNode> = emptyList(),
     val conditions: List<JsonObject> = emptyList(),
-)
+) {
+    fun columnCount(): Int =
+        (columns as? JsonPrimitive)?.intOrNull?.takeIf { it > 0 } ?: 2
+}
 
 @Serializable
 data class ActionNode(

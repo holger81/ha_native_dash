@@ -9,9 +9,9 @@ import java.net.Inet4Address
 import java.net.NetworkInterface
 
 object LanAddresses {
-    fun ipv4(): List<String> {
+    fun ipv4(): List<String> = runCatching {
         val found = mutableListOf<String>()
-        val interfaces = NetworkInterface.getNetworkInterfaces() ?: return found
+        val interfaces = NetworkInterface.getNetworkInterfaces() ?: return@runCatching found
         for (nic in interfaces) {
             if (!nic.isUp || nic.isLoopback) continue
             for (address in nic.inetAddresses) {
@@ -20,8 +20,8 @@ object LanAddresses {
                 }
             }
         }
-        return found.distinct()
-    }
+        found.distinct()
+    }.getOrDefault(emptyList())
 }
 
 object QrCodes {
