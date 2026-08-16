@@ -40,7 +40,7 @@ def as_dict_vars(variables) -> dict:
 def collect_entities(node, acc: set[str]) -> None:
     if isinstance(node, dict):
         for k, v in node.items():
-            if k in {"entity", "activity_entity", "battery", "home_sensor", "work_sensor", "graph", "poster"} and isinstance(v, str) and "." in v:
+            if k in {"entity", "activity_entity", "battery", "home_sensor", "work_sensor", "graph", "poster", "weather_entity"} and isinstance(v, str) and "." in v:
                 acc.add(v)
             if k in {"entity_id", "entity_ids"}:
                 if isinstance(v, str) and "." in v and not v.startswith("["):

@@ -84,7 +84,6 @@ import dev.holgerendt.hanative.ui.theme.VacuumStop
 import dev.holgerendt.hanative.ui.theme.accentColor
 import dev.holgerendt.hanative.ui.weatherIcon
 import kotlinx.coroutines.delay
-import kotlinx.serialization.json.jsonPrimitive
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -389,10 +388,10 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                 val raw = runCatching { viewModel.client.weatherForecast(weatherEntity) }.getOrDefault(emptyList())
                 forecasts = raw.map { obj ->
                     mapOf(
-                        "condition" to (obj["condition"]?.jsonPrimitive?.content ?: ""),
-                        "temp" to (obj["temperature"]?.jsonPrimitive?.content ?: ""),
-                        "templow" to (obj["templow"]?.jsonPrimitive?.content ?: ""),
-                        "datetime" to (obj["datetime"]?.jsonPrimitive?.content ?: ""),
+                        "condition" to (obj["condition"]?.toString()?.trim('"') ?: ""),
+                        "temp" to (obj["temperature"]?.toString()?.trim('"') ?: ""),
+                        "templow" to (obj["templow"]?.toString()?.trim('"') ?: ""),
+                        "datetime" to (obj["datetime"]?.toString()?.trim('"') ?: ""),
                     )
                 }
             }
@@ -686,7 +685,7 @@ private fun timelineStyle(event: HaCalendarEvent): Pair<String, Color> {
         "cat" in haystack -> "mdi:cat" to Color(0xFF00DD51)
         "person" in haystack -> "mdi:walk" to Color(0xFF3B82F6)
         "door" in haystack -> "mdi:door-closed" to Color(0xFF8B5CF6)
-        else -> "mdi:motion-sensor" to AccentBlue
+        else -> "mdi:motion-sensor" to Color(0xFF3B82F6)
     }
 }
 
@@ -696,10 +695,11 @@ private fun eventOverlapsDay(event: HaCalendarEvent, day: LocalDate, zone: ZoneI
         val endExclusive = event.endDate ?: start.plusDays(1)
         return !day.isBefore(start) && day.isBefore(endExclusive.coerceAtLeast(start.plusDays(1)))
     }
-    val start = event.start?.atZone(zone)?.toLocalDate() ?: return false
-    val endInstant = event.end ?: event.start
-    val end = endInstant?.atZone(zone)?.toLocalDate() ?: start
-    val endInclusive = if (endInstant != null && endInstant.atZone(zone).toLocalTime() == java.time.LocalTime.MIDNIGHT && end.isAfter(start)) {
+    val startInstant = event.start ?: return false
+    val start = startInstant.atZone(zone).toLocalDate()
+    val endInstant = event.end ?: startInstant
+    val end = endInstant.atZone(zone).toLocalDate()
+    val endInclusive = if (endInstant.atZone(zone).toLocalTime() == java.time.LocalTime.MIDNIGHT && end.isAfter(start)) {
         end.minusDays(1)
     } else {
         end

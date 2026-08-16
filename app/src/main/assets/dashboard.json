@@ -288,101 +288,6 @@
     "rooms": [
       {
         "type": "room_card",
-        "name": "Office",
-        "icon": "mdi:desk",
-        "path": "#office",
-        "display": {
-          "kind": "temp_hum",
-          "temp_entity": "sensor.office_abfd_temperature",
-          "hum_entity": "sensor.office_abfd_humidity",
-          "climate_entity": null
-        },
-        "accent": "yellow",
-        "radius": "36px 36px 36px 36px",
-        "tap": {
-          "type": "navigate",
-          "hash": "#office"
-        },
-        "grid_area": "office"
-      },
-      {
-        "type": "room_card",
-        "name": "Guestroom",
-        "icon": "mdi:bed",
-        "path": "#guestroom",
-        "display": {
-          "kind": "temp_hum",
-          "temp_entity": "sensor.guestroom_f628_temperature",
-          "hum_entity": "sensor.guestroom_f628_humidity",
-          "climate_entity": null
-        },
-        "accent": "pink",
-        "radius": "6px 36px 36px 6px",
-        "tap": {
-          "type": "navigate",
-          "hash": "#guestroom"
-        },
-        "grid_area": "guestroom"
-      },
-      {
-        "type": "room_card",
-        "name": "Great\nRoom",
-        "icon": "mdi:seat-outline",
-        "path": "#great_room",
-        "display": {
-          "kind": "temp_hum",
-          "temp_entity": "sensor.great_room_4afa_temperature",
-          "hum_entity": "sensor.great_room_4afa_humidity",
-          "climate_entity": null
-        },
-        "accent": "blue",
-        "radius": "6px 36px 36px 6px",
-        "tap": {
-          "type": "navigate",
-          "hash": "#great_room"
-        },
-        "grid_area": "greatroom"
-      },
-      {
-        "type": "room_card",
-        "name": "Hallway",
-        "icon": "mdi:door",
-        "path": "#hallway",
-        "display": {
-          "kind": "temp_hum",
-          "temp_entity": null,
-          "hum_entity": null,
-          "climate_entity": "climate.hallway_room"
-        },
-        "accent": "yellow",
-        "radius": "36px 6px 6px 36px",
-        "tap": {
-          "type": "navigate",
-          "hash": "#hallway"
-        },
-        "grid_area": "hallway"
-      },
-      {
-        "type": "room_card",
-        "name": "Main\nBedroom",
-        "icon": "mdi:bed-king",
-        "path": "#mainbedroom",
-        "display": {
-          "kind": "temp_hum",
-          "temp_entity": "sensor.main_bedroom_6671_temperature",
-          "hum_entity": "sensor.main_bedroom_6671_humidity",
-          "climate_entity": null
-        },
-        "accent": "purple",
-        "radius": "36px 6px 6px 36px",
-        "tap": {
-          "type": "navigate",
-          "hash": "#mainbedroom"
-        },
-        "grid_area": "mainbed"
-      },
-      {
-        "type": "room_card",
         "name": "Second\nBath",
         "icon": "mdi:toilet",
         "path": "#secondbath",
@@ -399,25 +304,6 @@
           "hash": "#secondbath"
         },
         "grid_area": "secondbath"
-      },
-      {
-        "type": "room_card",
-        "name": "Emilia's\nRoom",
-        "icon": "mdi:alpha-e-circle-outline",
-        "path": "#emilias_room",
-        "display": {
-          "kind": "temp_hum",
-          "temp_entity": "sensor.emilias_room_2733_temperature",
-          "hum_entity": "sensor.emilias_room_2733_humidity",
-          "climate_entity": null
-        },
-        "accent": "green",
-        "radius": "36px 6px 6px 36px",
-        "tap": {
-          "type": "navigate",
-          "hash": "#emilias_room"
-        },
-        "grid_area": "emilia"
       },
       {
         "type": "room_card",
@@ -440,6 +326,25 @@
       },
       {
         "type": "room_card",
+        "name": "Great\nRoom",
+        "icon": "mdi:seat-outline",
+        "path": "#great_room",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.great_room_4afa_temperature",
+          "hum_entity": "sensor.great_room_4afa_humidity",
+          "climate_entity": null
+        },
+        "accent": "blue",
+        "radius": "6px 36px 36px 6px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#great_room"
+        },
+        "grid_area": "greatroom"
+      },
+      {
+        "type": "room_card",
         "name": "Jonathan's\nRoom",
         "icon": "mdi:alpha-j-circle-outline",
         "path": "#jonathans_room",
@@ -456,6 +361,101 @@
           "hash": "#jonathans_room"
         },
         "grid_area": "jonathan"
+      },
+      {
+        "type": "room_card",
+        "name": "Main\nBedroom",
+        "icon": "mdi:bed-king",
+        "path": "#mainbedroom",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.main_bedroom_6671_temperature",
+          "hum_entity": "sensor.main_bedroom_6671_humidity",
+          "climate_entity": null
+        },
+        "accent": "purple",
+        "radius": "36px 6px 6px 36px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#mainbedroom"
+        },
+        "grid_area": "mainbed"
+      },
+      {
+        "type": "room_card",
+        "name": "Hallway",
+        "icon": "mdi:door",
+        "path": "#hallway",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": null,
+          "hum_entity": null,
+          "climate_entity": "climate.hallway_room"
+        },
+        "accent": "yellow",
+        "radius": "36px 6px 6px 36px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#hallway"
+        },
+        "grid_area": "hallway"
+      },
+      {
+        "type": "room_card",
+        "name": "Guestroom",
+        "icon": "mdi:bed",
+        "path": "#guestroom",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.guestroom_f628_temperature",
+          "hum_entity": "sensor.guestroom_f628_humidity",
+          "climate_entity": null
+        },
+        "accent": "pink",
+        "radius": "6px 36px 36px 6px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#guestroom"
+        },
+        "grid_area": "guestroom"
+      },
+      {
+        "type": "room_card",
+        "name": "Office",
+        "icon": "mdi:desk",
+        "path": "#office",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.office_abfd_temperature",
+          "hum_entity": "sensor.office_abfd_humidity",
+          "climate_entity": null
+        },
+        "accent": "yellow",
+        "radius": "36px 36px 36px 36px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#office"
+        },
+        "grid_area": "office"
+      },
+      {
+        "type": "room_card",
+        "name": "Emilia's\nRoom",
+        "icon": "mdi:alpha-e-circle-outline",
+        "path": "#emilias_room",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.emilias_room_2733_temperature",
+          "hum_entity": "sensor.emilias_room_2733_humidity",
+          "climate_entity": null
+        },
+        "accent": "green",
+        "radius": "36px 6px 6px 36px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#emilias_room"
+        },
+        "grid_area": "emilia"
       }
     ],
     "popups": [
@@ -2726,11 +2726,55 @@
           }
         ]
       }
-    ]
+    ],
+    "calendar": {
+      "type": "week_planner",
+      "calendars": [
+        {
+          "entity": "calendar.besucherkalender",
+          "color": "var(--orange)",
+          "icon": "mdi:bag-suitcase-outline"
+        },
+        {
+          "entity": "calendar.family_2",
+          "color": "var(--blue)",
+          "icon": null
+        },
+        {
+          "entity": "calendar.calendar",
+          "color": null,
+          "icon": null
+        }
+      ],
+      "weather_entity": "weather.forecast_tankerland_ct",
+      "days": 10,
+      "columns": 5,
+      "show_navigation": true,
+      "combine_similar": true,
+      "locale": "en",
+      "show_condition": true,
+      "show_temperature": true,
+      "show_low_temperature": true,
+      "grid_area": null
+    },
+    "timeline": {
+      "type": "vision_timeline",
+      "entity": "calendar.llm_vision_timeline",
+      "hours": 24,
+      "days": null,
+      "number_of_events": 5,
+      "number_of_hours": 24,
+      "name": null,
+      "grid_area": null
+    }
   },
   "entities": [
     "binary_sensor.envoy_battery_discharging",
     "binary_sensor.volkswagen_id_buzz_charging_cable_plugged_in",
+    "calendar.besucherkalender",
+    "calendar.calendar",
+    "calendar.family_2",
+    "calendar.llm_vision_timeline",
     "camera.garagefront_2",
     "camera.reolink_video_doorbell_poe_fluent",
     "climate.emilias_room_room",
@@ -2851,6 +2895,7 @@
     "mdi:alpha-e-circle-outline",
     "mdi:alpha-j-circle-outline",
     "mdi:bag-suitcase",
+    "mdi:bag-suitcase-outline",
     "mdi:battery-charging",
     "mdi:bed",
     "mdi:bed-double-outline",
