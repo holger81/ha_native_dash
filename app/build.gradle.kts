@@ -1,9 +1,62 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
+
+val versionPropertiesFile = file("version.properties")
+
+fun taskNameTriggersApkVersionBump(rawTaskName: String): Boolean {
+    val task = rawTaskName.substringAfterLast(':')
+    if (task.equals("assemble", ignoreCase = true)) return true
+    if (task.startsWith("assemble", ignoreCase = true) &&
+        (task.endsWith("Debug", ignoreCase = true) || task.endsWith("Release", ignoreCase = true)) &&
+        !task.contains("Test", ignoreCase = true)
+    ) {
+        return true
+    }
+    if (task.equals("packageDebug", ignoreCase = true) ||
+        task.equals("packageRelease", ignoreCase = true)
+    ) {
+        return true
+    }
+    return false
+}
+
+fun readAppVersion(file: java.io.File): Pair<Int, String> {
+    if (!file.exists()) {
+        return 1 to "1.0.0"
+    }
+    val props = Properties()
+    file.reader(Charsets.UTF_8).use { props.load(it) }
+    val code = props.getProperty("VERSION_CODE")?.toIntOrNull() ?: 1
+    val name = props.getProperty("VERSION_NAME") ?: "1.0.$code"
+    return code to name
+}
+
+fun persistAppVersion(file: java.io.File, code: Int, name: String) {
+    file.writeText(
+        """
+        |# Auto-bumped when packaging an APK (assemble/package). Dirty tree is expected; do not auto-commit.
+        |VERSION_CODE=$code
+        |VERSION_NAME=$name
+        |
+        """.trimMargin(),
+    )
+}
+
+// Bump only when packaging an APK — not on Gradle sync or compile-only tasks.
+if (gradle.startParameter.taskNames.any(::taskNameTriggersApkVersionBump)) {
+    val existed = versionPropertiesFile.exists()
+    val currentCode = readAppVersion(versionPropertiesFile).first
+    val nextCode = if (!existed) 2 else maxOf(currentCode + 1, 2)
+    persistAppVersion(versionPropertiesFile, nextCode, "1.0.$nextCode")
+}
+
+val (appVersionCode, appVersionName) = readAppVersion(versionPropertiesFile)
 
 android {
     namespace = "dev.holgerendt.hanative"
@@ -13,8 +66,8 @@ android {
         applicationId = "dev.holgerendt.hanative"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
     }
 
     buildTypes {

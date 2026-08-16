@@ -262,7 +262,7 @@ private fun ManagementPinCard(viewModel: HaViewModel) {
         Text("Remote setup PIN", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
         Text(
             if (ui.pinIsUserSet) {
-                "This PIN is saved on the panel and survives reinstalls. It is required for the HTTPS admin page and live screen."
+                "This PIN is saved on the panel and survives reinstalls. Use it to log in on the HTTPS admin page."
             } else {
                 "A one-time PIN is generated until you set one here. After you save a PIN, it stays until you change it."
             },
@@ -473,7 +473,7 @@ fun SetupScreen(viewModel: HaViewModel) {
         ) {
             Text("Set up from your phone", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
             Text(
-                "Scan the QR code or open the HTTPS URL on the same Wi‑Fi. Accept the certificate warning, enter the PIN below, then paste the Home Assistant token.",
+                "Scan the QR code or open the HTTPS URL on the same Wi‑Fi. Accept the certificate warning, log in with the PIN below, then paste the Home Assistant token.",
                 color = ChipOnDark,
                 fontSize = 14.sp,
                 textAlign = TextAlign.Center,
