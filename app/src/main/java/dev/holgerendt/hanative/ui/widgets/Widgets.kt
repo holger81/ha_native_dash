@@ -330,22 +330,30 @@ fun RoomGrid(rooms: List<WidgetNode>, viewModel: HaViewModel, modifier: Modifier
         },
     ) { measurables, constraints ->
         val gap = 8.dp.roundToPx()
-        val width = constraints.maxWidth.coerceAtLeast(1)
-        val height = constraints.maxHeight.coerceAtLeast(1)
+        val width = constraints.maxWidth
+            .takeUnless { it == Constraints.Infinity }
+            ?.coerceAtLeast(1)
+            ?: constraints.minWidth.coerceAtLeast(1)
+        // Lovelace rooms mosaic: 1fr 1fr / 146px 70px 146px 146px 146px 70px 146px
+        val rowHeights = listOf(146.dp, 70.dp, 146.dp, 146.dp, 146.dp, 70.dp, 146.dp).map { it.roundToPx() }
+        fun yOf(row: Int) = rowHeights.take(row).sum() + gap * row
+        fun hOf(from: Int, toExclusive: Int): Int {
+            val count = (toExclusive - from).coerceAtLeast(1)
+            return rowHeights.subList(from, toExclusive).sum() + gap * (count - 1)
+        }
         val col = ((width - gap) / 2).coerceAtLeast(1)
-        val unit = ((height - gap * 6) / 7f).toInt().coerceAtLeast(1)
-        fun h(rows: Int, extraGaps: Int) = unit * rows + gap * extraGaps
         val specs = listOf(
-            Triple("emilia", 0 to 0, col to h(2, 1)),
-            Triple("greatroom", col + gap to 0, col to unit),
-            Triple("jonathan", col + gap to unit + gap, col to h(2, 1)),
-            Triple("mainbed", 0 to h(2, 1) + gap, col to unit),
-            Triple("office", 0 to h(3, 2) + gap, width to unit),
-            Triple("hallway", 0 to h(4, 3) + gap, col to h(2, 1)),
-            Triple("mainbath", col + gap to h(4, 3) + gap, col to unit),
-            Triple("guestroom", col + gap to h(5, 4) + gap, col to h(2, 1)),
-            Triple("secondbath", 0 to h(6, 5) + gap, col to unit),
+            Triple("emilia", 0 to yOf(0), col to hOf(0, 2)),
+            Triple("greatroom", col + gap to yOf(0), col to hOf(0, 1)),
+            Triple("jonathan", col + gap to yOf(1), col to hOf(1, 3)),
+            Triple("mainbed", 0 to yOf(2), col to hOf(2, 3)),
+            Triple("office", 0 to yOf(3), width to hOf(3, 4)),
+            Triple("hallway", 0 to yOf(4), col to hOf(4, 6)),
+            Triple("mainbath", col + gap to yOf(4), col to hOf(4, 5)),
+            Triple("guestroom", col + gap to yOf(5), col to hOf(5, 7)),
+            Triple("secondbath", 0 to yOf(6), col to hOf(6, 7)),
         )
+        val height = rowHeights.sum() + gap * (rowHeights.size - 1)
         val placeable = measurables.mapIndexed { index, measurable ->
             val spec = specs.getOrNull(index) ?: specs.last()
             val childWidth = spec.third.first.coerceAtLeast(1)
@@ -567,6 +575,12 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
         }
     }
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = widget.name.takeUnless { it.isNullOrBlank() } ?: "This happened around the house",
+            color = Color.White,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Medium,
+        )
         events.groupBy { event -> event.start?.atZone(ZoneId.systemDefault())?.toLocalDate() }.forEach { (date, dayEvents) ->
             date?.let {
                 Text(visionDateLabel(it), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)

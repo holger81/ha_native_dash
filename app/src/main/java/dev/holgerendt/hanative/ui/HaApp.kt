@@ -162,11 +162,7 @@ private fun DrawerMenu(viewModel: HaViewModel) {
             Text(it, color = Color.White, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
         }
         Text("PIN ${ui.remotePin}", color = ActiveYellow, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 4.dp, bottom = 4.dp))
-        if (ui.pinIsUserSet) {
-            Text("Saved PIN", color = ChipOnDark, fontSize = 12.sp, modifier = Modifier.padding(bottom = 12.dp))
-        } else {
-            Spacer(Modifier.height(8.dp))
-        }
+        Text("Stays until you change it in Settings", color = ChipOnDark, fontSize = 12.sp, modifier = Modifier.padding(bottom = 12.dp))
         Text(
             "Home Assistant connection",
             color = ActiveYellow,
@@ -181,7 +177,12 @@ private fun HomeScreen(viewModel: HaViewModel) {
     val home = ui.dashboard?.home ?: return
     val menu = home.header.firstOrNull { it.type == "menu_button" }
     val weather = home.header.firstOrNull { it.type == "weather_header" }
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp)) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -211,14 +212,20 @@ private fun HomeScreen(viewModel: HaViewModel) {
             ChipRow(it, viewModel)
         }
         home.calendar?.let {
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(24.dp))
             WeekPlanner(it, viewModel, Modifier.fillMaxWidth())
         }
         Spacer(Modifier.height(12.dp))
-        RoomGrid(home.rooms, viewModel, Modifier.weight(1f).fillMaxWidth())
-        home.timeline?.let {
-            Spacer(Modifier.height(8.dp))
-            VisionTimeline(it, viewModel, Modifier.fillMaxWidth())
+        // Lovelace `(min-width: 1024px)`: 50% rooms | 50% timeline. 1080px portrait qualifies.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            RoomGrid(home.rooms, viewModel, Modifier.weight(1f))
+            home.timeline?.let {
+                VisionTimeline(it, viewModel, Modifier.weight(1f))
+            }
         }
     }
 }
@@ -270,11 +277,7 @@ private fun ManagementPinCard(viewModel: HaViewModel) {
     ) {
         Text("Remote setup PIN", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
         Text(
-            if (ui.pinIsUserSet) {
-                "This PIN is saved on the panel and survives reinstalls. Use it to log in on the HTTPS admin page."
-            } else {
-                "A one-time PIN is generated until you set one here. After you save a PIN, it stays until you change it."
-            },
+            "This PIN is saved on the panel and survives app upgrades and reinstalls. Use it to log in on the HTTPS admin page. Changing it here signs out existing admin sessions.",
             color = ChipOnDark,
             fontSize = 14.sp,
         )
@@ -538,19 +541,13 @@ fun SetupScreen(viewModel: HaViewModel) {
             }
             Text("PIN", color = ChipOnDark, fontSize = 13.sp)
             Text(
-                if (ui.pinIsUserSet) ui.remotePin else ui.remotePin.chunked(3).joinToString(" "),
+                ui.remotePin,
                 color = ActiveYellow,
                 fontSize = 42.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
             )
-            if (ui.pinIsUserSet) {
-                Text("Saved PIN from Settings", color = ChipOnDark, fontSize = 13.sp)
-            } else {
-                TextButton(onClick = { viewModel.rotatePin() }) {
-                    Text("New PIN", color = ChipOnDark)
-                }
-            }
+            Text("This PIN stays until you change it in Settings.", color = ChipOnDark, fontSize = 13.sp)
             ui.managementError?.let { Text("Management server: $it", color = Color(0xFFFF8A80), fontSize = 12.sp) }
             if (!showOnDevice && error != null) {
                 Text(error, color = Color(0xFFFF8A80), fontSize = 13.sp, textAlign = TextAlign.Center)

@@ -48,6 +48,14 @@ internal object RecoverableFiles {
         return readMediaStore(context, name)
     }
 
+    fun exists(context: Context, name: String): Boolean {
+        val onDisk = runCatching {
+            val file = File(publicDir(), name)
+            file.isFile && file.length() > 0L
+        }.getOrDefault(false)
+        return onDisk || mediaUri(context, name) != null
+    }
+
     fun delete(context: Context, name: String) {
         runCatching { File(publicDir(), name).takeIf { it.isFile }?.delete() }
         runCatching { deleteMediaStore(context, name) }

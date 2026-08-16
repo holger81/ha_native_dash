@@ -429,7 +429,7 @@ def convert_card(card, context: str = "") -> dict | list | None:
             "days": int(days) if days is not None else None,
             "number_of_events": int(card.get("number_of_events") or 5),
             "number_of_hours": int(hours) if hours is not None else None,
-            "name": stringify(card.get("header")),
+            "name": stringify(card.get("header")) or "This happened around the house",
             "grid_area": (card.get("view_layout") or {}).get("grid-area"),
         }
 

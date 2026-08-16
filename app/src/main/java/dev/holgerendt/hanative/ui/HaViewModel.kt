@@ -66,7 +66,7 @@ class HaViewModel(
     private var reconnectJob: Job? = null
     private var managementServer: ManagementServer? = null
     private val random = SecureRandom()
-    @Volatile private var currentPin: String = credentials.managementPin.ifBlank { newPin() }
+    @Volatile private var currentPin: String = credentials.adoptOrCreatePin { newPin() }
 
     init {
         val (dashboard, loadError) = DashboardLoader.loadOrNull(app)
@@ -90,12 +90,6 @@ class HaViewModel(
 
     private fun newPin(): String = "%06d".format(random.nextInt(1_000_000))
 
-    fun rotatePin() {
-        if (credentials.managementPin.isNotBlank()) return
-        currentPin = newPin()
-        _ui.value = _ui.value.copy(remotePin = currentPin, pinIsUserSet = false)
-    }
-
     fun setManagementPin(pin: String, confirm: String): Result<Unit> {
         if (pin.trim() != confirm.trim()) {
             return Result.failure(IllegalArgumentException("PINs do not match"))
@@ -113,9 +107,12 @@ class HaViewModel(
     fun retryRestoreIfNeeded() {
         if (credentials.isConfigured && credentials.managementPin.isNotBlank()) return
         credentials.reloadFromExternal()
-        if (credentials.managementPin.isNotBlank() && currentPin != credentials.managementPin) {
-            currentPin = credentials.managementPin
-            _ui.value = _ui.value.copy(remotePin = currentPin, pinIsUserSet = true)
+        currentPin = credentials.adoptOrCreatePin { currentPin.ifBlank { newPin() } }
+        if (currentPin != _ui.value.remotePin || credentials.managementPin.isNotBlank() != _ui.value.pinIsUserSet) {
+            _ui.value = _ui.value.copy(
+                remotePin = currentPin,
+                pinIsUserSet = credentials.managementPin.isNotBlank(),
+            )
         }
         if (credentials.isConfigured && _ui.value.showSetup) {
             viewModelScope.launch { connect(credentials.baseUrl, credentials.token) }
@@ -178,12 +175,12 @@ class HaViewModel(
         }
         credentials.baseUrl = url
         credentials.token = token
-        client.connect(url, token)
         if (credentials.managementPin.isBlank()) {
-            currentPin = newPin()
+            credentials.managementPin = currentPin
         } else {
             currentPin = credentials.managementPin
         }
+        client.connect(url, token)
         _ui.value = _ui.value.copy(
             showSetup = false,
             setupBusy = false,
