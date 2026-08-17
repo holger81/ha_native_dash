@@ -348,36 +348,77 @@ class HaClient {
     suspend fun history(entityId: String, hours: Int = 12): List<Pair<Long, Double>> =
         withContext(Dispatchers.IO) {
             if (baseUrl.isBlank() || token.isBlank() || entityId.isBlank()) return@withContext emptyList()
-            val start = Instant.now().minus(hours.toLong(), ChronoUnit.HOURS).toString()
+            val start = Instant.now().minus(hours.toLong(), ChronoUnit.HOURS)
             val encodedEntity = URLEncoder.encode(entityId, "UTF-8")
-            val url = "$baseUrl/api/history/period/$start?filter_entity_id=$encodedEntity&minimal_response&significant_changes_only=0"
+            val startEnc = URLEncoder.encode(start.toString(), "UTF-8")
+            val url = "$baseUrl/api/history/period/$startEnc?filter_entity_id=$encodedEntity&significant_changes_only=0&minimal_response=0"
             val request = Request.Builder()
                 .url(url)
                 .addHeader("Authorization", "Bearer $token")
                 .build()
-            http.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext emptyList()
+            val fromRest = http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@use emptyList()
                 val body = response.body?.string().orEmpty()
                 val root = json.parseToJsonElement(body)
-                val series = (root as? JsonArray)?.firstOrNull() as? JsonArray ?: return@withContext emptyList()
-                series.mapNotNull { point ->
-                    val obj = point as? JsonObject ?: return@mapNotNull null
-                    val raw = obj["state"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                    val state = historyValue(raw) ?: return@mapNotNull null
-                    val lastChanged = obj["last_changed"]?.jsonPrimitive?.contentOrNull
-                        ?: obj["last_updated"]?.jsonPrimitive?.contentOrNull
-                    val millis = runCatching { Instant.parse(lastChanged).toEpochMilli() }.getOrNull()
-                        ?: return@mapNotNull null
-                    millis to state
-                }
+                val series = (root as? JsonArray)?.firstOrNull() as? JsonArray ?: return@use emptyList()
+                parseHistoryPoints(series)
             }
+            if (fromRest.size >= 2) return@withContext fromRest
+            val fromWs = runCatching { websocketHistory(entityId, hours) }.getOrDefault(emptyList())
+            fromWs.ifEmpty { fromRest }
+        }
+
+    private suspend fun websocketHistory(entityId: String, hours: Int): List<Pair<Long, Double>> {
+        val end = Instant.now()
+        val start = end.minus(hours.toLong(), ChronoUnit.HOURS)
+        val result = command {
+            put("type", "history/history_during_period")
+            put("start_time", start.toString())
+            put("end_time", end.toString())
+            put("significant_changes_only", false)
+            put("minimal_response", false)
+            put("no_attributes", true)
+            put("entity_ids", JsonArray(listOf(JsonPrimitive(entityId))))
+        }
+        val rows = when (result) {
+            is JsonObject -> result[entityId] as? JsonArray
+            is JsonArray -> result
+            else -> null
+        } ?: return emptyList()
+        return parseHistoryPoints(rows)
+    }
+
+    private fun parseHistoryPoints(series: JsonArray): List<Pair<Long, Double>> =
+        series.mapNotNull { point ->
+            val obj = point as? JsonObject ?: return@mapNotNull null
+            val raw = obj["state"]?.jsonPrimitive?.contentOrNull
+                ?: obj["s"]?.jsonPrimitive?.contentOrNull
+                ?: return@mapNotNull null
+            val value = historyValue(raw) ?: return@mapNotNull null
+            val time = obj["last_changed"] ?: obj["last_updated"] ?: obj["lu"] ?: obj["last_changed"]
+            val millis = (time as? JsonPrimitive)?.let { parseInstantOrDate(it)?.toEpochMilli() }
+                ?: return@mapNotNull null
+            millis to value
         }
 
     /** HA more-info history: 5-minute mean with min/max band; falls back to raw history. */
     suspend fun historyBuckets(entityId: String, hours: Int = 24): List<HistoryBucket> {
-        val stats = runCatching { statisticsDuringPeriod(entityId, hours) }.getOrDefault(emptyList())
-        if (stats.size >= 2) return stats
-        return aggregateHistory(history(entityId, hours), hours)
+        val fiveMin = runCatching { statisticsDuringPeriod(entityId, hours, "5minute") }.getOrDefault(emptyList())
+        if (fiveMin.size >= 2) return fiveMin
+        val hourly = runCatching { statisticsDuringPeriod(entityId, hours, "hour") }.getOrDefault(emptyList())
+        if (hourly.size >= 2) return hourly
+        val points = history(entityId, hours)
+        if (points.size == 1) {
+            val endMs = Instant.now().toEpochMilli()
+            val startMs = endMs - hours.toLong() * 60L * 60L * 1000L
+            val value = points.first().second
+            return listOf(
+                HistoryBucket(startMs, value, value, value),
+                HistoryBucket(points.first().first, value, value, value),
+                HistoryBucket(endMs, value, value, value),
+            )
+        }
+        return aggregateHistory(points, hours)
     }
 
     suspend fun deviceNameFor(entityId: String): String? {
@@ -401,7 +442,7 @@ class HaClient {
             ?: device["name"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
     }
 
-    private suspend fun statisticsDuringPeriod(entityId: String, hours: Int): List<HistoryBucket> {
+    private suspend fun statisticsDuringPeriod(entityId: String, hours: Int, period: String): List<HistoryBucket> {
         if (entityId.isBlank()) return emptyList()
         val end = Instant.now()
         val start = end.minus(hours.toLong(), ChronoUnit.HOURS)
@@ -409,7 +450,7 @@ class HaClient {
             put("type", "recorder/statistics_during_period")
             put("start_time", start.toString())
             put("end_time", end.toString())
-            put("period", "5minute")
+            put("period", period)
             put("statistic_ids", JsonArray(listOf(JsonPrimitive(entityId))))
             put("types", JsonArray(listOf("mean", "min", "max", "state").map { JsonPrimitive(it) }))
         }
@@ -735,13 +776,24 @@ class HaClient {
     }
 
     suspend fun weatherForecast(entityId: String): List<JsonObject> {
-        val result = command {
-            put("type", "weather/get_forecasts")
-            put("entity_id", entityId)
-            put("forecast_type", "daily")
+        val fromWs = runCatching {
+            val result = command {
+                put("type", "weather/get_forecasts")
+                put("entity_id", JsonArray(listOf(JsonPrimitive(entityId))))
+                put("forecast_type", "daily")
+            }
+            result.jsonObject[entityId]?.jsonObject?.get("forecast") as? JsonArray
+        }.getOrNull()
+        if (fromWs != null && fromWs.isNotEmpty()) {
+            return fromWs.mapNotNull { it as? JsonObject }
         }
-        val forecasts = result.jsonObject[entityId]?.jsonObject?.get("forecast") as? JsonArray
-        return forecasts?.mapNotNull { it as? JsonObject }.orEmpty()
+        forecastFromAttributes(entityId).takeIf { it.isNotEmpty() }?.let { return it }
+        return forecastFromAttributes("sensor.weather_forecast_daily")
+    }
+
+    private fun forecastFromAttributes(entityId: String): List<JsonObject> {
+        val forecast = state(entityId)?.attributes?.get("forecast") as? JsonArray ?: return emptyList()
+        return forecast.mapNotNull { it as? JsonObject }
     }
 
     suspend fun testRest(url: String, accessToken: String): Result<Unit> = withContext(Dispatchers.IO) {

@@ -57,6 +57,7 @@ import dev.holgerendt.hanative.ui.theme.HistoryGraph
 import dev.holgerendt.hanative.ui.theme.TextDark
 import dev.holgerendt.hanative.ui.theme.TextMuted
 import dev.holgerendt.hanative.ui.widgets.EntityPicture
+import kotlinx.coroutines.delay
 import java.util.Locale
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -291,8 +292,11 @@ private fun MoreInfoControls(entityId: String, entity: EntityState?, domain: Str
 @Composable
 private fun MoreInfoHistory(entityId: String, entity: EntityState?, viewModel: HaViewModel) {
     var buckets by remember(entityId) { mutableStateOf(listOf<HistoryBucket>()) }
-    LaunchedEffect(entityId, viewModel.client.currentBaseUrl) {
-        buckets = runCatching { viewModel.client.historyBuckets(entityId, 24) }.getOrDefault(emptyList())
+    LaunchedEffect(entityId, viewModel.client.currentBaseUrl, entity?.state) {
+        while (true) {
+            buckets = runCatching { viewModel.client.historyBuckets(entityId, 24) }.getOrDefault(emptyList())
+            delay(60_000)
+        }
     }
     Spacer(Modifier.height(8.dp))
     Text("History", color = TextDark, fontSize = 20.sp, fontWeight = FontWeight.Medium)

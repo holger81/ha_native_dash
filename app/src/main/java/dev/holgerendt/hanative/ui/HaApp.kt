@@ -80,6 +80,16 @@ import dev.holgerendt.hanative.ui.widgets.VisionTimeline
 import dev.holgerendt.hanative.ui.widgets.WeatherHeader
 import dev.holgerendt.hanative.ui.widgets.WeekPlanner
 import dev.holgerendt.hanative.ui.widgets.WidgetTree
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import java.time.Instant
+import java.time.LocalDate
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 @Composable
 fun HaApp(viewModel: HaViewModel) {
@@ -129,7 +139,10 @@ fun HaApp(viewModel: HaViewModel) {
         }
         val popup = viewModel.popup(ui.popupHash)
         if (popup != null) {
-            InWindowOverlay(onDismiss = { viewModel.closePopup() }) {
+            InWindowOverlay(
+                onDismiss = { viewModel.closePopup() },
+                scrim = Color.Black.copy(alpha = 0.28f),
+            ) {
                 PopupHost(popup, viewModel)
             }
         }
@@ -455,18 +468,13 @@ private fun WeatherPopup(viewModel: HaViewModel) {
     val wind = states["sensor.st_00063154_wind_speed_average"]?.state?.toDoubleOrNull()
     val rain = states["sensor.rain_sum_today"]?.state
     val day = states["sun.sun"]?.state == "above_horizon"
-    var forecasts by remember { mutableStateOf(listOf<Map<String, String>>()) }
-    LaunchedEffect(Unit) {
-        val raw = runCatching { viewModel.client.weatherForecast("weather.forecast_tankerland_ct") }.getOrDefault(emptyList())
-        forecasts = raw.map { obj ->
-            mapOf(
-                "condition" to (obj["condition"]?.toString()?.trim('"') ?: ""),
-                "temp" to (obj["temperature"]?.toString() ?: ""),
-                "templow" to (obj["templow"]?.toString() ?: ""),
-                "datetime" to (obj["datetime"]?.toString()?.trim('"') ?: ""),
-            )
-        }
+    var forecasts by remember { mutableStateOf(listOf<JsonObject>()) }
+    LaunchedEffect(viewModel.client.currentBaseUrl, weather?.state) {
+        forecasts = runCatching {
+            viewModel.client.weatherForecast("weather.forecast_tankerland_ct")
+        }.getOrDefault(emptyList())
     }
+    val upcoming = if (forecasts.size > 1) forecasts.drop(1) else forecasts
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(
             modifier = Modifier
@@ -474,35 +482,85 @@ private fun WeatherPopup(viewModel: HaViewModel) {
                 .clip(RoundedCornerShape(28.dp))
                 .background(PopupCard)
                 .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text("Now", color = TextMuted, fontSize = 14.sp)
-            MdiIcon(weatherIcon(weather?.state, day), tint = TextDark, size = 96.dp)
-            Text("${temp.format(1, "°")}  ${feels.format(1, "°")}", color = TextDark, fontSize = 42.sp, fontWeight = FontWeight.Light)
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                MdiIcon(weatherIcon(weather?.state, day), tint = TextDark, size = 120.dp)
+            }
+            Text(
+                "${temp.format(1, "°")}  ${feels.format(1, "°")}",
+                color = TextDark,
+                fontSize = 42.sp,
+                fontWeight = FontWeight.Light,
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(weather?.state?.replaceFirstChar { it.uppercase() }.orEmpty(), color = TextDark)
+                Text(weather?.state?.replace('_', ' ')?.replaceFirstChar { it.uppercase() }.orEmpty(), color = TextDark)
                 Text("${wind.format(1)} km/h", color = TextDark)
                 Text("${rain ?: "—"} mm", color = TextDark)
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            forecasts.take(5).forEach { dayForecast ->
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(22.dp))
-                        .background(PopupCard)
-                        .padding(12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text(dayForecast["datetime"]?.take(10).orEmpty(), color = TextMuted, fontSize = 11.sp)
-                    MdiIcon(weatherIcon(dayForecast["condition"], true), tint = TextDark, size = 28.dp)
-                    Text(dayForecast["temp"]?.let { "$it°" } ?: "—", color = TextDark, fontWeight = FontWeight.Medium)
-                    Text(dayForecast["templow"]?.let { "$it°" } ?: "", color = TextMuted, fontSize = 12.sp)
+        upcoming.forEach { dayForecast ->
+            val condition = jsonText(dayForecast["condition"])
+            val high = jsonNumber(dayForecast["temperature"])
+            val low = jsonNumber(dayForecast["templow"])
+            val pop = jsonNumber(dayForecast["precipitation_probability"])
+            val precip = jsonNumber(dayForecast["precipitation"])
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(PopupCard)
+                    .padding(24.dp)
+                    .height(150.dp),
+            ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.SpaceBetween) {
+                        Text(forecastWeekday(jsonText(dayForecast["datetime"])), color = TextDark, fontSize = 16.sp)
+                        Text(
+                            listOfNotNull(high?.let { "${it.format(0)}°" }, low?.let { "${it.format(0)}°" }).joinToString("  "),
+                            color = TextDark,
+                            fontSize = 36.sp,
+                            fontWeight = FontWeight.Light,
+                        )
+                        Text(
+                            buildString {
+                                append(condition.replaceFirstChar { it.uppercase() })
+                                pop?.let { append("   ${it.format(0)}%") }
+                                precip?.let { append("   ${it.format(1)}mm") }
+                            },
+                            color = TextDark,
+                            fontSize = 16.sp,
+                        )
+                    }
+                    MdiIcon(weatherIcon(condition, day), tint = TextDark, size = 72.dp)
                 }
             }
         }
     }
+}
+
+private fun jsonText(element: kotlinx.serialization.json.JsonElement?): String {
+    val primitive = element as? JsonPrimitive ?: return ""
+    return primitive.contentOrNull ?: primitive.toString().trim('"')
+}
+
+private fun jsonNumber(element: kotlinx.serialization.json.JsonElement?): Double? {
+    val primitive = element as? JsonPrimitive ?: return null
+    return primitive.doubleOrNull ?: primitive.contentOrNull?.toDoubleOrNull()
+}
+
+private fun forecastWeekday(raw: String): String {
+    if (raw.isBlank()) return ""
+    val instant = runCatching { Instant.parse(raw) }.getOrNull()
+        ?: runCatching { OffsetDateTime.parse(raw).toInstant() }.getOrNull()
+        ?: return raw.take(10)
+    val date = instant.atZone(ZoneId.systemDefault()).toLocalDate()
+    val today = LocalDate.now()
+    return when (date) {
+        today -> "Today"
+        today.plusDays(1) -> "Tomorrow"
+        else -> date.format(DateTimeFormatter.ofPattern("EEEE"))
+    }.replaceFirstChar { it.uppercase() }
 }
 
 @Composable

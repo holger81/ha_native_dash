@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -53,6 +54,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -83,6 +85,7 @@ import dev.holgerendt.hanative.ui.theme.CardLight
 import dev.holgerendt.hanative.ui.theme.ChipDark
 import dev.holgerendt.hanative.ui.theme.ChipOnDark
 import dev.holgerendt.hanative.ui.theme.PopupCard
+import dev.holgerendt.hanative.ui.theme.PopupOverlay
 import dev.holgerendt.hanative.ui.theme.TextDark
 import dev.holgerendt.hanative.ui.theme.TextMuted
 import dev.holgerendt.hanative.ui.theme.VacuumStart
@@ -211,9 +214,11 @@ fun ChipRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Mod
     ) {
         widget.chips.filter { states.isVisible(it) }.forEach { chip ->
             val entity = states[chip.entity]
-            val active = chip.emphasizeUnlocked == true && entity?.state == "unlocked" ||
-                isOn(entity?.state) && chip.emphasizeUnlocked != true && chip.layout != "icon|state"
-            val highlighted = chip.emphasizeUnlocked == true && entity?.state == "unlocked"
+            val highlighted = when {
+                chip.emphasizeUnlocked == true -> entity?.state == "unlocked"
+                chip.accent == "active" || chip.accent == "active-big" -> true
+                else -> false
+            }
             val label = when {
                 chip.layout == "icon|name" -> chip.name
                 chip.state != null -> states.formatState(chip.state)
@@ -386,7 +391,13 @@ fun RoomGrid(rooms: List<WidgetNode>, viewModel: HaViewModel, modifier: Modifier
 @Composable
 fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val zone = remember { ZoneId.systemDefault() }
-    val columns = widget.columnCount().coerceIn(1, 7)
+    val widthDp = LocalConfiguration.current.screenWidthDp
+    val columns = when {
+        widthDp >= 1024 -> 7
+        widthDp > 768 -> widget.columnCount().coerceIn(1, 7)
+        widthDp > 580 -> 3
+        else -> 1
+    }
     val dayCount = widget.days ?: 10
     val subscribed by viewModel.subscribedCalendars.collectAsState()
     val sources = remember(subscribed, widget.calendars) { viewModel.plannerCalendars(widget.calendars) }
@@ -443,10 +454,10 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                     MdiIcon("mdi:chevron-left", tint = TextDark, size = 22.dp)
                 }
                 Text(
-                    text = days.firstOrNull()?.format(DateTimeFormatter.ofPattern("MMM d")) ?: "",
+                    text = days.firstOrNull()?.format(DateTimeFormatter.ofPattern("MMMM")) ?: "",
                     color = TextDark,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.SemiBold,
                 )
                 Box(
                     modifier = Modifier
@@ -461,8 +472,8 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
         }
         days.chunked(columns).forEach { row ->
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 row.forEach { day ->
                     WeekPlannerDay(
@@ -475,7 +486,7 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                         showTemperature = widget.showTemperature == true,
                         showLowTemperature = widget.showLowTemperature == true,
                         viewModel = viewModel,
-                        modifier = Modifier.weight(1f).height(148.dp),
+                        modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 280.dp),
                     )
                 }
                 repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
@@ -503,40 +514,43 @@ private fun WeekPlannerDay(
         else -> day.format(DateTimeFormatter.ofPattern("EEE"))
     }
     Column(
-        modifier = modifier.padding(horizontal = 2.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (day == today) Color.White else Color.Transparent)
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Column(Modifier.weight(1f)) {
-                Text(weekday, color = TextDark, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-                Text(day.dayOfMonth.toString(), color = TextDark, fontSize = 18.sp, fontWeight = FontWeight.Light)
+                Text(weekday, color = TextDark, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                Text(day.dayOfMonth.toString(), color = TextDark, fontSize = 28.sp, fontWeight = FontWeight.Light)
             }
             if (showCondition || showTemperature) {
                 Column(horizontalAlignment = Alignment.End) {
                     if (showCondition) {
-                        MdiIcon(weatherIcon(forecast?.get("condition"), true), tint = TextDark, size = 18.dp)
+                        MdiIcon(weatherIcon(forecast?.get("condition"), true), tint = TextDark, size = 28.dp)
                     }
                     if (showTemperature) {
-                        val high = forecast?.get("temp")
-                        val low = forecast?.get("templow")
+                        val high = forecastC(forecast?.get("temp"))
+                        val low = forecastC(forecast?.get("templow"))
                         val temp = buildString {
-                            if (!high.isNullOrBlank()) append("${high.trim('"')}°")
-                            if (showLowTemperature && !low.isNullOrBlank()) append(" / ${low.trim('"')}°")
+                            if (!high.isNullOrBlank()) append(high)
+                            if (showLowTemperature && !low.isNullOrBlank()) {
+                                if (isNotEmpty()) append(" / ")
+                                append(low)
+                            }
                         }
                         if (temp.isNotBlank()) {
-                            Text(temp, color = TextMuted, fontSize = 10.sp, maxLines = 1)
+                            Text(temp, color = TextMuted, fontSize = 12.sp, maxLines = 2)
                         }
                     }
                 }
             }
         }
         if (events.isEmpty()) {
-            Text("No events", color = TextMuted.copy(alpha = 0.7f), fontSize = 11.sp)
+            Text("No events", color = TextMuted.copy(alpha = 0.7f), fontSize = 13.sp)
         } else {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 events.forEach { event ->
                     val stripe = accentColor(event.color?.removePrefix("var(--")?.removeSuffix(")"))
                         .takeIf { event.color != null } ?: AccentBlue
@@ -544,25 +558,26 @@ private fun WeekPlannerDay(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(IntrinsicSize.Min)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(CardLight)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color.White)
                             .clickable { viewModel.openMoreInfo(event.entityId) },
                     ) {
                         Box(Modifier.width(4.dp).fillMaxHeight().background(stripe))
-                        Column(Modifier.padding(horizontal = 6.dp, vertical = 4.dp).weight(1f)) {
-                            Text(
-                                text = event.summary,
-                                color = TextDark,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                        Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp).weight(1f)) {
                             Text(
                                 text = eventTimeLabel(event),
                                 color = TextMuted,
-                                fontSize = 10.sp,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
+                            )
+                            Text(
+                                text = event.summary,
+                                color = TextDark,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                     }
@@ -738,6 +753,12 @@ private fun eventOverlapsDay(event: HaCalendarEvent, day: LocalDate, zone: ZoneI
         end
     }
     return !day.isBefore(start) && !day.isAfter(endInclusive)
+}
+
+private fun forecastC(raw: String?): String? {
+    if (raw.isNullOrBlank()) return null
+    val number = raw.trim('"').toDoubleOrNull()
+    return if (number != null) "${number.roundToInt()} °C" else raw
 }
 
 private fun eventTimeLabel(event: HaCalendarEvent): String {
@@ -1167,7 +1188,7 @@ fun PopupScaffold(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.White.copy(alpha = 0.42f))
+            .background(PopupOverlay)
             .padding(20.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {

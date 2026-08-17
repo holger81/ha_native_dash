@@ -11,7 +11,9 @@ import androidx.compose.ui.unit.sp
 /** mysmarthome: white wall, gray000 tiles, gray800 text. */
 val ScreenBackground = Color(0xFFFFFFFF)
 val CardLight = Color(0xFFF3F1EC)
-val PopupCard = Color(0xE6F3F1EC)
+val PopupCard = Color(0xF2F3F1EC)
+/** Solid popup sheet so Lovelace’s 42% mix is not invisible on a white wall. */
+val PopupOverlay = Color(0xFFF3F1EC)
 val DockBackground = Color(0xFF2A2A2A)
 val TextDark = Color(0xFF2A2A2A)
 val TextMuted = Color(0xFF2A2A2A).copy(alpha = 0.7f)

@@ -223,6 +223,17 @@ def action_or_default(raw, default: dict | None = MORE_INFO) -> dict | None:
     return default
 
 
+def chip_accent(button: dict) -> str:
+    styles = button.get("styles") or {}
+    button_style = styles.get("button") if isinstance(styles, dict) else {}
+    if not isinstance(button_style, dict):
+        return "dark"
+    blob = " ".join(str(button_style.get(key) or "") for key in ("background", "background-color", "color"))
+    if "active-big" in blob:
+        return "active"
+    return "dark"
+
+
 def convert_card(card, context: str = "") -> dict | list | None:
     if not isinstance(card, dict):
         return None
@@ -249,6 +260,7 @@ def convert_card(card, context: str = "") -> dict | list | None:
                     "visibility": chip_visibility(button),
                     "state": chip_state(button),
                     "emphasize_unlocked": button.get("entity") == "lock.front_door",
+                    "accent": chip_accent(button),
                 }
             )
         return {"type": "chip_row", "chips": chips}
