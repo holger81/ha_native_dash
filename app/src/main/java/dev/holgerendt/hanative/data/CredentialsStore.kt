@@ -3,6 +3,7 @@ package dev.holgerendt.hanative.data
 import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import org.json.JSONArray
 import org.json.JSONObject
 
 class CredentialsStore(context: Context) {
@@ -20,6 +21,13 @@ class CredentialsStore(context: Context) {
     var token: String = readPref(KEY_TOKEN)
         set(value) {
             field = value.trim()
+            persist()
+        }
+
+    /** Null means follow Lovelace week-planner calendars; empty means none. */
+    var subscribedCalendars: List<String>? = null
+        set(value) {
+            field = value?.map { it.trim() }?.filter { it.startsWith("calendar.") }?.distinct()
             persist()
         }
 
@@ -118,6 +126,10 @@ class CredentialsStore(context: Context) {
             put("ha_url", url)
             put("ha_token", accessToken)
             put("management_pin", pin)
+            val calendars = subscribedCalendars
+            if (calendars != null) {
+                put("subscribed_calendars", JSONArray(calendars))
+            }
         }.toString()
         runCatching {
             RecoverableFiles.write(
@@ -127,6 +139,14 @@ class CredentialsStore(context: Context) {
                 body.toByteArray(Charsets.UTF_8),
             )
         }
+    }
+
+    private fun readCalendarList(obj: JSONObject?): List<String>? {
+        if (obj == null || !obj.has("subscribed_calendars") || obj.isNull("subscribed_calendars")) return null
+        val arr = obj.optJSONArray("subscribed_calendars") ?: return null
+        return (0 until arr.length()).mapNotNull { index ->
+            arr.optString(index).trim().takeIf { it.startsWith("calendar.") }
+        }.distinct()
     }
 
     private fun readRecoverableObject(): JSONObject? {
@@ -145,6 +165,9 @@ class CredentialsStore(context: Context) {
         if (token.isBlank()) {
             val value = obj.optString("ha_token").trim()
             if (value.isNotBlank()) token = value
+        }
+        if (subscribedCalendars == null) {
+            subscribedCalendars = readCalendarList(obj)
         }
         val pin = obj.optString("management_pin").trim()
         val takeRestoredPin = PIN_PATTERN.matches(pin) &&

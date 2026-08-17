@@ -36,22 +36,32 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.holgerendt.hanative.data.EntityState
 import dev.holgerendt.hanative.data.HaCalendarEvent
-import dev.holgerendt.hanative.ui.theme.AccentRed
+import dev.holgerendt.hanative.data.HistoryBucket
 import dev.holgerendt.hanative.ui.theme.ActiveYellow
 import dev.holgerendt.hanative.ui.theme.CardLight
+import dev.holgerendt.hanative.ui.theme.HistoryGraph
 import dev.holgerendt.hanative.ui.theme.TextDark
 import dev.holgerendt.hanative.ui.theme.TextMuted
 import dev.holgerendt.hanative.ui.widgets.EntityPicture
+import java.util.Locale
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.log10
+import kotlin.math.pow
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -134,15 +144,11 @@ fun MoreInfoDialog(entityId: String, viewModel: HaViewModel) {
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(entity?.friendlyName ?: entityId, color = TextDark, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-            Text(entityId, color = TextMuted, fontSize = 12.sp)
-            MoreInfoHeader(entity, domain, viewModel)
-            entity?.lastChanged?.let {
-                Text("Last changed  ${it.relativeToNow()}", color = TextMuted, fontSize = 13.sp)
-            }
+            MoreInfoTitle(entityId, entity, viewModel)
+            MoreInfoStateRow(entityId, entity, domain, viewModel)
             MoreInfoControls(entityId, entity, domain, viewModel)
             if (domain in HistoryDomains) {
-                MoreInfoHistory(entityId, viewModel)
+                MoreInfoHistory(entityId, entity, viewModel)
             }
             MoreInfoExtras(entityId, entity, domain, viewModel)
             MoreInfoAttributes(entity)
@@ -155,13 +161,25 @@ fun MoreInfoDialog(entityId: String, viewModel: HaViewModel) {
 }
 
 @Composable
-private fun MoreInfoHeader(entity: EntityState?, domain: String, viewModel: HaViewModel) {
+private fun MoreInfoTitle(entityId: String, entity: EntityState?, viewModel: HaViewModel) {
+    var deviceName by remember(entityId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(entityId, viewModel.client.currentBaseUrl) {
+        deviceName = runCatching { viewModel.client.deviceNameFor(entityId) }.getOrNull()
+    }
+    if (!deviceName.isNullOrBlank()) {
+        Text(deviceName!!, color = TextMuted, fontSize = 13.sp)
+    }
+    Text(entity?.friendlyName ?: entityId, color = TextDark, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+}
+
+@Composable
+private fun MoreInfoStateRow(entityId: String, entity: EntityState?, domain: String, viewModel: HaViewModel) {
     val unit = entity?.attrString("unit_of_measurement").orEmpty()
-    val pretty = entity?.state?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: "Unknown"
-    val display = if (unit.isNotBlank() && domain in setOf("sensor", "number", "input_number")) {
-        "${entity?.state ?: "unknown"} $unit"
-    } else {
-        pretty
+    val numeric = domain in setOf("sensor", "number", "input_number") && entity?.state?.toDoubleOrNull() != null
+    val display = when {
+        numeric && unit.isNotBlank() -> "${entity?.state} $unit"
+        numeric -> entity?.state.orEmpty()
+        else -> entity?.state?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: "Unknown"
     }
     if (domain == "person") {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -170,10 +188,40 @@ private fun MoreInfoHeader(entity: EntityState?, domain: String, viewModel: HaVi
                 viewModel = viewModel,
                 modifier = Modifier.size(56.dp).clip(CircleShape),
             )
-            Text(display, color = TextDark, fontSize = 28.sp, fontWeight = FontWeight.Light)
+            Column {
+                Text(display, color = TextDark, fontSize = 22.sp, fontWeight = FontWeight.Light)
+                entity?.lastChanged?.let { Text(it.relativeToNow(), color = TextMuted, fontSize = 13.sp) }
+            }
         }
-    } else {
-        Text(display, color = TextDark, fontSize = 32.sp, fontWeight = FontWeight.Light)
+        return
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        MdiIcon(moreInfoIcon(entity, domain), tint = HistoryGraph, size = 28.dp)
+        Column(Modifier.weight(1f)) {
+            Text(entity?.friendlyName ?: entityId, color = TextDark, fontSize = 16.sp)
+            entity?.lastChanged?.let { Text(it.relativeToNow(), color = TextMuted, fontSize = 13.sp) }
+        }
+        Text(display, color = TextDark, fontSize = 20.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+private fun moreInfoIcon(entity: EntityState?, domain: String): String {
+    entity?.attrString("icon")?.let { return it }
+    return when (entity?.attrString("device_class") ?: domain) {
+        "power", "energy", "current", "voltage" -> "mdi:flash"
+        "temperature" -> "mdi:thermometer"
+        "humidity" -> "mdi:water-percent"
+        "battery" -> "mdi:battery"
+        "aqi" -> "mdi:air-filter"
+        "lock" -> "mdi:lock"
+        "cover" -> "mdi:window-shutter"
+        "person" -> "mdi:account"
+        "light" -> "mdi:lightbulb"
+        else -> "mdi:information-outline"
     }
 }
 
@@ -241,46 +289,154 @@ private fun MoreInfoControls(entityId: String, entity: EntityState?, domain: Str
 }
 
 @Composable
-private fun MoreInfoHistory(entityId: String, viewModel: HaViewModel) {
-    var points by remember(entityId) { mutableStateOf(listOf<Pair<Long, Double>>()) }
+private fun MoreInfoHistory(entityId: String, entity: EntityState?, viewModel: HaViewModel) {
+    var buckets by remember(entityId) { mutableStateOf(listOf<HistoryBucket>()) }
     LaunchedEffect(entityId, viewModel.client.currentBaseUrl) {
-        points = runCatching { viewModel.client.history(entityId, 24) }.getOrDefault(emptyList())
+        buckets = runCatching { viewModel.client.historyBuckets(entityId, 24) }.getOrDefault(emptyList())
     }
-    Text("24 hours", color = TextMuted, fontSize = 12.sp)
-    if (points.size < 2) {
+    Spacer(Modifier.height(8.dp))
+    Text("History", color = TextDark, fontSize = 20.sp, fontWeight = FontWeight.Medium)
+    Text("5-minute aggregated", color = TextMuted, fontSize = 12.sp)
+    if (buckets.size < 2) {
         Text("No history yet", color = TextMuted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
         return
     }
-    val min = points.minOf { it.second }
-    val max = points.maxOf { it.second }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(min.format(historyDecimals(min, max)), color = TextMuted, fontSize = 11.sp)
-        Text(max.format(historyDecimals(min, max)), color = TextMuted, fontSize = 11.sp)
-    }
+    val unit = entity?.attrString("unit_of_measurement").orEmpty()
+    HistoryGraphChart(buckets = buckets, unit = unit)
+}
+
+@Composable
+private fun HistoryGraphChart(buckets: List<HistoryBucket>, unit: String) {
+    val textMeasurer = rememberTextMeasurer()
+    val endMs = remember { Instant.now().toEpochMilli() }
+    val startMs = endMs - 24L * 60L * 60L * 1000L
+    val dataMin = buckets.minOf { it.min }
+    val dataMax = buckets.maxOf { it.max }
+    val (yMin, yMax, yTicks) = niceAxis(dataMin, dataMax)
+    val zone = ZoneId.systemDefault()
+    val timeFmt = DateTimeFormatter.ofPattern("h:mm a", Locale.US)
+    val dateFmt = DateTimeFormatter.ofPattern("MMM d", Locale.US)
+    val decimals = historyDecimals(yMin, yMax)
+    val labelStyle = TextStyle(color = TextMuted, fontSize = 10.sp)
+    val unitStyle = TextStyle(color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
-            .height(96.dp)
-            .clip(RoundedCornerShape(12.dp)),
+            .height(220.dp)
+            .padding(top = 4.dp),
     ) {
-        val span = (max - min).takeIf { it != 0.0 } ?: 1.0
-        val t0 = points.first().first.toFloat()
-        val tSpan = (points.last().first - points.first().first).toFloat().coerceAtLeast(1f)
-        val path = Path()
-        points.forEachIndexed { index, point ->
-            val x = size.width * (point.first - t0) / tSpan
-            val y = size.height - ((point.second - min) / span * size.height).toFloat()
-            if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        val left = 40.dp.toPx()
+        val bottom = 24.dp.toPx()
+        val top = 16.dp.toPx()
+        val plotW = size.width - left
+        val plotH = size.height - bottom - top
+        val ySpan = (yMax - yMin).takeIf { it != 0.0 } ?: 1.0
+        val tSpan = (endMs - startMs).toFloat().coerceAtLeast(1f)
+        fun xOf(time: Long) = left + plotW * (time - startMs).toFloat() / tSpan
+        fun yOf(value: Double) = top + ((yMax - value) / ySpan * plotH).toFloat()
+
+        yTicks.forEach { tick ->
+            val y = yOf(tick)
+            drawLine(
+                color = TextMuted.copy(alpha = if (tick == 0.0) 0.45f else 0.18f),
+                start = Offset(left, y),
+                end = Offset(size.width, y),
+                strokeWidth = if (tick == 0.0) 2f else 1f,
+            )
+            val label = tick.format(decimals)
+            val layout = textMeasurer.measure(label, labelStyle)
+            drawText(
+                textLayoutResult = layout,
+                topLeft = Offset((left - layout.size.width - 6.dp.toPx()).coerceAtLeast(0f), y - layout.size.height / 2f),
+            )
         }
-        val fill = Path().apply {
-            addPath(path)
-            lineTo(size.width, size.height)
-            lineTo(0f, size.height)
-            close()
+        if (unit.isNotBlank()) {
+            val unitLayout = textMeasurer.measure(unit, unitStyle)
+            drawText(textLayoutResult = unitLayout, topLeft = Offset(left, 0f))
         }
-        drawPath(fill, AccentRed.copy(alpha = 0.28f))
-        drawPath(path, AccentRed, style = Stroke(width = 3f))
+
+        val band = Path()
+        buckets.forEachIndexed { index, bucket ->
+            val x = xOf(bucket.startMs)
+            val y = yOf(bucket.max)
+            if (index == 0) band.moveTo(x, y) else band.lineTo(x, y)
+        }
+        buckets.asReversed().forEach { bucket ->
+            band.lineTo(xOf(bucket.startMs), yOf(bucket.min))
+        }
+        band.close()
+        drawPath(band, HistoryGraph.copy(alpha = 0.22f))
+
+        val line = Path()
+        buckets.forEachIndexed { index, bucket ->
+            val x = xOf(bucket.startMs)
+            val y = yOf(bucket.mean)
+            if (index == 0) line.moveTo(x, y) else line.lineTo(x, y)
+        }
+        drawPath(line, HistoryGraph, style = Stroke(width = 3.5f))
+
+        val xLabelCount = 5
+        for (i in 0..xLabelCount) {
+            val time = startMs + (endMs - startMs) * i / xLabelCount
+            val instant = Instant.ofEpochMilli(time).atZone(zone)
+            val label = if (i == 0 || (instant.hour == 0 && instant.minute < 20)) {
+                instant.format(dateFmt)
+            } else {
+                instant.format(timeFmt)
+            }
+            val layout = textMeasurer.measure(label, labelStyle)
+            val x = xOf(time) - layout.size.width / 2f
+            drawText(
+                textLayoutResult = layout,
+                topLeft = Offset(x.coerceIn(0f, size.width - layout.size.width), size.height - layout.size.height),
+            )
+        }
     }
+}
+
+/** HA-style nice y-axis that includes zero when the series crosses it. */
+private fun niceAxis(dataMin: Double, dataMax: Double): Triple<Double, Double, List<Double>> {
+    var min = dataMin
+    var max = dataMax
+    if (min == max) {
+        min -= 1.0
+        max += 1.0
+    }
+    val pad = (max - min) * 0.08
+    min -= pad
+    max += pad
+    if (dataMin < 0 && dataMax > 0) {
+        min = minOf(min, 0.0)
+        max = maxOf(max, 0.0)
+    }
+    val ticks = 5
+    val range = niceCeil(max - min)
+    val step = niceCeil(range / ticks)
+    val niceMin = floor(min / step) * step
+    val niceMax = ceil(max / step) * step
+    val values = mutableListOf<Double>()
+    var tick = niceMin
+    var guard = 0
+    while (tick <= niceMax + step / 2 && guard++ < 12) {
+        values += tick
+        tick += step
+    }
+    return Triple(niceMin, niceMax, values)
+}
+
+private fun niceCeil(value: Double): Double {
+    val abs = kotlin.math.abs(value).coerceAtLeast(1e-9)
+    val exp = floor(log10(abs))
+    val mag = 10.0.pow(exp)
+    val residual = abs / mag
+    val nice = when {
+        residual <= 1.0 -> 1.0
+        residual <= 2.0 -> 2.0
+        residual <= 5.0 -> 5.0
+        else -> 10.0
+    }
+    return nice * mag
 }
 
 @Composable
@@ -382,7 +538,7 @@ private fun ActionButton(label: String, onClick: () -> Unit) {
 private fun Instant.relativeToNow(): String {
     val seconds = Duration.between(this, Instant.now()).seconds.coerceAtLeast(0)
     return when {
-        seconds < 45 -> "just now"
+        seconds < 60 -> if (seconds <= 1) "1 second ago" else "$seconds seconds ago"
         seconds < 90 -> "1 minute ago"
         seconds < 3600 -> "${seconds / 60} minutes ago"
         seconds < 5400 -> "1 hour ago"
@@ -393,7 +549,7 @@ private fun Instant.relativeToNow(): String {
 }
 
 private fun historyDecimals(min: Double, max: Double): Int {
-    val span = max - min
+    val span = kotlin.math.abs(max - min)
     return if (span < 2) 1 else 0
 }
 

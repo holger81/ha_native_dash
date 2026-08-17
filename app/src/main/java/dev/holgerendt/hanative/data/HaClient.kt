@@ -33,6 +33,10 @@ import okhttp3.WebSocketListener
 import java.net.URLEncoder
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -64,6 +68,18 @@ data class EntityState(
     val entityPicture: String?
         get() = attrString("entity_picture")
 }
+
+data class HistoryBucket(
+    val startMs: Long,
+    val mean: Double,
+    val min: Double,
+    val max: Double,
+)
+
+data class CalendarInfo(
+    val entityId: String,
+    val name: String,
+)
 
 data class HaCalendarEvent(
     val entityId: String = "",
@@ -111,6 +127,7 @@ class HaClient {
 
     private val _connection = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val connection: StateFlow<ConnectionState> = _connection
+    private val deviceNameCache = ConcurrentHashMap<String, String?>()
 
     val currentBaseUrl: String get() = baseUrl
     val currentToken: String get() = token
@@ -356,6 +373,98 @@ class HaClient {
             }
         }
 
+    /** HA more-info history: 5-minute mean with min/max band; falls back to raw history. */
+    suspend fun historyBuckets(entityId: String, hours: Int = 24): List<HistoryBucket> {
+        val stats = runCatching { statisticsDuringPeriod(entityId, hours) }.getOrDefault(emptyList())
+        if (stats.size >= 2) return stats
+        return aggregateHistory(history(entityId, hours), hours)
+    }
+
+    suspend fun deviceNameFor(entityId: String): String? {
+        if (entityId.isBlank()) return null
+        if (deviceNameCache.containsKey(entityId)) return deviceNameCache[entityId]
+        val name = runCatching { fetchDeviceName(entityId) }.getOrNull()
+        deviceNameCache[entityId] = name
+        return name
+    }
+
+    private suspend fun fetchDeviceName(entityId: String): String? {
+        val entity = command {
+            put("type", "config/entity_registry/get")
+            put("entity_id", entityId)
+        }.jsonObject
+        val deviceId = entity["device_id"]?.jsonPrimitive?.contentOrNull ?: return null
+        val devices = command { put("type", "config/device_registry/list") }.jsonArray
+        val device = devices.mapNotNull { it as? JsonObject }
+            .firstOrNull { it["id"]?.jsonPrimitive?.contentOrNull == deviceId } ?: return null
+        return device["name_by_user"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+            ?: device["name"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+    }
+
+    private suspend fun statisticsDuringPeriod(entityId: String, hours: Int): List<HistoryBucket> {
+        if (entityId.isBlank()) return emptyList()
+        val end = Instant.now()
+        val start = end.minus(hours.toLong(), ChronoUnit.HOURS)
+        val result = command {
+            put("type", "recorder/statistics_during_period")
+            put("start_time", start.toString())
+            put("end_time", end.toString())
+            put("period", "5minute")
+            put("statistic_ids", JsonArray(listOf(JsonPrimitive(entityId))))
+            put("types", JsonArray(listOf("mean", "min", "max", "state").map { JsonPrimitive(it) }))
+        }
+        val rows = when (result) {
+            is JsonObject -> result[entityId] as? JsonArray
+            is JsonArray -> result
+            else -> null
+        } ?: return emptyList()
+        return rows.mapNotNull { element ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            val startMs = obj["start"]?.asEpochMs() ?: return@mapNotNull null
+            val min = obj.num("min")
+            val max = obj.num("max")
+            val mean = obj.num("mean")
+                ?: obj.num("state")
+                ?: listOfNotNull(min, max).takeIf { it.isNotEmpty() }?.average()
+                ?: return@mapNotNull null
+            HistoryBucket(
+                startMs = startMs,
+                mean = mean,
+                min = min ?: mean,
+                max = max ?: mean,
+            )
+        }.sortedBy { it.startMs }
+    }
+
+    private fun aggregateHistory(points: List<Pair<Long, Double>>, hours: Int): List<HistoryBucket> {
+        if (points.isEmpty()) return emptyList()
+        val periodMs = 5L * 60L * 1000L
+        val endMs = Instant.now().toEpochMilli()
+        val startMs = endMs - hours.toLong() * 60L * 60L * 1000L
+        val buckets = LinkedHashMap<Long, MutableList<Double>>()
+        points.forEach { (time, value) ->
+            if (time < startMs) return@forEach
+            val key = ((time - startMs) / periodMs) * periodMs + startMs
+            buckets.getOrPut(key) { mutableListOf() }.add(value)
+        }
+        return buckets.map { (key, values) ->
+            HistoryBucket(key, values.average(), values.min(), values.max())
+        }.sortedBy { it.startMs }
+    }
+
+    private fun JsonObject.num(key: String): Double? {
+        val primitive = this[key] as? JsonPrimitive ?: return null
+        return primitive.doubleOrNull ?: primitive.contentOrNull?.toDoubleOrNull()
+    }
+
+    private fun JsonElement.asEpochMs(): Long? {
+        val primitive = this as? JsonPrimitive ?: return null
+        primitive.longOrNull?.let { value ->
+            return if (value < 100_000_000_000L) value * 1000 else value
+        }
+        return primitive.contentOrNull?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
+    }
+
     private fun historyValue(raw: String): Double? {
         raw.toDoubleOrNull()?.let { return it }
         return when (raw.lowercase()) {
@@ -416,12 +525,51 @@ class HaClient {
         }
     }
 
+    suspend fun listCalendars(): List<CalendarInfo> {
+        val fromApi = (restGet("/api/calendars") as? JsonArray).orEmpty().mapNotNull { element ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            val id = obj["entity_id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val name = obj["name"]?.jsonPrimitive?.contentOrNull
+                ?: state(id)?.friendlyName
+                ?: id.substringAfter('.')
+            CalendarInfo(id, name)
+        }
+        val fromStates = _states.value.values
+            .filter { it.entityId.startsWith("calendar.") }
+            .map { CalendarInfo(it.entityId, it.friendlyName) }
+        return (fromApi + fromStates).distinctBy { it.entityId }.sortedBy { it.name.lowercase() }
+    }
+
     suspend fun calendarEvents(entityId: String, start: Instant, end: Instant): List<HaCalendarEvent> {
         val startEnc = URLEncoder.encode(start.toString(), "UTF-8")
         val endEnc = URLEncoder.encode(end.toString(), "UTF-8")
-        val root = restGet("/api/calendars/$entityId?start=$startEnc&end=$endEnc") as? JsonArray
-            ?: return emptyList()
-        return root.mapNotNull { parseCalendarEvent(it as? JsonObject ?: return@mapNotNull null, entityId) }
+        val rest = restGet("/api/calendars/$entityId?start=$startEnc&end=$endEnc")
+        val rows = when (rest) {
+            is JsonArray -> rest
+            is JsonObject -> rest["events"] as? JsonArray
+            else -> null
+        }
+        if (rows != null) {
+            return rows.mapNotNull { parseCalendarEvent(it as? JsonObject ?: return@mapNotNull null, entityId) }
+        }
+        return websocketCalendarEvents(entityId, start, end)
+    }
+
+    private suspend fun websocketCalendarEvents(entityId: String, start: Instant, end: Instant): List<HaCalendarEvent> {
+        val result = runCatching {
+            command {
+                put("type", "calendar/events")
+                put("entity_id", entityId)
+                put("start_date_time", start.toString())
+                put("end_date_time", end.toString())
+            }
+        }.getOrNull() ?: return emptyList()
+        val rows = when (result) {
+            is JsonArray -> result
+            is JsonObject -> result["events"] as? JsonArray ?: result["response"] as? JsonArray
+            else -> null
+        } ?: return emptyList()
+        return rows.mapNotNull { parseCalendarEvent(it as? JsonObject ?: return@mapNotNull null, entityId) }
     }
 
     suspend fun llmVisionEvents(
@@ -545,15 +693,28 @@ class HaClient {
     private fun parseTimeBound(element: JsonElement?): Pair<Instant?, LocalDate?> {
         if (element == null || element is JsonNull) return null to null
         if (element is JsonPrimitive) {
-            return parseInstantOrDate(element) to null
+            return parseDateTimePrimitive(element) ?: (null to null)
         }
         val obj = element as? JsonObject ?: return null to null
-        obj["dateTime"]?.jsonPrimitive?.let { return parseInstantOrDate(it) to null }
-        obj["date"]?.jsonPrimitive?.contentOrNull?.let { text ->
-            val date = runCatching { LocalDate.parse(text.take(10)) }.getOrNull()
-            return null to date
+        (obj["dateTime"] ?: obj["date_time"])?.let { value ->
+            if (value is JsonPrimitive) parseDateTimePrimitive(value)?.let { return it }
         }
-        return parseInstantOrDate(obj["start"]?.jsonPrimitive ?: obj["value"]?.jsonPrimitive) to null
+        obj["date"]?.jsonPrimitive?.contentOrNull?.let { text ->
+            if ('T' in text || text.length > 10) {
+                parseDateTimePrimitive(obj["date"]?.jsonPrimitive)?.let { return it }
+            }
+            val date = runCatching { LocalDate.parse(text.take(10)) }.getOrNull()
+            if (date != null) return null to date
+        }
+        return parseDateTimePrimitive(obj["start"]?.jsonPrimitive ?: obj["value"]?.jsonPrimitive) ?: (null to null)
+    }
+
+    private fun parseDateTimePrimitive(primitive: JsonPrimitive?): Pair<Instant?, LocalDate?>? {
+        if (primitive == null) return null
+        parseInstantOrDate(primitive)?.let { return it to null }
+        val text = primitive.contentOrNull ?: return null
+        val date = runCatching { LocalDate.parse(text.take(10)) }.getOrNull() ?: return null
+        return null to date
     }
 
     private fun parseInstantOrDate(primitive: JsonPrimitive?): Instant? {
@@ -565,10 +726,12 @@ class HaClient {
             val value = epoch.toLong()
             return if (value > 10_000_000_000L) Instant.ofEpochMilli(value) else Instant.ofEpochSecond(value)
         }
-        val text = primitive.contentOrNull ?: return null
-        return runCatching { Instant.parse(text) }.getOrElse {
-            runCatching { Instant.parse(text.replace(" ", "T")) }.getOrNull()
-        }
+        val text = primitive.contentOrNull?.replace(' ', 'T') ?: return null
+        runCatching { Instant.parse(text) }.getOrNull()?.let { return it }
+        runCatching { OffsetDateTime.parse(text).toInstant() }.getOrNull()?.let { return it }
+        runCatching { ZonedDateTime.parse(text).toInstant() }.getOrNull()?.let { return it }
+        runCatching { LocalDateTime.parse(text).atZone(ZoneId.systemDefault()).toInstant() }.getOrNull()?.let { return it }
+        return null
     }
 
     suspend fun weatherForecast(entityId: String): List<JsonObject> {

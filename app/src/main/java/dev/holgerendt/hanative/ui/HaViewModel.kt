@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import dev.holgerendt.hanative.HaNativeApp
+import dev.holgerendt.hanative.data.CalendarInfo
 import dev.holgerendt.hanative.data.ConnectionState
 import dev.holgerendt.hanative.data.CredentialsStore
 import dev.holgerendt.hanative.data.DashboardLoader
@@ -14,6 +15,7 @@ import dev.holgerendt.hanative.data.LanAddresses
 import dev.holgerendt.hanative.data.ManagementServer
 import dev.holgerendt.hanative.data.ManagementTls
 import dev.holgerendt.hanative.model.ActionNode
+import dev.holgerendt.hanative.model.CalendarSourceNode
 import dev.holgerendt.hanative.model.DashboardFile
 import dev.holgerendt.hanative.model.PopupNode
 import dev.holgerendt.hanative.model.WidgetNode
@@ -67,6 +69,21 @@ class HaViewModel(
     private var managementServer: ManagementServer? = null
     private val random = SecureRandom()
     @Volatile private var currentPin: String = credentials.adoptOrCreatePin { newPin() }
+
+    private val _subscribedCalendars = MutableStateFlow(credentials.subscribedCalendars)
+    val subscribedCalendars: StateFlow<List<String>?> = _subscribedCalendars
+
+    private val _availableCalendars = MutableStateFlow(listOf<CalendarInfo>())
+    val availableCalendars: StateFlow<List<CalendarInfo>> = _availableCalendars
+
+    private val extraCalendarColors = listOf(
+        "var(--blue)",
+        "var(--orange)",
+        "var(--green)",
+        "var(--purple)",
+        "var(--pink)",
+        "var(--yellow)",
+    )
 
     init {
         val (dashboard, loadError) = DashboardLoader.loadOrNull(app)
@@ -181,6 +198,7 @@ class HaViewModel(
             currentPin = credentials.managementPin
         }
         client.connect(url, token)
+        refreshCalendars()
         _ui.value = _ui.value.copy(
             showSetup = false,
             setupBusy = false,
@@ -238,6 +256,52 @@ class HaViewModel(
 
     fun closeMoreInfo() {
         _ui.value = _ui.value.copy(moreInfoId = null)
+    }
+
+    fun plannerCalendars(defaults: List<CalendarSourceNode>): List<CalendarSourceNode> {
+        val selected = _subscribedCalendars.value ?: defaults.mapNotNull { it.entity }
+        val byEntity = defaults.associateBy { it.entity }
+        return selected.mapIndexed { index, entityId ->
+            byEntity[entityId] ?: CalendarSourceNode(
+                entity = entityId,
+                color = extraCalendarColors[index % extraCalendarColors.size],
+            )
+        }
+    }
+
+    fun isCalendarSubscribed(entityId: String, defaults: List<CalendarSourceNode>): Boolean {
+        val selected = _subscribedCalendars.value ?: defaults.mapNotNull { it.entity }
+        return entityId in selected
+    }
+
+    fun setCalendarSubscribed(entityId: String, enabled: Boolean) {
+        val defaults = _ui.value.dashboard?.home?.calendar?.calendars?.mapNotNull { it.entity }.orEmpty()
+        val current = (_subscribedCalendars.value ?: defaults).toMutableList()
+        if (enabled && entityId !in current) current += entityId
+        if (!enabled) current.removeAll { it == entityId }
+        credentials.subscribedCalendars = current
+        _subscribedCalendars.value = current
+    }
+
+    fun resetCalendarSubscriptions() {
+        credentials.subscribedCalendars = null
+        _subscribedCalendars.value = null
+    }
+
+    fun refreshCalendars() {
+        viewModelScope.launch {
+            val fromHa = runCatching { client.listCalendars() }.getOrDefault(emptyList())
+            val defaults = _ui.value.dashboard?.home?.calendar?.calendars.orEmpty()
+            val extra = defaults.mapNotNull { source ->
+                val id = source.entity ?: return@mapNotNull null
+                CalendarInfo(id, client.state(id)?.friendlyName ?: id.substringAfter('.').replace('_', ' '))
+            }
+            val hidden = setOf("calendar.llm_vision_timeline")
+            _availableCalendars.value = (fromHa + extra)
+                .distinctBy { it.entityId }
+                .filter { it.entityId !in hidden }
+                .sortedBy { it.name.lowercase() }
+        }
     }
 
     fun onTap(widget: WidgetNode) {

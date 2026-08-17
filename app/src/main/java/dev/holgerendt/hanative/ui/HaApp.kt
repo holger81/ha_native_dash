@@ -31,6 +31,8 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
@@ -307,7 +309,61 @@ private fun PopupHost(popup: PopupNode, viewModel: HaViewModel) {
 private fun SettingsPopup(popup: PopupNode, viewModel: HaViewModel) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ManagementPinCard(viewModel)
+        CalendarSubscriptionsCard(viewModel)
         WidgetTree(popup.cards, viewModel)
+    }
+}
+
+@Composable
+private fun CalendarSubscriptionsCard(viewModel: HaViewModel) {
+    val available by viewModel.availableCalendars.collectAsState()
+    val subscribed by viewModel.subscribedCalendars.collectAsState()
+    val defaults = viewModel.ui.collectAsState().value.dashboard?.home?.calendar?.calendars.orEmpty()
+    LaunchedEffect(Unit) { viewModel.refreshCalendars() }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .background(CardLight)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("Subscribed calendars", color = TextDark, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            "These calendars appear on the 10-day planner, same as the Lovelace week-planner card.",
+            color = TextMuted,
+            fontSize = 14.sp,
+        )
+        if (available.isEmpty()) {
+            Text("No calendars found yet", color = TextMuted, fontSize = 13.sp)
+        }
+        available.forEach { calendar ->
+            val selected = subscribed ?: defaults.mapNotNull { it.entity }
+            val on = calendar.entityId in selected
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text(calendar.name, color = TextDark, fontSize = 16.sp)
+                    Text(calendar.entityId.removePrefix("calendar."), color = TextMuted, fontSize = 12.sp)
+                }
+                Switch(
+                    checked = on,
+                    onCheckedChange = { viewModel.setCalendarSubscribed(calendar.entityId, it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.Black,
+                        checkedTrackColor = ActiveYellow,
+                    ),
+                )
+            }
+        }
+        if (subscribed != null) {
+            TextButton(onClick = { viewModel.resetCalendarSubscriptions() }) {
+                Text("Use Lovelace defaults", color = TextDark)
+            }
+        }
     }
 }
 

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -74,6 +75,7 @@ import dev.holgerendt.hanative.ui.isVisible
 import dev.holgerendt.hanative.ui.number
 import dev.holgerendt.hanative.ui.stateOf
 import dev.holgerendt.hanative.ui.tempHum
+import dev.holgerendt.hanative.ui.theme.AccentBlue
 import dev.holgerendt.hanative.ui.theme.AccentRed
 import dev.holgerendt.hanative.ui.theme.ActiveLight
 import dev.holgerendt.hanative.ui.theme.ActiveYellow
@@ -88,6 +90,9 @@ import dev.holgerendt.hanative.ui.theme.VacuumStop
 import dev.holgerendt.hanative.ui.theme.accentColor
 import dev.holgerendt.hanative.ui.weatherIcon
 import kotlinx.coroutines.delay
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -383,7 +388,8 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
     val zone = remember { ZoneId.systemDefault() }
     val columns = widget.columnCount().coerceIn(1, 7)
     val dayCount = widget.days ?: 10
-    val sources = widget.calendars
+    val subscribed by viewModel.subscribedCalendars.collectAsState()
+    val sources = remember(subscribed, widget.calendars) { viewModel.plannerCalendars(widget.calendars) }
     var dayOffset by remember { mutableIntStateOf(0) }
     var events by remember { mutableStateOf(listOf<HaCalendarEvent>()) }
     var forecasts by remember { mutableStateOf(listOf<Map<String, String>>()) }
@@ -408,10 +414,10 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                 val raw = runCatching { viewModel.client.weatherForecast(weatherEntity) }.getOrDefault(emptyList())
                 forecasts = raw.map { obj ->
                     mapOf(
-                        "condition" to (obj["condition"]?.toString()?.trim('"') ?: ""),
-                        "temp" to (obj["temperature"]?.toString()?.trim('"') ?: ""),
-                        "templow" to (obj["templow"]?.toString()?.trim('"') ?: ""),
-                        "datetime" to (obj["datetime"]?.toString()?.trim('"') ?: ""),
+                        "condition" to (obj["condition"]?.let { primitiveContent(it) } ?: ""),
+                        "temp" to (obj["temperature"]?.let { primitiveContent(it) } ?: ""),
+                        "templow" to (obj["templow"]?.let { primitiveContent(it) } ?: ""),
+                        "datetime" to (obj["datetime"]?.let { primitiveContent(it) } ?: ""),
                     )
                 }
             }
@@ -532,22 +538,18 @@ private fun WeekPlannerDay(
                 verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
                 events.forEach { event ->
-                    val background = accentColor(event.color?.removePrefix("var(--")?.removeSuffix(")"))
-                        .takeIf { event.color != null } ?: CardLight
+                    val stripe = accentColor(event.color?.removePrefix("var(--")?.removeSuffix(")"))
+                        .takeIf { event.color != null } ?: AccentBlue
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .height(IntrinsicSize.Min)
                             .clip(RoundedCornerShape(8.dp))
-                            .background(background)
-                            .clickable { viewModel.openMoreInfo(event.entityId) }
-                            .padding(horizontal = 6.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            .background(CardLight)
+                            .clickable { viewModel.openMoreInfo(event.entityId) },
                     ) {
-                        if (!event.icon.isNullOrBlank()) {
-                            MdiIcon(event.icon, tint = TextDark, size = 12.dp)
-                        }
-                        Column(Modifier.weight(1f)) {
+                        Box(Modifier.width(4.dp).fillMaxHeight().background(stripe))
+                        Column(Modifier.padding(horizontal = 6.dp, vertical = 4.dp).weight(1f)) {
                             Text(
                                 text = event.summary,
                                 color = TextDark,
@@ -557,8 +559,7 @@ private fun WeekPlannerDay(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             Text(
-                                text = if (event.allDay) "Entire day" else event.start?.atZone(ZoneId.systemDefault())
-                                    ?.format(DateTimeFormatter.ofPattern("HH:mm")) ?: "",
+                                text = eventTimeLabel(event),
                                 color = TextMuted,
                                 fontSize = 10.sp,
                                 maxLines = 1,
@@ -737,6 +738,20 @@ private fun eventOverlapsDay(event: HaCalendarEvent, day: LocalDate, zone: ZoneI
         end
     }
     return !day.isBefore(start) && !day.isAfter(endInclusive)
+}
+
+private fun eventTimeLabel(event: HaCalendarEvent): String {
+    if (event.allDay || (event.startDate != null && event.start == null)) return "Entire day"
+    val zone = ZoneId.systemDefault()
+    val fmt = DateTimeFormatter.ofPattern("HH:mm")
+    val start = event.start?.atZone(zone)?.format(fmt) ?: return ""
+    val end = event.end?.atZone(zone)?.format(fmt) ?: return start
+    return if (end == start) start else "$start - $end"
+}
+
+private fun primitiveContent(element: JsonElement): String {
+    val primitive = element as? JsonPrimitive ?: return element.toString().trim('"')
+    return primitive.contentOrNull ?: primitive.toString().trim('"')
 }
 
 @Composable

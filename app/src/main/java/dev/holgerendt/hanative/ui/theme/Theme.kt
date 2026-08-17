@@ -21,6 +21,8 @@ val ActiveYellow = Color(0xFFFFC107)
 val ActiveLight = Color(0xFFFFD4C1)
 val AccentGreen = Color(0xFFC5E1A5)
 val AccentBlue = Color(0xFF90CAF9)
+/** HA more-info history line (`--graph-color` / info). */
+val HistoryGraph = Color(0xFF03A9F4)
 val AccentOrange = Color(0xFFFFCC80)
 val AccentYellow = Color(0xFFFFE082)
 val AccentRed = Color(0xFFEF9A9A)
