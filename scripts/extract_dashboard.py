@@ -172,20 +172,32 @@ def chip_state(button: dict) -> dict | None:
     return {"kind": "state", "entity": entity} if entity else None
 
 
+MORE_INFO = {"type": "more_info"}
+
+
 def convert_action(action: dict | None) -> dict | None:
     if not isinstance(action, dict):
         return None
     kind = action.get("action")
-    if kind in (None, "none"):
+    if kind == "none":
+        return {"type": "none"}
+    if kind is None:
         return None
+    entity = action.get("entity")
     if kind == "javascript":
         return {"type": "menu_toggle"}
     if kind in ("navigate",):
         return {"type": "navigate", "hash": action.get("navigation_path")}
     if kind == "toggle":
-        return {"type": "toggle"}
+        out = {"type": "toggle"}
+        if entity:
+            out["entity"] = entity
+        return out
     if kind in ("more-info",):
-        return {"type": "more_info"}
+        out = {"type": "more_info"}
+        if entity:
+            out["entity"] = entity
+        return out
     if kind in ("call-service", "perform-action"):
         service = action.get("service") or action.get("perform_action")
         data = action.get("service_data") or action.get("data") or {}
@@ -198,7 +210,17 @@ def convert_action(action: dict | None) -> dict | None:
             "entity_id": entity_id,
             "data": extra or None,
         }
-    return {"type": kind, "raw": action}
+    out = {"type": kind, "raw": action}
+    if entity:
+        out["entity"] = entity
+    return out
+
+
+def action_or_default(raw, default: dict | None = MORE_INFO) -> dict | None:
+    converted = convert_action(raw) if isinstance(raw, dict) else None
+    if converted is not None:
+        return converted
+    return default
 
 
 def convert_card(card, context: str = "") -> dict | list | None:
@@ -223,9 +245,7 @@ def convert_card(card, context: str = "") -> dict | list | None:
                     "icon": button.get("icon"),
                     "entity": button.get("entity"),
                     "layout": button.get("layout"),
-                    "tap": convert_action(button.get("tap_action")) or (
-                        {"type": "toggle"} if button.get("entity", "").startswith("lock.") else None
-                    ),
+                    "tap": action_or_default(button.get("tap_action"), MORE_INFO),
                     "visibility": chip_visibility(button),
                     "state": chip_state(button),
                     "emphasize_unlocked": button.get("entity") == "lock.front_door",
@@ -442,7 +462,7 @@ def convert_card(card, context: str = "") -> dict | list | None:
             "entity": entity,
             "name": card.get("name"),
             "icon": card.get("icon"),
-            "tap": convert_action(card.get("tap_action")),
+            "tap": action_or_default(card.get("tap_action"), MORE_INFO if entity else None),
         }
     return None
 
@@ -461,14 +481,17 @@ def flatten_cards(cards) -> list:
 
 
 def convert_template(template: str, variables: dict, card: dict | None = None) -> dict:
-    tap = convert_action((card or {}).get("tap_action"))
+    raw_tap = (card or {}).get("tap_action") or variables.get("tap_action")
+    raw_hold = (card or {}).get("hold_action") or variables.get("hold_action")
+    tap = convert_action(raw_tap)
+    hold = convert_action(raw_hold)
     base = {
         "name": stringify(variables.get("name")),
         "icon": stringify(variables.get("icon")),
         "entity": stringify(variables.get("entity")),
         "background": stringify(variables.get("background")),
     }
-    if template == "person_card_new":
+    if template in {"person_card_new", "person_card"}:
         return {
             "type": "person",
             "entity": variables.get("entity"),
@@ -476,16 +499,17 @@ def convert_template(template: str, variables: dict, card: dict | None = None) -
             "battery": variables.get("battery"),
             "home_sensor": variables.get("home_sensor"),
             "show_entity_picture": True,
-            "tap": tap or {"type": "more_info"},
+            "tap": tap or MORE_INFO,
+            "hold": hold,
         }
     if template == "light_slider":
-        return {**base, "type": "light_slider", "tap": tap or {"type": "toggle"}, "hold": {"type": "more_info"}}
+        return {**base, "type": "light_slider", "tap": tap or {"type": "toggle"}, "hold": hold or MORE_INFO}
     if template == "light_toggle":
-        return {**base, "type": "light_toggle", "tap": tap or {"type": "toggle"}, "hold": {"type": "more_info"}}
+        return {**base, "type": "light_toggle", "tap": tap or {"type": "toggle"}, "hold": hold or MORE_INFO}
     if template == "cover_toggle":
-        return {**base, "type": "cover_toggle", "tap": tap or {"type": "toggle"}, "hold": {"type": "more_info"}}
+        return {**base, "type": "cover_toggle", "tap": tap or {"type": "toggle"}, "hold": hold or MORE_INFO}
     if template == "vent_toggle_small":
-        return {**base, "type": "vent_toggle", "tap": {"type": "vent_tilt_toggle"}, "hold": {"type": "more_info"}}
+        return {**base, "type": "vent_toggle", "tap": tap or {"type": "vent_tilt_toggle"}, "hold": hold or MORE_INFO}
     if template == "vents_group_toggle":
         ids = variables.get("entity_ids") or variables.get("entity")
         if isinstance(ids, str):
@@ -494,6 +518,8 @@ def convert_template(template: str, variables: dict, card: dict | None = None) -
             **base,
             "type": "vents_group",
             "entity_ids": ids,
+            "tap": tap,
+            "hold": hold or {"type": "none"},
         }
     if template == "room_climate_card":
         return {
@@ -501,6 +527,7 @@ def convert_template(template: str, variables: dict, card: dict | None = None) -
             "entity": variables.get("entity"),
             "name": variables.get("name"),
             "activity_entity": variables.get("activity_entity"),
+            "tap": tap or MORE_INFO,
         }
     if template == "room_conditions":
         parsed = parse_temp_hum_js(variables.get("temp"))
@@ -508,28 +535,34 @@ def convert_template(template: str, variables: dict, card: dict | None = None) -
             "type": "room_conditions",
             "entity": variables.get("entity"),
             "display": parsed or display_temp_hum(variables.get("entity"), None),
+            "tap": tap or MORE_INFO,
         }
     if template == "sensor_big":
-        return {**base, "type": "sensor_big", "label": stringify(variables.get("label"))}
+        return {**base, "type": "sensor_big", "label": stringify(variables.get("label")), "tap": tap or MORE_INFO}
     if template == "sensor_big_graph":
         return {
             **base,
             "type": "sensor_graph",
             "label": stringify(variables.get("label")),
             "graph_entity": stringify(variables.get("graph")),
+            "tap": tap or MORE_INFO,
         }
     if template == "sensor_big_percentage":
-        return {**base, "type": "sensor_percentage", "label": stringify(variables.get("label"))}
+        return {**base, "type": "sensor_percentage", "label": stringify(variables.get("label")), "tap": tap or MORE_INFO}
     if template == "sensor_small":
-        return {**base, "type": "sensor_small", "label": stringify(variables.get("label"))}
+        return {**base, "type": "sensor_small", "label": stringify(variables.get("label")), "tap": tap or MORE_INFO}
+    if template == "sensor_big_static":
+        return {**base, "type": "sensor_big", "label": stringify(variables.get("label")), "tap": tap or MORE_INFO}
+    if template == "sensor_big_2columns":
+        return {**base, "type": "sensor_big_2columns", "label": stringify(variables.get("label")), "tap": tap or MORE_INFO}
     if template == "button_toggle":
-        return {**base, "type": "button_toggle", "tap": tap or {"type": "toggle"}}
+        return {**base, "type": "button_toggle", "tap": tap or {"type": "toggle"}, "hold": hold}
     if template == "button_toggle_small":
-        return {**base, "type": "button_toggle_small", "tap": tap or {"type": "toggle"}}
+        return {**base, "type": "button_toggle_small", "tap": tap or {"type": "toggle"}, "hold": hold}
     if template == "button_trigger":
-        return {**base, "type": "button_trigger", "tap": tap}
+        return {**base, "type": "button_trigger", "tap": tap or MORE_INFO, "hold": hold}
     if template in {"chips_big", "chips_big_active", "chips_medium", "chips_medium_active", "chips_small", "chips_small_active"}:
-        return {**base, "type": "action_chip", "style": template, "tap": tap}
+        return {**base, "type": "action_chip", "style": template, "tap": tap or MORE_INFO, "hold": hold}
     if template == "vacuum_button":
         name = stringify(variables.get("name")) or stringify((card or {}).get("name"))
         entity = stringify(variables.get("entity")) or stringify((card or {}).get("entity"))
@@ -539,7 +572,8 @@ def convert_template(template: str, variables: dict, card: dict | None = None) -
             "name": name,
             "entity": entity,
             "label": stringify(variables.get("label")),
-            "tap": tap or {"type": "toggle"},
+            "tap": tap or MORE_INFO,
+            "hold": hold,
         }
         if (name or "").lower() == "stop" and not entity:
             widget["entity"] = "vacuum.s8_maxv_ultra"
@@ -559,7 +593,12 @@ def convert_template(template: str, variables: dict, card: dict | None = None) -
         return widget
     if template == "room_card":
         return convert_room_card(variables)
-    return {**base, "type": template or "generic", "tap": tap}
+    return {
+        **base,
+        "type": template or "generic",
+        "tap": tap or (MORE_INFO if base.get("entity") else tap),
+        "hold": hold,
+    }
 
 
 def convert_room_card(variables: dict) -> dict:
@@ -599,9 +638,14 @@ def convert_button_card(card: dict) -> dict:
             widget["name"] = card.get("name")
         if card.get("icon") and not widget.get("icon"):
             widget["icon"] = card.get("icon")
-        tap = convert_action(card.get("tap_action"))
-        if tap:
-            widget["tap"] = tap
+        if "tap_action" in card:
+            converted = convert_action(card.get("tap_action"))
+            if converted is not None:
+                widget["tap"] = converted
+        if "hold_action" in card:
+            converted_hold = convert_action(card.get("hold_action"))
+            if converted_hold is not None:
+                widget["hold"] = converted_hold
         return widget
 
     entity = card.get("entity")
@@ -624,7 +668,7 @@ def convert_button_card(card: dict) -> dict:
             "entity": entity,
             "temp_entity": "sensor.st_00063154_temperature",
             "sun_entity": "sun.sun",
-            "tap": convert_action(card.get("tap_action")),
+            "tap": action_or_default(card.get("tap_action"), MORE_INFO),
             "grid_area": area,
         }
 
@@ -636,7 +680,8 @@ def convert_button_card(card: dict) -> dict:
             "companion_entity": "media_player.living_room_appletv",
             "name": name or "TV",
             "icon": icon,
-            "tap": convert_action(card.get("tap_action")) or {"type": "toggle"},
+            "tap": action_or_default(card.get("tap_action"), {"type": "toggle"}),
+            "hold": convert_action(card.get("hold_action")),
         }
 
     # Group vents (label JS referencing multiple covers)
@@ -651,6 +696,7 @@ def convert_button_card(card: dict) -> dict:
             "icon": icon or "mdi:air-filter",
             "entity_ids": list(dict.fromkeys(ids)),
             "tap": convert_action(tap),
+            "hold": convert_action(card.get("hold_action")),
         }
 
     widget = {
@@ -659,7 +705,7 @@ def convert_button_card(card: dict) -> dict:
         "name": name if not isinstance(name, str) or "[[[" not in name else None,
         "icon": icon,
         "label": label if isinstance(label, str) and "[[[" not in label else None,
-        "tap": convert_action(card.get("tap_action")),
+        "tap": action_or_default(card.get("tap_action"), MORE_INFO if entity else convert_action(card.get("tap_action"))),
         "hold": convert_action(card.get("hold_action")),
         "show_entity_picture": card.get("show_entity_picture"),
     }

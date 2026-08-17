@@ -45,6 +45,8 @@ data class EntityState(
     val entityId: String,
     val state: String,
     val attributes: Map<String, JsonElement> = emptyMap(),
+    val lastChanged: Instant? = null,
+    val lastUpdated: Instant? = null,
 ) {
     fun attr(name: String): JsonElement? = attributes[name]
 
@@ -222,7 +224,13 @@ class HaClient {
         val id = obj["entity_id"]?.jsonPrimitive?.contentOrNull ?: return null
         val state = obj["state"]?.jsonPrimitive?.contentOrNull ?: "unknown"
         val attributes = obj["attributes"]?.jsonObject ?: JsonObject(emptyMap())
-        return EntityState(id, state, attributes)
+        return EntityState(
+            entityId = id,
+            state = state,
+            attributes = attributes,
+            lastChanged = parseInstantOrDate(obj["last_changed"] as? JsonPrimitive),
+            lastUpdated = parseInstantOrDate(obj["last_updated"] as? JsonPrimitive),
+        )
     }
 
     private fun send(obj: JsonObject) {
@@ -322,8 +330,10 @@ class HaClient {
 
     suspend fun history(entityId: String, hours: Int = 12): List<Pair<Long, Double>> =
         withContext(Dispatchers.IO) {
+            if (baseUrl.isBlank() || token.isBlank() || entityId.isBlank()) return@withContext emptyList()
             val start = Instant.now().minus(hours.toLong(), ChronoUnit.HOURS).toString()
-            val url = "$baseUrl/api/history/period/$start?filter_entity_id=$entityId&minimal_response&significant_changes_only=0"
+            val encodedEntity = URLEncoder.encode(entityId, "UTF-8")
+            val url = "$baseUrl/api/history/period/$start?filter_entity_id=$encodedEntity&minimal_response&significant_changes_only=0"
             val request = Request.Builder()
                 .url(url)
                 .addHeader("Authorization", "Bearer $token")
@@ -335,7 +345,8 @@ class HaClient {
                 val series = (root as? JsonArray)?.firstOrNull() as? JsonArray ?: return@withContext emptyList()
                 series.mapNotNull { point ->
                     val obj = point as? JsonObject ?: return@mapNotNull null
-                    val state = obj["state"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull() ?: return@mapNotNull null
+                    val raw = obj["state"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                    val state = historyValue(raw) ?: return@mapNotNull null
                     val lastChanged = obj["last_changed"]?.jsonPrimitive?.contentOrNull
                         ?: obj["last_updated"]?.jsonPrimitive?.contentOrNull
                     val millis = runCatching { Instant.parse(lastChanged).toEpochMilli() }.getOrNull()
@@ -344,6 +355,15 @@ class HaClient {
                 }
             }
         }
+
+    private fun historyValue(raw: String): Double? {
+        raw.toDoubleOrNull()?.let { return it }
+        return when (raw.lowercase()) {
+            "on", "home", "open", "opening", "locked", "true", "active", "cleaning", "playing" -> 1.0
+            "off", "not_home", "closed", "closing", "unlocked", "false", "idle", "docked", "paused" -> 0.0
+            else -> null
+        }
+    }
 
     suspend fun cameraSnapshot(entityId: String): ByteArray? = withContext(Dispatchers.IO) {
         val path = if (entityId.startsWith("camera.")) {

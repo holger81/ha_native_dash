@@ -1,12 +1,16 @@
+@file:OptIn(ExperimentalFoundationApi::class)
+
 package dev.holgerendt.hanative.ui.widgets
 
 import android.graphics.BitmapFactory
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -92,6 +96,14 @@ import kotlin.math.roundToInt
 
 private val CardShape = RoundedCornerShape(28.dp)
 private val ChipShape = RoundedCornerShape(24.dp)
+
+private fun Modifier.widgetClicks(widget: WidgetNode, viewModel: HaViewModel): Modifier {
+    val canHold = widget.hold != null && widget.hold.type != "none"
+    return combinedClickable(
+        onClick = { viewModel.onTap(widget) },
+        onLongClick = if (canHold) ({ viewModel.onHold(widget) }) else null,
+    )
+}
 
 @Composable
 fun WidgetTree(
@@ -206,7 +218,7 @@ fun ChipRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Mod
                 modifier = Modifier
                     .clip(ChipShape)
                     .background(if (highlighted) ActiveYellow else ChipDark)
-                    .clickable { viewModel.onTap(chip) }
+                    .widgetClicks(chip, viewModel)
                     .padding(end = 12.dp, start = 2.dp, top = 2.dp, bottom = 2.dp)
                     .height(34.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -243,7 +255,7 @@ fun PersonCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = 
     Column(
         modifier = modifier
             .width(72.dp)
-            .clickable { viewModel.onTap(widget) },
+            .widgetClicks(widget, viewModel),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         EntityPicture(
@@ -266,7 +278,7 @@ fun WeatherHeader(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier
     val day = states[widget.sunEntity ?: "sun.sun"]?.state == "above_horizon"
     val condition = weather?.state?.replace("sunny", "clear")?.replace('-', ' ') ?: ""
     Row(
-        modifier = modifier.clickable { viewModel.onTap(widget) },
+        modifier = modifier.widgetClicks(widget, viewModel),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -288,7 +300,7 @@ fun RoomCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Mo
             .fillMaxSize()
             .clip(shape)
             .background(CardLight)
-            .clickable { viewModel.onTap(widget) }
+            .widgetClicks(widget, viewModel)
             .padding(12.dp),
     ) {
         Text(
@@ -791,10 +803,7 @@ fun ToggleRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = M
             .height(75.dp)
             .clip(RoundedCornerShape(22.dp))
             .background(if (on) ActiveLight else PopupCard)
-            .clickable { viewModel.onTap(widget) }
-            .pointerInput(widget.entity) {
-                detectTapGestures(onLongPress = { viewModel.onHold(widget) })
-            }
+            .widgetClicks(widget, viewModel)
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -821,7 +830,16 @@ fun VentRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier, ids:
             .height(56.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(if (open) ActiveLight else PopupCard)
-            .clickable { viewModel.tiltGroup(ids) }
+            .combinedClickable(
+                onClick = {
+                    if (ids.size > 1) viewModel.tiltGroup(ids) else viewModel.onTap(widget)
+                },
+                onLongClick = if (widget.hold != null && widget.hold.type != "none") {
+                    { viewModel.onHold(widget) }
+                } else {
+                    null
+                },
+            )
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -848,7 +866,10 @@ fun ClimateCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
             .background(PopupCard)
             .padding(16.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.widgetClicks(widget, viewModel),
+        ) {
             Text(widget.name ?: "Climate", color = TextDark, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
             MdiIcon(if (heating) "mdi:thermometer" else "mdi:thermostat", tint = if (heating) AccentRed else TextDark, size = 22.dp)
         }
@@ -879,7 +900,7 @@ fun RoomConditions(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
             .height(140.dp)
             .clip(CardShape)
             .background(PopupCard)
-            .clickable { widget.entity?.let { viewModel.openMoreInfo(it) } }
+            .widgetClicks(widget, viewModel)
             .padding(20.dp),
     ) {
         Sparkline(points, Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(70.dp), AccentRed.copy(alpha = 0.7f))
@@ -897,7 +918,7 @@ fun SensorCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = 
             .height(if (widget.type == "sensor_small") 66.dp else 160.dp)
             .clip(if (widget.type == "sensor_small") RoundedCornerShape(40.dp) else CardShape)
             .background(PopupCard)
-            .clickable { widget.entity?.let { viewModel.openMoreInfo(it) } }
+            .widgetClicks(widget, viewModel)
             .padding(16.dp),
     ) {
         MdiIcon(widget.icon, tint = TextDark, size = 22.dp, modifier = Modifier.align(Alignment.TopEnd))
@@ -917,7 +938,7 @@ fun ButtonToggle(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier 
             .height(if (widget.type == "button_toggle_small") 66.dp else 160.dp)
             .clip(if (widget.type == "button_toggle_small") RoundedCornerShape(40.dp) else CardShape)
             .background(if (on) PopupCard else ChipDark)
-            .clickable { viewModel.onTap(widget) }
+            .widgetClicks(widget, viewModel)
             .padding(16.dp),
     ) {
         MdiIcon(widget.icon, tint = if (on) TextDark else ChipOnDark, size = 22.dp, modifier = Modifier.align(Alignment.TopEnd))
@@ -934,7 +955,7 @@ fun ActionChip(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = 
         modifier = modifier
             .clip(ChipShape)
             .background(ChipDark)
-            .clickable { viewModel.onTap(widget) }
+            .widgetClicks(widget, viewModel)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -961,7 +982,7 @@ fun VacuumButton(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier 
             .height(120.dp)
             .clip(CardShape)
             .background(background)
-            .clickable { viewModel.onTap(widget) }
+            .widgetClicks(widget, viewModel)
             .padding(16.dp),
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
@@ -982,7 +1003,7 @@ fun MediaCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = M
             .height(140.dp)
             .clip(CardShape)
             .background(if (on) ActiveYellow else CardLight)
-            .clickable { viewModel.onTap(widget) }
+            .widgetClicks(widget, viewModel)
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1015,6 +1036,7 @@ fun HistoryChart(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier 
             .height(180.dp)
             .clip(CardShape)
             .background(PopupCard)
+            .clickable { entity?.let { viewModel.openMoreInfo(it) } }
             .padding(16.dp),
     ) {
         Text(widget.name ?: widget.series.firstOrNull()?.name ?: "History", color = TextDark, fontSize = 14.sp)
@@ -1028,13 +1050,19 @@ fun EnergyStats(viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val solar = states.number("sensor.envoy_202234122877_current_power_production", 2, " kW")
     val net = states.number("sensor.envoy_202234122877_current_net_power_consumption", 2, " kW")
     val battery = states.number("input_number.battery_energy_helper", 3, " kWh", 0.001)
+    val tiles = listOf(
+        Triple("Solar", solar, "sensor.envoy_202234122877_current_power_production"),
+        Triple("Grid", net, "sensor.envoy_202234122877_current_net_power_consumption"),
+        Triple("Battery", battery, "input_number.battery_energy_helper"),
+    )
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf("Solar" to solar, "Grid" to net, "Battery" to battery).forEach { (name, value) ->
+        tiles.forEach { (name, value, entityId) ->
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .clip(CardShape)
                     .background(PopupCard)
+                    .clickable { viewModel.openMoreInfo(entityId) }
                     .padding(16.dp),
             ) {
                 Text(value, color = TextDark, fontSize = 22.sp, fontWeight = FontWeight.Light)

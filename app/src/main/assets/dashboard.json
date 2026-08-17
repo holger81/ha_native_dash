@@ -13,7 +13,8 @@
         "show_entity_picture": true,
         "tap": {
           "type": "more_info"
-        }
+        },
+        "hold": null
       },
       {
         "type": "person",
@@ -24,7 +25,8 @@
         "show_entity_picture": true,
         "tap": {
           "type": "more_info"
-        }
+        },
+        "hold": null
       }
     ],
     "header": [
@@ -82,7 +84,9 @@
           "icon": "mdi:face-mask-outline",
           "entity": "sensor.home_outdoor_aqi_5min_mean",
           "layout": "icon|state",
-          "tap": null,
+          "tap": {
+            "type": "more_info"
+          },
           "visibility": {
             "kind": "numeric_gte",
             "entity": "sensor.home_outdoor_aqi_5min_mean",
@@ -102,7 +106,9 @@
           "icon": "mdi:tumble-dryer",
           "entity": "sensor.dryer",
           "layout": "icon|state",
-          "tap": null,
+          "tap": {
+            "type": "more_info"
+          },
           "visibility": {
             "kind": "state_in",
             "entity": "sensor.dryer",
@@ -123,7 +129,9 @@
           "icon": "mdi:washing-machine",
           "entity": "sensor.front_load_washer",
           "layout": "icon|state",
-          "tap": null,
+          "tap": {
+            "type": "more_info"
+          },
           "visibility": {
             "kind": "state_in",
             "entity": "sensor.front_load_washer",
@@ -144,7 +152,9 @@
           "icon": "mdi:dishwasher",
           "entity": "sensor.bosch_dishwasher_operation_state",
           "layout": "icon|state",
-          "tap": null,
+          "tap": {
+            "type": "more_info"
+          },
           "visibility": {
             "kind": "state_in",
             "entity": "sensor.bosch_dishwasher_operation_state",
@@ -185,7 +195,9 @@
           "icon": "mdi:printer-3d",
           "entity": "sensor.octoprint_job_percentage",
           "layout": "icon|state",
-          "tap": null,
+          "tap": {
+            "type": "more_info"
+          },
           "visibility": {
             "kind": "state_in",
             "entity": "sensor.octoprint_current_state",
@@ -207,7 +219,9 @@
           "icon": "mdi:car-electric-outline",
           "entity": "sensor.tankerland_ev_charger_power_minute_average",
           "layout": "icon|state",
-          "tap": null,
+          "tap": {
+            "type": "more_info"
+          },
           "visibility": {
             "kind": "numeric_gte",
             "entity": "sensor.tankerland_ev_charger_power_minute_average",
@@ -228,7 +242,9 @@
           "icon": "mdi:solar-power-variant-outline",
           "entity": "sensor.envoy_202234122877_current_power_production",
           "layout": "icon|state",
-          "tap": null,
+          "tap": {
+            "type": "more_info"
+          },
           "visibility": {
             "kind": "numeric_gte",
             "entity": "sensor.envoy_202234122877_current_power_production",
@@ -248,7 +264,9 @@
           "icon": "mdi:transmission-tower",
           "entity": "sensor.envoy_202234122877_current_net_power_consumption",
           "layout": "icon|state",
-          "tap": null,
+          "tap": {
+            "type": "more_info"
+          },
           "visibility": {
             "kind": "always"
           },
@@ -266,7 +284,9 @@
           "icon": "mdi:home-battery-outline",
           "entity": "input_number.battery_energy_helper",
           "layout": "icon|state",
-          "tap": null,
+          "tap": {
+            "type": "more_info"
+          },
           "visibility": {
             "kind": "state_in",
             "entity": "binary_sensor.envoy_battery_discharging",
@@ -288,41 +308,41 @@
     "rooms": [
       {
         "type": "room_card",
-        "name": "Second\nBath",
-        "icon": "mdi:toilet",
-        "path": "#secondbath",
+        "name": "Main\nBedroom",
+        "icon": "mdi:bed-king",
+        "path": "#mainbedroom",
         "display": {
           "kind": "temp_hum",
-          "temp_entity": "sensor.second_bathroom_8ee5_temperature",
-          "hum_entity": "sensor.second_bathroom_8ee5_humidity",
+          "temp_entity": "sensor.main_bedroom_6671_temperature",
+          "hum_entity": "sensor.main_bedroom_6671_humidity",
           "climate_entity": null
         },
-        "accent": "blue-dark",
+        "accent": "purple",
         "radius": "36px 6px 6px 36px",
         "tap": {
           "type": "navigate",
-          "hash": "#secondbath"
+          "hash": "#mainbedroom"
         },
-        "grid_area": "secondbath"
+        "grid_area": "mainbed"
       },
       {
         "type": "room_card",
-        "name": "Main\nBath",
-        "icon": "mdi:shower-head",
-        "path": "#mainbath",
+        "name": "Emilia's\nRoom",
+        "icon": "mdi:alpha-e-circle-outline",
+        "path": "#emilias_room",
         "display": {
           "kind": "temp_hum",
-          "temp_entity": "sensor.main_bathroom_6eca_temperature",
-          "hum_entity": "sensor.main_bathroom_6eca_humidity",
+          "temp_entity": "sensor.emilias_room_2733_temperature",
+          "hum_entity": "sensor.emilias_room_2733_humidity",
           "climate_entity": null
         },
-        "accent": "red",
-        "radius": "6px 36px 36px 6px",
+        "accent": "green",
+        "radius": "36px 6px 6px 36px",
         "tap": {
           "type": "navigate",
-          "hash": "#mainbath"
+          "hash": "#emilias_room"
         },
-        "grid_area": "mainbath"
+        "grid_area": "emilia"
       },
       {
         "type": "room_card",
@@ -364,41 +384,22 @@
       },
       {
         "type": "room_card",
-        "name": "Main\nBedroom",
-        "icon": "mdi:bed-king",
-        "path": "#mainbedroom",
+        "name": "Office",
+        "icon": "mdi:desk",
+        "path": "#office",
         "display": {
           "kind": "temp_hum",
-          "temp_entity": "sensor.main_bedroom_6671_temperature",
-          "hum_entity": "sensor.main_bedroom_6671_humidity",
+          "temp_entity": "sensor.office_abfd_temperature",
+          "hum_entity": "sensor.office_abfd_humidity",
           "climate_entity": null
         },
-        "accent": "purple",
-        "radius": "36px 6px 6px 36px",
-        "tap": {
-          "type": "navigate",
-          "hash": "#mainbedroom"
-        },
-        "grid_area": "mainbed"
-      },
-      {
-        "type": "room_card",
-        "name": "Hallway",
-        "icon": "mdi:door",
-        "path": "#hallway",
-        "display": {
-          "kind": "temp_hum",
-          "temp_entity": null,
-          "hum_entity": null,
-          "climate_entity": "climate.hallway_room"
-        },
         "accent": "yellow",
-        "radius": "36px 6px 6px 36px",
+        "radius": "36px 36px 36px 36px",
         "tap": {
           "type": "navigate",
-          "hash": "#hallway"
+          "hash": "#office"
         },
-        "grid_area": "hallway"
+        "grid_area": "office"
       },
       {
         "type": "room_card",
@@ -421,41 +422,60 @@
       },
       {
         "type": "room_card",
-        "name": "Office",
-        "icon": "mdi:desk",
-        "path": "#office",
+        "name": "Second\nBath",
+        "icon": "mdi:toilet",
+        "path": "#secondbath",
         "display": {
           "kind": "temp_hum",
-          "temp_entity": "sensor.office_abfd_temperature",
-          "hum_entity": "sensor.office_abfd_humidity",
+          "temp_entity": "sensor.second_bathroom_8ee5_temperature",
+          "hum_entity": "sensor.second_bathroom_8ee5_humidity",
           "climate_entity": null
         },
-        "accent": "yellow",
-        "radius": "36px 36px 36px 36px",
-        "tap": {
-          "type": "navigate",
-          "hash": "#office"
-        },
-        "grid_area": "office"
-      },
-      {
-        "type": "room_card",
-        "name": "Emilia's\nRoom",
-        "icon": "mdi:alpha-e-circle-outline",
-        "path": "#emilias_room",
-        "display": {
-          "kind": "temp_hum",
-          "temp_entity": "sensor.emilias_room_2733_temperature",
-          "hum_entity": "sensor.emilias_room_2733_humidity",
-          "climate_entity": null
-        },
-        "accent": "green",
+        "accent": "blue-dark",
         "radius": "36px 6px 6px 36px",
         "tap": {
           "type": "navigate",
-          "hash": "#emilias_room"
+          "hash": "#secondbath"
         },
-        "grid_area": "emilia"
+        "grid_area": "secondbath"
+      },
+      {
+        "type": "room_card",
+        "name": "Main\nBath",
+        "icon": "mdi:shower-head",
+        "path": "#mainbath",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.main_bathroom_6eca_temperature",
+          "hum_entity": "sensor.main_bathroom_6eca_humidity",
+          "climate_entity": null
+        },
+        "accent": "red",
+        "radius": "6px 36px 36px 6px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#mainbath"
+        },
+        "grid_area": "mainbath"
+      },
+      {
+        "type": "room_card",
+        "name": "Hallway",
+        "icon": "mdi:door",
+        "path": "#hallway",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": null,
+          "hum_entity": null,
+          "climate_entity": "climate.hallway_room"
+        },
+        "accent": "yellow",
+        "radius": "36px 6px 6px 36px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#hallway"
+        },
+        "grid_area": "hallway"
       }
     ],
     "popups": [
@@ -549,7 +569,9 @@
                 "name": null,
                 "icon": null,
                 "label": null,
-                "tap": null,
+                "tap": {
+                  "type": "more_info"
+                },
                 "hold": null,
                 "show_entity_picture": null
               },
@@ -559,7 +581,9 @@
                 "name": null,
                 "icon": null,
                 "label": null,
-                "tap": null,
+                "tap": {
+                  "type": "more_info"
+                },
                 "hold": null,
                 "show_entity_picture": null
               },
@@ -569,7 +593,9 @@
                 "name": null,
                 "icon": null,
                 "label": null,
-                "tap": null,
+                "tap": {
+                  "type": "more_info"
+                },
                 "hold": null,
                 "show_entity_picture": null
               },
@@ -579,7 +605,9 @@
                 "name": null,
                 "icon": null,
                 "label": null,
-                "tap": null,
+                "tap": {
+                  "type": "more_info"
+                },
                 "hold": null,
                 "show_entity_picture": null
               },
@@ -589,7 +617,9 @@
                 "name": null,
                 "icon": null,
                 "label": null,
-                "tap": null,
+                "tap": {
+                  "type": "more_info"
+                },
                 "hold": null,
                 "show_entity_picture": null
               },
@@ -620,7 +650,8 @@
             "type": "button_toggle",
             "tap": {
               "type": "toggle"
-            }
+            },
+            "hold": null
           },
           {
             "type": "tabs",
@@ -642,7 +673,8 @@
                         "type": "button_toggle",
                         "tap": {
                           "type": "toggle"
-                        }
+                        },
+                        "hold": null
                       }
                     ]
                   },
@@ -658,7 +690,8 @@
                         "type": "button_toggle",
                         "tap": {
                           "type": "toggle"
-                        }
+                        },
+                        "hold": null
                       }
                     ]
                   }
@@ -733,6 +766,7 @@
                             "tap": {
                               "type": "toggle"
                             },
+                            "hold": null,
                             "grid_area": "one"
                           },
                           {
@@ -745,6 +779,7 @@
                             "tap": {
                               "type": "toggle"
                             },
+                            "hold": null,
                             "grid_area": "two"
                           },
                           {
@@ -757,6 +792,7 @@
                             "tap": {
                               "type": "toggle"
                             },
+                            "hold": null,
                             "grid_area": "three"
                           },
                           {
@@ -769,6 +805,7 @@
                             "tap": {
                               "type": "toggle"
                             },
+                            "hold": null,
                             "grid_area": "four"
                           },
                           {
@@ -781,6 +818,7 @@
                             "tap": {
                               "type": "toggle"
                             },
+                            "hold": null,
                             "grid_area": "five"
                           },
                           {
@@ -793,6 +831,7 @@
                             "tap": {
                               "type": "toggle"
                             },
+                            "hold": null,
                             "grid_area": "six"
                           }
                         ]
@@ -813,6 +852,7 @@
                             "tap": {
                               "type": "toggle"
                             },
+                            "hold": null,
                             "grid_area": "seven"
                           },
                           {
@@ -825,6 +865,7 @@
                             "tap": {
                               "type": "toggle"
                             },
+                            "hold": null,
                             "grid_area": "eight"
                           },
                           {
@@ -837,6 +878,7 @@
                             "tap": {
                               "type": "toggle"
                             },
+                            "hold": null,
                             "grid_area": "nine"
                           },
                           {
@@ -849,6 +891,7 @@
                             "tap": {
                               "type": "toggle"
                             },
+                            "hold": null,
                             "grid_area": "ten"
                           },
                           {
@@ -861,6 +904,7 @@
                             "tap": {
                               "type": "toggle"
                             },
+                            "hold": null,
                             "grid_area": "eleven"
                           },
                           {
@@ -873,6 +917,7 @@
                             "tap": {
                               "type": "toggle"
                             },
+                            "hold": null,
                             "grid_area": "twelve"
                           }
                         ]
@@ -910,6 +955,7 @@
                     "tap": {
                       "type": "toggle"
                     },
+                    "hold": null,
                     "grid_area": "start"
                   }
                 ],
@@ -932,6 +978,7 @@
                     "tap": {
                       "type": "toggle"
                     },
+                    "hold": null,
                     "grid_area": "start1"
                   }
                 ],
@@ -971,7 +1018,10 @@
                         "entity": null,
                         "background": "var(--popupBG)",
                         "type": "sensor_big_2columns",
-                        "tap": null
+                        "label": "[[[\n  const v = parseFloat(states['sensor.emporia_vue_3_total_power_return'].state || 0);\n  return v.toFixed(2) + '<span style=\"font-size:14px\"> W</span>';\n]]]\n",
+                        "tap": {
+                          "type": "more_info"
+                        }
                       },
                       {
                         "name": "Netto Import",
@@ -979,7 +1029,10 @@
                         "entity": null,
                         "background": "var(--popupBG)",
                         "type": "sensor_big",
-                        "label": "[[[\n  const v = parseFloat(states['sensor.emporia_vue_3_total_power'].state || 0);\n  return v.toFixed(2) + '<span style=\"font-size:14px\"> W</span>';\n]]]\n"
+                        "label": "[[[\n  const v = parseFloat(states['sensor.emporia_vue_3_total_power'].state || 0);\n  return v.toFixed(2) + '<span style=\"font-size:14px\"> W</span>';\n]]]\n",
+                        "tap": {
+                          "type": "more_info"
+                        }
                       }
                     ]
                   },
@@ -1019,7 +1072,10 @@
                         "entity": null,
                         "background": "var(--popupBG)",
                         "type": "sensor_big",
-                        "label": "[[[\n  const v = parseFloat(states['sensor.envoy_202234122877_current_power_production'].state || 0);\n  return v.toFixed(2) + '<span style=\"font-size:14px\"> W</span>';\n]]]\n"
+                        "label": "[[[\n  const v = parseFloat(states['sensor.envoy_202234122877_current_power_production'].state || 0);\n  return v.toFixed(2) + '<span style=\"font-size:14px\"> W</span>';\n]]]\n",
+                        "tap": {
+                          "type": "more_info"
+                        }
                       }
                     ]
                   },
@@ -1073,7 +1129,10 @@
                         "entity": null,
                         "background": "var(--popupBG)",
                         "type": "sensor_big",
-                        "label": "[[[\n  const s = states['sensor.current_electrical_energy_import_cost']?.state;\n  const value = s === undefined || s === 'unknown' || s === 'unavailable'\n    ? 0\n    : parseFloat(s);\n  const rounded = Math.round(value * 1000) / 1000;\n  return rounded + '<span style=\"font-size:14px\"> USD/kWh</span>';\n]]]\n"
+                        "label": "[[[\n  const s = states['sensor.current_electrical_energy_import_cost']?.state;\n  const value = s === undefined || s === 'unknown' || s === 'unavailable'\n    ? 0\n    : parseFloat(s);\n  const rounded = Math.round(value * 1000) / 1000;\n  return rounded + '<span style=\"font-size:14px\"> USD/kWh</span>';\n]]]\n",
+                        "tap": {
+                          "type": "more_info"
+                        }
                       },
                       {
                         "name": "Estimated Electricity Bill",
@@ -1081,7 +1140,10 @@
                         "entity": null,
                         "background": "var(--popupBG)",
                         "type": "sensor_big",
-                        "label": "[[[\n  const parseNumber = (entityId) => {\n    const value = states[entityId]?.state;\n    if (value === undefined || value === null || value === '' || value === 'unknown' || value === 'unavailable') {\n      return null;\n    }\n    const parsed = parseFloat(value);\n    return Number.isFinite(parsed) ? parsed : null;\n  };\n  const forecastedCost = parseNumber('sensor.current_bill_electric_forecasted_cost');\n  const costToDate = parseNumber('sensor.current_bill_electric_cost_to_date');\n  const forecastedUsage = parseNumber('sensor.current_bill_electric_forecasted_usage');\n  const usageToDate = parseNumber('sensor.current_bill_electric_usage_to_date');\n  const importRate = parseNumber('sensor.current_electrical_energy_import_cost');\n  let estimate = null;\n\n  if (forecastedCost !== null && forecastedCost > 0) {\n    estimate = forecastedCost;\n  } else if (forecastedUsage !== null && importRate !== null) {\n    estimate = forecastedUsage * importRate;\n  } else if (costToDate !== null && costToDate > 0) {\n    estimate = costToDate;\n  } else if (usageToDate !== null && importRate !== null) {\n    estimate = usageToDate * importRate;\n  }\n\n  if (estimate === null) {\n    return '--<span style=\"font-size:14px\"> USD</span>';\n  }\n\n  return estimate.toFixed(2) + '<span style=\"font-size:14px\"> USD</span>';\n]]]\n"
+                        "label": "[[[\n  const parseNumber = (entityId) => {\n    const value = states[entityId]?.state;\n    if (value === undefined || value === null || value === '' || value === 'unknown' || value === 'unavailable') {\n      return null;\n    }\n    const parsed = parseFloat(value);\n    return Number.isFinite(parsed) ? parsed : null;\n  };\n  const forecastedCost = parseNumber('sensor.current_bill_electric_forecasted_cost');\n  const costToDate = parseNumber('sensor.current_bill_electric_cost_to_date');\n  const forecastedUsage = parseNumber('sensor.current_bill_electric_forecasted_usage');\n  const usageToDate = parseNumber('sensor.current_bill_electric_usage_to_date');\n  const importRate = parseNumber('sensor.current_electrical_energy_import_cost');\n  let estimate = null;\n\n  if (forecastedCost !== null && forecastedCost > 0) {\n    estimate = forecastedCost;\n  } else if (forecastedUsage !== null && importRate !== null) {\n    estimate = forecastedUsage * importRate;\n  } else if (costToDate !== null && costToDate > 0) {\n    estimate = costToDate;\n  } else if (usageToDate !== null && importRate !== null) {\n    estimate = usageToDate * importRate;\n  }\n\n  if (estimate === null) {\n    return '--<span style=\"font-size:14px\"> USD</span>';\n  }\n\n  return estimate.toFixed(2) + '<span style=\"font-size:14px\"> USD</span>';\n]]]\n",
+                        "tap": {
+                          "type": "more_info"
+                        }
                       }
                     ]
                   }
@@ -1117,7 +1179,8 @@
                     "icon": "mdi:car-electric",
                     "label": null,
                     "tap": {
-                      "type": "more_info"
+                      "type": "more_info",
+                      "entity": "device_tracker.model_3_location"
                     },
                     "hold": null,
                     "show_entity_picture": null
@@ -1133,7 +1196,8 @@
                         "icon": null,
                         "label": null,
                         "tap": {
-                          "type": "more_info"
+                          "type": "more_info",
+                          "entity": "sensor.model_3_battery_level"
                         },
                         "hold": null,
                         "show_entity_picture": null
@@ -1145,7 +1209,8 @@
                         "icon": null,
                         "label": null,
                         "tap": {
-                          "type": "more_info"
+                          "type": "more_info",
+                          "entity": "sensor.model_3_battery_range"
                         },
                         "hold": null,
                         "show_entity_picture": null
@@ -1163,7 +1228,8 @@
                         "icon": null,
                         "label": null,
                         "tap": {
-                          "type": "more_info"
+                          "type": "more_info",
+                          "entity": "device_tracker.model_3_location"
                         },
                         "hold": null,
                         "show_entity_picture": null
@@ -1175,7 +1241,8 @@
                         "icon": null,
                         "label": null,
                         "tap": {
-                          "type": "more_info"
+                          "type": "more_info",
+                          "entity": "sensor.odometer"
                         },
                         "hold": null,
                         "show_entity_picture": null
@@ -1201,7 +1268,8 @@
                                 "icon": null,
                                 "label": null,
                                 "tap": {
-                                  "type": "more_info"
+                                  "type": "more_info",
+                                  "entity": "sensor.tesla_miles_daily"
                                 },
                                 "hold": null,
                                 "show_entity_picture": null
@@ -1213,7 +1281,8 @@
                                 "icon": null,
                                 "label": null,
                                 "tap": {
-                                  "type": "more_info"
+                                  "type": "more_info",
+                                  "entity": "sensor.tesla_miles_monthly"
                                 },
                                 "hold": null,
                                 "show_entity_picture": null
@@ -1412,7 +1481,8 @@
                     "icon": "mdi:van-passenger",
                     "label": null,
                     "tap": {
-                      "type": "more_info"
+                      "type": "more_info",
+                      "entity": "device_tracker.volkswagen_id_buzz_location"
                     },
                     "hold": null,
                     "show_entity_picture": null
@@ -1428,7 +1498,8 @@
                         "icon": null,
                         "label": null,
                         "tap": {
-                          "type": "more_info"
+                          "type": "more_info",
+                          "entity": "sensor.volkswagen_id_buzz_battery"
                         },
                         "hold": null,
                         "show_entity_picture": null
@@ -1440,7 +1511,8 @@
                         "icon": null,
                         "label": null,
                         "tap": {
-                          "type": "more_info"
+                          "type": "more_info",
+                          "entity": "sensor.volkswagen_id_buzz_range"
                         },
                         "hold": null,
                         "show_entity_picture": null
@@ -1458,7 +1530,8 @@
                         "icon": null,
                         "label": null,
                         "tap": {
-                          "type": "more_info"
+                          "type": "more_info",
+                          "entity": "device_tracker.volkswagen_id_buzz_location"
                         },
                         "hold": null,
                         "show_entity_picture": null
@@ -1470,7 +1543,8 @@
                         "icon": null,
                         "label": null,
                         "tap": {
-                          "type": "more_info"
+                          "type": "more_info",
+                          "entity": "sensor.volkswagen_id_buzz_odometer"
                         },
                         "hold": null,
                         "show_entity_picture": null
@@ -1496,7 +1570,8 @@
                                 "icon": null,
                                 "label": null,
                                 "tap": {
-                                  "type": "more_info"
+                                  "type": "more_info",
+                                  "entity": "sensor.vw_miles_daily"
                                 },
                                 "hold": null,
                                 "show_entity_picture": null
@@ -1508,7 +1583,8 @@
                                 "icon": null,
                                 "label": null,
                                 "tap": {
-                                  "type": "more_info"
+                                  "type": "more_info",
+                                  "entity": "sensor.vw_miles_monthly"
                                 },
                                 "hold": null,
                                 "show_entity_picture": null
@@ -1616,6 +1692,9 @@
               "temp_entity": "sensor.great_room_4afa_temperature",
               "hum_entity": "sensor.great_room_4afa_humidity",
               "climate_entity": null
+            },
+            "tap": {
+              "type": "more_info"
             }
           },
           {
@@ -1801,6 +1880,7 @@
                                 "transition": 2
                               }
                             },
+                            "hold": null,
                             "grid_area": "one"
                           },
                           {
@@ -1825,6 +1905,7 @@
                               ],
                               "data": null
                             },
+                            "hold": null,
                             "grid_area": "two"
                           },
                           {
@@ -1848,6 +1929,7 @@
                               ],
                               "data": null
                             },
+                            "hold": null,
                             "grid_area": "three"
                           }
                         ]
@@ -1876,13 +1958,19 @@
                         "cover.great_room_large_b09b_vent"
                       ],
                       "data": null
+                    },
+                    "hold": {
+                      "type": "none"
                     }
                   },
                   {
                     "type": "climate",
                     "entity": "climate.great_room_room",
                     "name": "Great Room",
-                    "activity_entity": "select.great_room_activity_status"
+                    "activity_entity": "select.great_room_activity_status",
+                    "tap": {
+                      "type": "more_info"
+                    }
                   }
                 ]
               },
@@ -1898,7 +1986,8 @@
                     "icon": "mdi:television-classic",
                     "tap": {
                       "type": "toggle"
-                    }
+                    },
+                    "hold": null
                   },
                   {
                     "type": "generic",
@@ -1906,7 +1995,9 @@
                     "entity": "media_player.living_room_appletv",
                     "name": null,
                     "icon": null,
-                    "tap": null
+                    "tap": {
+                      "type": "more_info"
+                    }
                   }
                 ]
               }
@@ -1933,6 +2024,9 @@
               "temp_entity": "sensor.emilias_room_2733_temperature",
               "hum_entity": "sensor.emilias_room_2733_humidity",
               "climate_entity": null
+            },
+            "tap": {
+              "type": "more_info"
             }
           },
           {
@@ -2006,7 +2100,10 @@
                 "type": "climate",
                 "entity": "climate.emilias_room_room",
                 "name": "Emilias Room",
-                "activity_entity": "select.emilias_room_activity_status"
+                "activity_entity": "select.emilias_room_activity_status",
+                "tap": {
+                  "type": "more_info"
+                }
               }
             ]
           }
@@ -2031,6 +2128,9 @@
               "temp_entity": null,
               "hum_entity": null,
               "climate_entity": "climate.hallway_room"
+            },
+            "tap": {
+              "type": "more_info"
             }
           },
           {
@@ -2050,7 +2150,10 @@
                 "type": "climate",
                 "entity": "climate.hallway_room",
                 "name": "Hallway",
-                "activity_entity": "select.hallway_activity_status"
+                "activity_entity": "select.hallway_activity_status",
+                "tap": {
+                  "type": "more_info"
+                }
               }
             ]
           },
@@ -2077,7 +2180,10 @@
                     "entity": "lock.front_door",
                     "background": "var(--popupBG)",
                     "type": "sensor_big",
-                    "label": null
+                    "label": null,
+                    "tap": {
+                      "type": "more_info"
+                    }
                   },
                   {
                     "name": "Hallway Temperature",
@@ -2085,7 +2191,10 @@
                     "entity": "sensor.nspanelhallway_temperature",
                     "background": "var(--popupBG)",
                     "type": "sensor_big",
-                    "label": null
+                    "label": null,
+                    "tap": {
+                      "type": "more_info"
+                    }
                   }
                 ]
               }
@@ -2112,6 +2221,9 @@
               "temp_entity": "sensor.guestroom_f628_temperature",
               "hum_entity": "sensor.guestroom_f628_humidity",
               "climate_entity": null
+            },
+            "tap": {
+              "type": "more_info"
             }
           },
           {
@@ -2177,13 +2289,20 @@
                 "entity_ids": [
                   "cover.guestroom_7fcf_vent",
                   "cover.guestroom_garden_9bbb_vent"
-                ]
+                ],
+                "tap": null,
+                "hold": {
+                  "type": "none"
+                }
               },
               {
                 "type": "climate",
                 "entity": "climate.guestroom_room",
                 "name": "Guestroom",
-                "activity_entity": "select.guestroom_activity_status"
+                "activity_entity": "select.guestroom_activity_status",
+                "tap": {
+                  "type": "more_info"
+                }
               }
             ]
           }
@@ -2208,6 +2327,9 @@
               "temp_entity": "sensor.main_bathroom_6eca_temperature",
               "hum_entity": "sensor.main_bathroom_6eca_humidity",
               "climate_entity": null
+            },
+            "tap": {
+              "type": "more_info"
             }
           },
           {
@@ -2268,7 +2390,10 @@
                 "type": "climate",
                 "entity": "climate.main_bathroom_room",
                 "name": "Main Bathroom",
-                "activity_entity": "select.main_bathroom_activity_status"
+                "activity_entity": "select.main_bathroom_activity_status",
+                "tap": {
+                  "type": "more_info"
+                }
               }
             ]
           }
@@ -2293,6 +2418,9 @@
               "temp_entity": "sensor.second_bathroom_8ee5_temperature",
               "hum_entity": "sensor.second_bathroom_8ee5_humidity",
               "climate_entity": null
+            },
+            "tap": {
+              "type": "more_info"
             }
           },
           {
@@ -2353,7 +2481,10 @@
                 "type": "climate",
                 "entity": "climate.second_bathroom_room",
                 "name": "Second Bathroom",
-                "activity_entity": "select.second_bathroom_activity_status"
+                "activity_entity": "select.second_bathroom_activity_status",
+                "tap": {
+                  "type": "more_info"
+                }
               }
             ]
           }
@@ -2378,6 +2509,9 @@
               "temp_entity": "sensor.jonathans_bedroom_9b3a_temperature",
               "hum_entity": "sensor.jonathans_bedroom_9b3a_humidity",
               "climate_entity": null
+            },
+            "tap": {
+              "type": "more_info"
             }
           },
           {
@@ -2486,7 +2620,10 @@
                 "type": "climate",
                 "entity": "climate.jonathans_bedroom_room",
                 "name": "Jonathan's Room",
-                "activity_entity": "select.jonathans_bedroom_activity_status"
+                "activity_entity": "select.jonathans_bedroom_activity_status",
+                "tap": {
+                  "type": "more_info"
+                }
               }
             ]
           }
@@ -2511,6 +2648,9 @@
               "temp_entity": "sensor.main_bedroom_6671_temperature",
               "hum_entity": "sensor.main_bedroom_6671_humidity",
               "climate_entity": null
+            },
+            "tap": {
+              "type": "more_info"
             }
           },
           {
@@ -2584,7 +2724,10 @@
                 "type": "climate",
                 "entity": "climate.main_bedroom_room",
                 "name": "Main Bedroom",
-                "activity_entity": "select.main_bedroom_activity_status"
+                "activity_entity": "select.main_bedroom_activity_status",
+                "tap": {
+                  "type": "more_info"
+                }
               }
             ]
           }
@@ -2607,8 +2750,12 @@
             "name": null,
             "icon": null,
             "label": null,
-            "tap": null,
-            "hold": null,
+            "tap": {
+              "type": "none"
+            },
+            "hold": {
+              "type": "none"
+            },
             "show_entity_picture": null
           },
           {
@@ -2660,6 +2807,9 @@
               "temp_entity": "sensor.office_abfd_temperature",
               "hum_entity": "sensor.office_abfd_humidity",
               "climate_entity": null
+            },
+            "tap": {
+              "type": "more_info"
             }
           },
           {
@@ -2720,7 +2870,10 @@
                 "type": "climate",
                 "entity": "climate.office_room",
                 "name": "Office",
-                "activity_entity": "select.office_activity_status"
+                "activity_entity": "select.office_activity_status",
+                "tap": {
+                  "type": "more_info"
+                }
               }
             ]
           }
@@ -2801,6 +2954,8 @@
     "cover.second_bathroom_afb5_vent",
     "device_tracker.bettinas_iphone_2",
     "device_tracker.holgers_iphone",
+    "device_tracker.model_3_location",
+    "device_tracker.volkswagen_id_buzz_location",
     "fan.blue_pure_fan",
     "fan.ceiling_fan",
     "image.s8_maxv_ultra_map_0",
@@ -2859,6 +3014,7 @@
     "sensor.dryer",
     "sensor.emilias_room_2733_temperature",
     "sensor.emporia_vue_3_total_power",
+    "sensor.emporia_vue_3_total_power_return",
     "sensor.envoy_202234122877_current_net_power_consumption",
     "sensor.envoy_202234122877_current_power_production",
     "sensor.front_load_washer",
@@ -2871,15 +3027,23 @@
     "sensor.jonathans_bedroom_9b3a_temperature",
     "sensor.main_bathroom_6eca_temperature",
     "sensor.main_bedroom_6671_temperature",
+    "sensor.model_3_battery_level",
+    "sensor.model_3_battery_range",
     "sensor.nspanelhallway_temperature",
     "sensor.octoprint_current_state",
     "sensor.octoprint_job_percentage",
+    "sensor.odometer",
     "sensor.office_abfd_temperature",
     "sensor.second_bathroom_8ee5_temperature",
     "sensor.tankerland_ev_charger_power_minute_average",
     "sensor.tesla_miles_daily",
+    "sensor.tesla_miles_monthly",
+    "sensor.volkswagen_id_buzz_battery",
     "sensor.volkswagen_id_buzz_charging_status",
+    "sensor.volkswagen_id_buzz_odometer",
+    "sensor.volkswagen_id_buzz_range",
     "sensor.vw_miles_daily",
+    "sensor.vw_miles_monthly",
     "sensor.weather_forecast_daily",
     "switch.foyer_main_lights",
     "switch.model_3_charge",

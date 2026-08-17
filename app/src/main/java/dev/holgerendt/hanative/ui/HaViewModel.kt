@@ -240,18 +240,25 @@ class HaViewModel(
         _ui.value = _ui.value.copy(moreInfoId = null)
     }
 
-    fun onTap(widget: WidgetNode) = dispatch(widget.tap ?: ActionNode(type = "more_info"), widget.entity)
+    fun onTap(widget: WidgetNode) {
+        val action = widget.tap ?: ActionNode(type = "more_info")
+        dispatch(action, widget.entity)
+    }
 
-    fun onHold(widget: WidgetNode) = dispatch(widget.hold ?: ActionNode(type = "more_info"), widget.entity)
+    fun onHold(widget: WidgetNode) {
+        val action = widget.hold ?: return
+        dispatch(action, widget.entity)
+    }
 
     fun dispatch(action: ActionNode?, fallbackEntity: String? = null) {
-        if (action == null) return
+        if (action == null || action.type == "none") return
+        val entity = action.entity ?: fallbackEntity
         when (action.type) {
             "menu_toggle" -> setDrawer(!_ui.value.drawerOpen)
             "navigate" -> openPopup(action.hash)
-            "more_info" -> openMoreInfo(fallbackEntity)
-            "toggle" -> fallbackEntity?.let { id -> viewModelScope.launch { client.toggle(id) } }
-            "vent_tilt_toggle" -> fallbackEntity?.let { id ->
+            "more_info" -> openMoreInfo(entity)
+            "toggle" -> entity?.let { id -> viewModelScope.launch { client.toggle(id) } }
+            "vent_tilt_toggle" -> entity?.let { id ->
                 viewModelScope.launch {
                     val open = client.state(id)?.state in setOf("open", "opening")
                     client.tiltVents(listOf(id), open = !open)
@@ -261,13 +268,20 @@ class HaViewModel(
                 val service = action.service ?: return@launch
                 val domain = service.substringBefore('.')
                 val name = service.substringAfter('.')
-                val ids = action.entityIds().ifEmpty { listOfNotNull(fallbackEntity) }
+                val ids = action.entityIds().ifEmpty { listOfNotNull(entity) }
                 val data = action.data?.mapValues { it.value } ?: emptyMap()
                 client.callService(domain, name, ids.ifEmpty { null }, data)
             }
             "fire-dom-event" -> {
                 // Weather now/today swap is handled natively in the weather popup.
             }
+        }
+    }
+
+    fun callEntityService(entityId: String, service: String, domain: String? = null) {
+        viewModelScope.launch {
+            val resolved = domain ?: entityId.substringBefore('.')
+            client.callService(resolved, service, listOf(entityId))
         }
     }
 

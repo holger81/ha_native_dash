@@ -31,8 +31,6 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
@@ -40,7 +38,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -51,12 +48,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.holgerendt.hanative.data.ConnectionState
@@ -81,7 +78,6 @@ import dev.holgerendt.hanative.ui.widgets.VisionTimeline
 import dev.holgerendt.hanative.ui.widgets.WeatherHeader
 import dev.holgerendt.hanative.ui.widgets.WeekPlanner
 import dev.holgerendt.hanative.ui.widgets.WidgetTree
-import kotlin.math.roundToInt
 
 @Composable
 fun HaApp(viewModel: HaViewModel) {
@@ -107,23 +103,26 @@ fun HaApp(viewModel: HaViewModel) {
                 }
             },
         ) {
-            Column(Modifier.fillMaxSize().background(ScreenBackground)) {
-                Box(Modifier.weight(1f).fillMaxWidth()) {
-                    HomeScreen(viewModel)
-                    if (connection !is ConnectionState.Connected) {
-                        Text(
-                            text = when (connection) {
-                                is ConnectionState.Connecting -> "Connecting…"
-                                is ConnectionState.Error -> (connection as ConnectionState.Error).message
-                                else -> "Disconnected"
-                            },
-                            color = TextDark,
-                            fontSize = 12.sp,
-                            modifier = Modifier.align(Alignment.TopCenter).padding(8.dp),
-                        )
-                    }
+            Box(Modifier.fillMaxSize().background(ScreenBackground)) {
+                HomeScreen(viewModel)
+                if (connection !is ConnectionState.Connected) {
+                    Text(
+                        text = when (connection) {
+                            is ConnectionState.Connecting -> "Connecting…"
+                            is ConnectionState.Error -> (connection as ConnectionState.Error).message
+                            else -> "Disconnected"
+                        },
+                        color = TextDark,
+                        fontSize = 12.sp,
+                        modifier = Modifier.align(Alignment.TopCenter).padding(8.dp),
+                    )
                 }
-                BottomDock(viewModel)
+                if (ui.popupHash.isNullOrBlank()) {
+                    BottomDock(
+                        viewModel = viewModel,
+                        modifier = Modifier.align(Alignment.BottomCenter),
+                    )
+                }
             }
         }
         val popup = viewModel.popup(ui.popupHash)
@@ -187,7 +186,7 @@ private fun HomeScreen(viewModel: HaViewModel) {
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 96.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -236,56 +235,58 @@ private fun HomeScreen(viewModel: HaViewModel) {
     }
 }
 
-private val DockHashes = setOf(
-    "#weather",
-    "#power",
-    "#bil",
-    "#staubinator",
-    "#camerafront_view",
-    "#settings",
+private data class DockItem(val hash: String, val icon: String)
+
+/** Lovelace footer order: vacuum, camera, power, cars, settings. Weather is the header, not the dock. */
+private val DockItems = listOf(
+    DockItem("#staubinator", "mdi:vacuum-outline"),
+    DockItem("#camerafront_view", "mdi:video"),
+    DockItem("#power", "mdi:power-plug-outline"),
+    DockItem("#bil", "mdi:car-outline"),
+    DockItem("#settings", "mdi:tune-variant"),
 )
 
 @Composable
-private fun BottomDock(viewModel: HaViewModel) {
-    val ui by viewModel.ui.collectAsState()
-    val items = ui.dashboard?.home?.popups.orEmpty().filter { it.hash in DockHashes }
-    if (items.isEmpty()) return
+private fun BottomDock(viewModel: HaViewModel, modifier: Modifier = Modifier) {
+    val wide = LocalConfiguration.current.screenWidthDp >= 801
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
+            .padding(
+                start = if (wide) 0.dp else 10.dp,
+                end = if (wide) 0.dp else 10.dp,
+                bottom = 10.dp,
+            )
+            .fillMaxWidth(if (wide) 0.6f else 1f)
+            .height(70.dp)
+            .clip(RoundedCornerShape(100.dp))
             .background(DockBackground)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(10.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        items.forEach { popup ->
-            val active = ui.popupHash == popup.hash
-            Column(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable { viewModel.openPopup(popup.hash) }
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(if (active) ActiveYellow else CardLight),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    MdiIcon(popup.icon, tint = TextDark, size = 24.dp)
-                }
-                Text(
-                    text = popup.name.orEmpty().substringBefore(" "),
-                    color = TextDark,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
+        DockItems.forEach { item ->
+            DockButton(
+                item = item,
+                onClick = { viewModel.openPopup(item.hash) },
+                modifier = Modifier.weight(1f),
+            )
         }
+    }
+}
+
+@Composable
+private fun DockButton(item: DockItem, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxHeight()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        MdiIcon(item.icon, tint = Color.White, size = 24.dp)
     }
 }
 
@@ -449,72 +450,7 @@ private fun WeatherPopup(viewModel: HaViewModel) {
 }
 
 @Composable
-private fun MoreInfoDialog(entityId: String, viewModel: HaViewModel) {
-    val states by viewModel.states.collectAsState()
-    val entity = states[entityId]
-    InWindowOverlay(
-        onDismiss = { viewModel.closeMoreInfo() },
-        dismissOnScrim = true,
-        scrim = Color.Black.copy(alpha = 0.5f),
-    ) {
-        Column(
-            modifier = Modifier
-                .padding(horizontal = 24.dp)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(28.dp))
-                .background(CardLight)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = {},
-                )
-                .padding(24.dp)
-                .verticalScroll(rememberScrollState()),
-        ) {
-            Text(entity?.friendlyName ?: entityId, color = TextDark, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-            Text(entity?.state ?: "unknown", color = TextMuted, fontSize = 16.sp)
-            Spacer(Modifier.height(12.dp))
-            when (entityId.substringBefore('.')) {
-                "light" -> {
-                    val pct = states.brightnessPct(entityId).toFloat()
-                    var value by remember(pct) { mutableFloatStateOf(pct) }
-                    Slider(
-                        value = value,
-                        onValueChange = { value = it },
-                        onValueChangeFinished = { viewModel.setBrightness(entityId, value.roundToInt()) },
-                        valueRange = 0f..100f,
-                        colors = SliderDefaults.colors(thumbColor = ActiveYellow, activeTrackColor = ActiveYellow),
-                    )
-                    Button(onClick = { viewModel.toggleEntity(entityId) }, colors = ButtonDefaults.buttonColors(ActiveYellow)) {
-                        Text("Toggle", color = Color.Black)
-                    }
-                }
-                "climate" -> {
-                    val target = entity?.attrDouble("temperature") ?: 20.0
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("–", fontSize = 28.sp, color = TextDark, modifier = Modifier.clickable {
-                            viewModel.setTemperature(entityId, target - 0.5)
-                        }.padding(8.dp))
-                        Text(target.format(1, "°"), fontSize = 28.sp, color = TextDark)
-                        Text("+", fontSize = 28.sp, color = TextDark, modifier = Modifier.clickable {
-                            viewModel.setTemperature(entityId, target + 0.5)
-                        }.padding(8.dp))
-                    }
-                }
-                else -> Button(onClick = { viewModel.toggleEntity(entityId) }, colors = ButtonDefaults.buttonColors(ActiveYellow)) {
-                    Text("Toggle", color = Color.Black)
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            entity?.attributes?.entries?.take(12)?.forEach { (key, value) ->
-                Text("$key: ${value.toString().take(80)}", color = TextMuted, fontSize = 12.sp)
-            }
-        }
-    }
-}
-
-@Composable
-private fun InWindowOverlay(
+fun InWindowOverlay(
     onDismiss: () -> Unit,
     dismissOnScrim: Boolean = false,
     scrim: Color = Color.Transparent,

@@ -12,7 +12,7 @@ import androidx.compose.ui.unit.sp
 val ScreenBackground = Color(0xFFFFFFFF)
 val CardLight = Color(0xFFF3F1EC)
 val PopupCard = Color(0xE6F3F1EC)
-val DockBackground = Color(0xF2FFFFFF)
+val DockBackground = Color(0xFF2A2A2A)
 val TextDark = Color(0xFF2A2A2A)
 val TextMuted = Color(0xFF2A2A2A).copy(alpha = 0.7f)
 val ChipDark = Color(0xFF2C2C2C)
