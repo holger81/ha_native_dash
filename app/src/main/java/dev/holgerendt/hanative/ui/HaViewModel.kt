@@ -232,6 +232,7 @@ class HaViewModel(
     }
 
     fun openMoreInfo(entityId: String?) {
+        if (entityId.isNullOrBlank()) return
         _ui.value = _ui.value.copy(moreInfoId = entityId)
     }
 
@@ -239,7 +240,7 @@ class HaViewModel(
         _ui.value = _ui.value.copy(moreInfoId = null)
     }
 
-    fun onTap(widget: WidgetNode) = dispatch(widget.tap, widget.entity)
+    fun onTap(widget: WidgetNode) = dispatch(widget.tap ?: ActionNode(type = "more_info"), widget.entity)
 
     fun onHold(widget: WidgetNode) = dispatch(widget.hold ?: ActionNode(type = "more_info"), widget.entity)
 

@@ -175,7 +175,7 @@ fun WidgetItem(
                 .background(PopupCard)
                 .padding(16.dp),
         )
-        "heading" -> Text(widget.name.orEmpty(), color = Color.White, fontWeight = FontWeight.Medium, modifier = modifier.padding(8.dp))
+        "heading" -> Text(widget.name.orEmpty(), color = TextDark, fontWeight = FontWeight.Medium, modifier = modifier.padding(8.dp))
         else -> if (widget.cards.isNotEmpty()) {
             WidgetTree(widget.cards, viewModel, modifier)
         } else if (widget.entity != null || widget.name != null) {
@@ -206,7 +206,7 @@ fun ChipRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Mod
                 modifier = Modifier
                     .clip(ChipShape)
                     .background(if (highlighted) ActiveYellow else ChipDark)
-                    .clickable(enabled = chip.tap != null) { viewModel.onTap(chip) }
+                    .clickable { viewModel.onTap(chip) }
                     .padding(end = 12.dp, start = 2.dp, top = 2.dp, bottom = 2.dp)
                     .height(34.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -254,7 +254,7 @@ fun PersonCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = 
                 .border(2.dp, if (home) Color(0xFF8BC34A) else Color(0xFFE57373), CircleShape)
                 .clip(CircleShape),
         )
-        Text(label.replaceFirstChar { it.uppercase() }, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Text(label.replaceFirstChar { it.uppercase() }, color = TextDark, fontSize = 11.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -270,10 +270,10 @@ fun WeatherHeader(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        MdiIcon(weatherIcon(weather?.state, day), tint = Color.White, size = 48.dp)
+        MdiIcon(weatherIcon(weather?.state, day), tint = TextDark, size = 48.dp)
         Column(horizontalAlignment = Alignment.End) {
-            Text(condition.replaceFirstChar { it.uppercase() }, color = Color.White.copy(alpha = 0.85f), fontSize = 14.sp)
-            Text(temp.format(1, "°C"), color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Light)
+            Text(condition.replaceFirstChar { it.uppercase() }, color = TextMuted, fontSize = 14.sp)
+            Text(temp.format(1, "°C"), color = TextDark, fontSize = 26.sp, fontWeight = FontWeight.Light)
         }
     }
 }
@@ -422,11 +422,11 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                         .clickable { dayOffset -= dayCount },
                     contentAlignment = Alignment.Center,
                 ) {
-                    MdiIcon("mdi:chevron-left", tint = Color.White, size = 22.dp)
+                    MdiIcon("mdi:chevron-left", tint = TextDark, size = 22.dp)
                 }
                 Text(
                     text = days.firstOrNull()?.format(DateTimeFormatter.ofPattern("MMM d")) ?: "",
-                    color = Color.White,
+                    color = TextDark,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
                 )
@@ -437,7 +437,7 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                         .clickable { dayOffset += dayCount },
                     contentAlignment = Alignment.Center,
                 ) {
-                    MdiIcon("mdi:chevron-right", tint = Color.White, size = 22.dp)
+                    MdiIcon("mdi:chevron-right", tint = TextDark, size = 22.dp)
                 }
             }
         }
@@ -456,6 +456,7 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                         showCondition = widget.showCondition != false,
                         showTemperature = widget.showTemperature == true,
                         showLowTemperature = widget.showLowTemperature == true,
+                        viewModel = viewModel,
                         modifier = Modifier.weight(1f).height(148.dp),
                     )
                 }
@@ -474,6 +475,7 @@ private fun WeekPlannerDay(
     showCondition: Boolean,
     showTemperature: Boolean,
     showLowTemperature: Boolean,
+    viewModel: HaViewModel,
     modifier: Modifier = Modifier,
 ) {
     val weekday = when (day) {
@@ -488,13 +490,13 @@ private fun WeekPlannerDay(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Column(Modifier.weight(1f)) {
-                Text(weekday, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-                Text(day.dayOfMonth.toString(), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Light)
+                Text(weekday, color = TextDark, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                Text(day.dayOfMonth.toString(), color = TextDark, fontSize = 18.sp, fontWeight = FontWeight.Light)
             }
             if (showCondition || showTemperature) {
                 Column(horizontalAlignment = Alignment.End) {
                     if (showCondition) {
-                        MdiIcon(weatherIcon(forecast?.get("condition"), true), tint = Color.White, size = 18.dp)
+                        MdiIcon(weatherIcon(forecast?.get("condition"), true), tint = TextDark, size = 18.dp)
                     }
                     if (showTemperature) {
                         val high = forecast?.get("temp")
@@ -504,14 +506,14 @@ private fun WeekPlannerDay(
                             if (showLowTemperature && !low.isNullOrBlank()) append(" / ${low.trim('"')}°")
                         }
                         if (temp.isNotBlank()) {
-                            Text(temp, color = ChipOnDark, fontSize = 10.sp, maxLines = 1)
+                            Text(temp, color = TextMuted, fontSize = 10.sp, maxLines = 1)
                         }
                     }
                 }
             }
         }
         if (events.isEmpty()) {
-            Text("No events", color = ChipOnDark.copy(alpha = 0.55f), fontSize = 11.sp)
+            Text("No events", color = TextMuted.copy(alpha = 0.7f), fontSize = 11.sp)
         } else {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -519,23 +521,24 @@ private fun WeekPlannerDay(
             ) {
                 events.forEach { event ->
                     val background = accentColor(event.color?.removePrefix("var(--")?.removeSuffix(")"))
-                        .takeIf { event.color != null } ?: ChipDark
+                        .takeIf { event.color != null } ?: CardLight
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
                             .background(background)
+                            .clickable { viewModel.openMoreInfo(event.entityId) }
                             .padding(horizontal = 6.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         if (!event.icon.isNullOrBlank()) {
-                            MdiIcon(event.icon, tint = if (event.color != null) Color.Black else ChipOnDark, size = 12.dp)
+                            MdiIcon(event.icon, tint = TextDark, size = 12.dp)
                         }
                         Column(Modifier.weight(1f)) {
                             Text(
                                 text = event.summary,
-                                color = if (event.color != null) Color.Black else Color.White,
+                                color = TextDark,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Medium,
                                 maxLines = 2,
@@ -544,7 +547,7 @@ private fun WeekPlannerDay(
                             Text(
                                 text = if (event.allDay) "Entire day" else event.start?.atZone(ZoneId.systemDefault())
                                     ?.format(DateTimeFormatter.ofPattern("HH:mm")) ?: "",
-                                color = if (event.color != null) Color.Black.copy(alpha = 0.7f) else ChipOnDark,
+                                color = TextMuted,
                                 fontSize = 10.sp,
                                 maxLines = 1,
                             )
@@ -577,13 +580,13 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             text = widget.name.takeUnless { it.isNullOrBlank() } ?: "This happened around the house",
-            color = Color.White,
+            color = TextDark,
             fontSize = 16.sp,
             fontWeight = FontWeight.Medium,
         )
         events.groupBy { event -> event.start?.atZone(ZoneId.systemDefault())?.toLocalDate() }.forEach { (date, dayEvents) ->
             date?.let {
-                Text(visionDateLabel(it), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                Text(visionDateLabel(it), color = TextDark, fontSize = 16.sp, fontWeight = FontWeight.Medium)
             }
             dayEvents.forEach { event ->
                 val start = event.start?.atZone(ZoneId.systemDefault())
@@ -602,8 +605,11 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
                         .fillMaxWidth()
                         .height(75.dp)
                         .clip(RoundedCornerShape(16.dp))
-                        .background(ChipDark)
-                        .clickable { expandedId = if (expandedId == eventKey) null else eventKey }
+                        .background(CardLight)
+                        .clickable {
+                            expandedId = if (expandedId == eventKey) null else eventKey
+                            viewModel.openMoreInfo(event.cameraName ?: event.entityId)
+                        }
                         .padding(horizontal = 10.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -620,14 +626,14 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
                     Column(Modifier.weight(1f)) {
                         Text(
                             event.summary,
-                            color = Color.White,
+                            color = TextDark,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                         if (subtitle.isNotBlank()) {
-                            Text(subtitle, color = ChipOnDark, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(subtitle, color = TextMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                     if (!event.keyFrame.isNullOrBlank()) {
@@ -643,12 +649,12 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
                 if (expandedId == eventKey && !event.description.isNullOrBlank()) {
                     Text(
                         text = event.description.orEmpty(),
-                        color = ChipOnDark,
+                        color = TextMuted,
                         fontSize = 13.sp,
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(12.dp))
-                            .background(ChipDark.copy(alpha = 0.7f))
+                            .background(CardLight)
                             .padding(12.dp),
                     )
                 }
@@ -657,7 +663,7 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
         if (events.isEmpty()) {
             Text(
                 text = if (hours != null) "No events in the last $hours hours" else "No events",
-                color = ChipOnDark,
+                color = TextMuted,
                 fontSize = 14.sp,
                 modifier = Modifier.padding(vertical = 12.dp),
             )
@@ -975,7 +981,7 @@ fun MediaCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = M
         modifier = modifier
             .height(140.dp)
             .clip(CardShape)
-            .background(if (on) ActiveYellow else ChipDark)
+            .background(if (on) ActiveYellow else CardLight)
             .clickable { viewModel.onTap(widget) }
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -984,14 +990,14 @@ fun MediaCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = M
             EntityPicture(apple.entityPicture, viewModel, Modifier.size(88.dp).clip(RoundedCornerShape(12.dp)))
             Spacer(Modifier.width(16.dp))
         } else {
-            MdiIcon(widget.icon ?: "mdi:television-classic", tint = if (on) Color.Black else ChipOnDark, size = 48.dp)
+            MdiIcon(widget.icon ?: "mdi:television-classic", tint = if (on) Color.Black else TextDark, size = 48.dp)
             Spacer(Modifier.width(16.dp))
         }
         Column {
-            Text(apple?.attrString("app_name") ?: widget.name ?: "TV", color = if (on) Color.Black else ChipOnDark, fontSize = 18.sp)
+            Text(apple?.attrString("app_name") ?: widget.name ?: "TV", color = if (on) Color.Black else TextDark, fontSize = 18.sp)
             Text(
                 apple?.attrString("media_title") ?: apple?.state?.replaceFirstChar { it.uppercase() } ?: "Off",
-                color = if (on) Color.Black else ChipOnDark.copy(alpha = 0.8f),
+                color = if (on) Color.Black else TextMuted,
             )
         }
     }
@@ -1045,7 +1051,7 @@ fun TabsWidget(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = 
         Row(
             modifier = Modifier
                 .clip(ChipShape)
-                .background(ChipDark.copy(alpha = 0.5f))
+                .background(CardLight)
                 .padding(4.dp)
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -1061,8 +1067,8 @@ fun TabsWidget(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = 
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    MdiIcon(tab.icon, tint = if (active) Color.Black else ChipOnDark, size = 16.dp)
-                    Text(tab.title.orEmpty(), color = if (active) Color.Black else ChipOnDark, fontSize = 14.sp)
+                    MdiIcon(tab.icon, tint = if (active) Color.Black else TextDark, size = 16.dp)
+                    Text(tab.title.orEmpty(), color = if (active) Color.Black else TextDark, fontSize = 14.sp)
                 }
             }
         }
@@ -1118,7 +1124,7 @@ fun PopupScaffold(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.45f))
+            .background(Color.White.copy(alpha = 0.42f))
             .padding(20.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -1132,16 +1138,16 @@ fun PopupScaffold(
                 MdiIcon(popup.icon, tint = Color.Black, size = 22.dp)
             }
             Spacer(Modifier.width(10.dp))
-            Text(popup.name.orEmpty(), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            Text(popup.name.orEmpty(), color = TextDark, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
             Box(
                 modifier = Modifier
                     .size(44.dp)
                     .clip(CircleShape)
-                    .background(ChipDark.copy(alpha = 0.8f))
+                    .background(CardLight)
                     .clickable { viewModel.closePopup() },
                 contentAlignment = Alignment.Center,
             ) {
-                MdiIcon("mdi:close", tint = Color.White, size = 22.dp)
+                MdiIcon("mdi:close", tint = TextDark, size = 22.dp)
             }
         }
         Spacer(Modifier.height(12.dp))

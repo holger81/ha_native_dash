@@ -1,16 +1,18 @@
 package dev.holgerendt.hanative.ui.theme
 
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-val ScreenBackground = Color(0xFF111111)
+/** mysmarthome: white wall, gray000 tiles, gray800 text. */
+val ScreenBackground = Color(0xFFFFFFFF)
 val CardLight = Color(0xFFF3F1EC)
 val PopupCard = Color(0xE6F3F1EC)
+val DockBackground = Color(0xF2FFFFFF)
 val TextDark = Color(0xFF2A2A2A)
 val TextMuted = Color(0xFF2A2A2A).copy(alpha = 0.7f)
 val ChipDark = Color(0xFF2C2C2C)
@@ -40,11 +42,11 @@ fun accentColor(name: String?): Color = when (name?.removePrefix("var(--")?.remo
     else -> AccentGreen
 }
 
-private val colors = darkColorScheme(
+private val colors = lightColorScheme(
     background = ScreenBackground,
-    surface = ChipDark,
-    onBackground = Color.White,
-    onSurface = Color.White,
+    surface = CardLight,
+    onBackground = TextDark,
+    onSurface = TextDark,
     primary = ActiveYellow,
     onPrimary = Color.Black,
 )
@@ -54,8 +56,8 @@ fun HaNativeTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = colors,
         typography = MaterialTheme.typography.copy(
-            titleLarge = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = Color.White),
-            bodyLarge = TextStyle(fontSize = 16.sp, color = Color.White),
+            titleLarge = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = TextDark),
+            bodyLarge = TextStyle(fontSize = 16.sp, color = TextDark),
         ),
         content = content,
     )

@@ -56,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.holgerendt.hanative.data.ConnectionState
@@ -65,10 +66,12 @@ import dev.holgerendt.hanative.ui.theme.ActiveYellow
 import dev.holgerendt.hanative.ui.theme.CardLight
 import dev.holgerendt.hanative.ui.theme.ChipDark
 import dev.holgerendt.hanative.ui.theme.ChipOnDark
+import dev.holgerendt.hanative.ui.theme.DockBackground
 import dev.holgerendt.hanative.ui.theme.PopupCard
 import dev.holgerendt.hanative.ui.theme.ScreenBackground
 import dev.holgerendt.hanative.ui.theme.TextDark
 import dev.holgerendt.hanative.ui.theme.TextMuted
+import dev.holgerendt.hanative.ui.theme.accentColor
 import dev.holgerendt.hanative.ui.widgets.CameraPopup
 import dev.holgerendt.hanative.ui.widgets.ChipRow
 import dev.holgerendt.hanative.ui.widgets.PersonCard
@@ -95,29 +98,32 @@ fun HaApp(viewModel: HaViewModel) {
     LaunchedEffect(drawerState.currentValue) {
         viewModel.setDrawer(drawerState.currentValue == DrawerValue.Open)
     }
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().background(ScreenBackground)) {
         ModalNavigationDrawer(
             drawerState = drawerState,
             drawerContent = {
-                ModalDrawerSheet(drawerContainerColor = ChipDark) {
+                ModalDrawerSheet(drawerContainerColor = CardLight) {
                     DrawerMenu(viewModel)
                 }
             },
         ) {
-            Box(Modifier.fillMaxSize().background(ScreenBackground)) {
-                HomeScreen(viewModel)
-                if (connection !is ConnectionState.Connected) {
-                    Text(
-                        text = when (connection) {
-                            is ConnectionState.Connecting -> "Connecting…"
-                            is ConnectionState.Error -> (connection as ConnectionState.Error).message
-                            else -> "Disconnected"
-                        },
-                        color = ActiveYellow,
-                        fontSize = 12.sp,
-                        modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
-                    )
+            Column(Modifier.fillMaxSize().background(ScreenBackground)) {
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    HomeScreen(viewModel)
+                    if (connection !is ConnectionState.Connected) {
+                        Text(
+                            text = when (connection) {
+                                is ConnectionState.Connecting -> "Connecting…"
+                                is ConnectionState.Error -> (connection as ConnectionState.Error).message
+                                else -> "Disconnected"
+                            },
+                            color = TextDark,
+                            fontSize = 12.sp,
+                            modifier = Modifier.align(Alignment.TopCenter).padding(8.dp),
+                        )
+                    }
                 }
+                BottomDock(viewModel)
             }
         }
         val popup = viewModel.popup(ui.popupHash)
@@ -141,12 +147,12 @@ private fun DrawerMenu(viewModel: HaViewModel) {
         "Settings" to "#settings",
     )
     Column(Modifier.fillMaxHeight().width(280.dp).padding(20.dp)) {
-        Text("Greatroom Wall", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        Text("Greatroom Wall", color = TextDark, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(24.dp))
         items.forEach { (label, hash) ->
             Text(
                 text = label,
-                color = Color.White,
+                color = TextDark,
                 fontSize = 16.sp,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -157,15 +163,15 @@ private fun DrawerMenu(viewModel: HaViewModel) {
         }
         Spacer(Modifier.weight(1f))
         val ui by viewModel.ui.collectAsState()
-        Text("Remote setup", color = ChipOnDark, fontSize = 12.sp)
+        Text("Remote setup", color = TextMuted, fontSize = 12.sp)
         ui.remoteUrls.firstOrNull()?.let {
-            Text(it, color = Color.White, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+            Text(it, color = TextDark, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
         }
-        Text("PIN ${ui.remotePin}", color = ActiveYellow, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 4.dp, bottom = 4.dp))
-        Text("Stays until you change it in Settings", color = ChipOnDark, fontSize = 12.sp, modifier = Modifier.padding(bottom = 12.dp))
+        Text("PIN ${ui.remotePin}", color = TextDark, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 4.dp, bottom = 4.dp))
+        Text("Stays until you change it in Settings", color = TextMuted, fontSize = 12.sp, modifier = Modifier.padding(bottom = 12.dp))
         Text(
             "Home Assistant connection",
-            color = ActiveYellow,
+            color = TextDark,
             modifier = Modifier.clickable { viewModel.openSetup() }.padding(8.dp),
         )
     }
@@ -199,7 +205,7 @@ private fun HomeScreen(viewModel: HaViewModel) {
                     },
                 contentAlignment = Alignment.Center,
             ) {
-                MdiIcon(menu?.icon ?: "mdi:menu", tint = Color.White, size = 28.dp)
+                MdiIcon(menu?.icon ?: "mdi:menu", tint = TextDark, size = 28.dp)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 home.people.forEach { PersonCard(it, viewModel) }
@@ -225,6 +231,59 @@ private fun HomeScreen(viewModel: HaViewModel) {
             RoomGrid(home.rooms, viewModel, Modifier.weight(1f))
             home.timeline?.let {
                 VisionTimeline(it, viewModel, Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+private val DockHashes = setOf(
+    "#weather",
+    "#power",
+    "#bil",
+    "#staubinator",
+    "#camerafront_view",
+    "#settings",
+)
+
+@Composable
+private fun BottomDock(viewModel: HaViewModel) {
+    val ui by viewModel.ui.collectAsState()
+    val items = ui.dashboard?.home?.popups.orEmpty().filter { it.hash in DockHashes }
+    if (items.isEmpty()) return
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(DockBackground)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        items.forEach { popup ->
+            val active = ui.popupHash == popup.hash
+            Column(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable { viewModel.openPopup(popup.hash) }
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(if (active) ActiveYellow else CardLight),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MdiIcon(popup.icon, tint = TextDark, size = 24.dp)
+                }
+                Text(
+                    text = popup.name.orEmpty().substringBefore(" "),
+                    color = TextDark,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
             }
         }
     }
@@ -259,29 +318,29 @@ private fun ManagementPinCard(viewModel: HaViewModel) {
     var message by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     val fieldColors = OutlinedTextFieldDefaults.colors(
-        focusedTextColor = Color.White,
-        unfocusedTextColor = Color.White,
-        focusedBorderColor = ActiveYellow,
-        unfocusedBorderColor = ChipOnDark,
-        focusedLabelColor = ActiveYellow,
-        unfocusedLabelColor = ChipOnDark,
-        cursorColor = ActiveYellow,
+        focusedTextColor = TextDark,
+        unfocusedTextColor = TextDark,
+        focusedBorderColor = TextDark,
+        unfocusedBorderColor = TextMuted,
+        focusedLabelColor = TextDark,
+        unfocusedLabelColor = TextMuted,
+        cursorColor = TextDark,
     )
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(28.dp))
-            .background(ChipDark)
+            .background(CardLight)
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("Remote setup PIN", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Text("Remote setup PIN", color = TextDark, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
         Text(
             "This PIN is saved on the panel and survives app upgrades and reinstalls. Use it to log in on the HTTPS admin page. Changing it here signs out existing admin sessions.",
-            color = ChipOnDark,
+            color = TextMuted,
             fontSize = 14.sp,
         )
-        Text("Current PIN ${ui.remotePin}", color = ActiveYellow, fontSize = 16.sp, fontFamily = FontFamily.Monospace)
+        Text("Current PIN ${ui.remotePin}", color = TextDark, fontSize = 16.sp, fontFamily = FontFamily.Monospace)
         OutlinedTextField(
             value = pin,
             onValueChange = { value ->
