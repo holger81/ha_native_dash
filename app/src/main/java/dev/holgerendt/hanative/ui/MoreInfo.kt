@@ -139,17 +139,17 @@ fun MoreInfoDialog(entityId: String, viewModel: HaViewModel) {
         ) {
             Column(
                 modifier = Modifier
-                    .padding(horizontal = 12.dp, vertical = 24.dp)
+                    .padding(horizontal = 4.dp, vertical = 8.dp)
                     .fillMaxWidth()
-                    .fillMaxHeight(0.92f)
-                    .clip(RoundedCornerShape(28.dp))
+                    .fillMaxHeight(0.96f)
+                    .clip(RoundedCornerShape(20.dp))
                     .background(overlay.sheet)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
                         onClick = {},
                     )
-                    .padding(20.dp)
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {

@@ -1486,42 +1486,42 @@ fun PopupScaffold(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(10.dp)
-                .clip(RoundedCornerShape(32.dp))
+                .padding(4.dp)
+                .clip(RoundedCornerShape(20.dp))
                 .background(overlay.sheet)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 8.dp, vertical = 6.dp),
         ) {
-            Box(Modifier.fillMaxWidth().height(52.dp)) {
+            Box(Modifier.fillMaxWidth().height(40.dp)) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.CenterStart)
-                        .size(44.dp)
+                        .size(36.dp)
                         .clip(CircleShape)
                         .background(iconBg),
                     contentAlignment = Alignment.Center,
                 ) {
-                    MdiIcon(popup.icon, tint = iconTint, size = 22.dp)
+                    MdiIcon(popup.icon, tint = iconTint, size = 20.dp)
                 }
                 Text(
                     popup.name.orEmpty(),
                     color = overlay.text,
-                    fontSize = 20.sp,
+                    fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.align(Alignment.Center),
                 )
                 Box(
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
-                        .size(44.dp)
+                        .size(36.dp)
                         .clip(CircleShape)
                         .background(closeBg)
                         .clickable { viewModel.closePopup() },
                     contentAlignment = Alignment.Center,
                 ) {
-                    MdiIcon("mdi:close", tint = closeTint, size = 22.dp)
+                    MdiIcon("mdi:close", tint = closeTint, size = 20.dp)
                 }
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(6.dp))
             val bodyModifier = if (scrollContent) {
                 Modifier.fillMaxSize().verticalScroll(rememberScrollState())
             } else {

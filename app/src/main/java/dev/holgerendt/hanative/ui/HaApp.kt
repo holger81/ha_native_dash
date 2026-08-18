@@ -20,9 +20,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -466,7 +463,7 @@ private fun ScreenTimeoutCard(viewModel: HaViewModel) {
         if (brightnessEntity != null) {
             val entity = states[brightnessEntity]
             val domain = brightnessEntity.substringBefore('.')
-            val (min, max, live) = when (domain) {
+            val (rawMin, rawMax, rawLive) = when (domain) {
                 "light" -> Triple(0f, 100f, states.brightnessPct(brightnessEntity).toFloat())
                 else -> Triple(
                     entity?.attrDouble("min")?.toFloat() ?: 0f,
@@ -474,7 +471,11 @@ private fun ScreenTimeoutCard(viewModel: HaViewModel) {
                     entity?.state?.toFloatOrNull() ?: 0f,
                 )
             }
-            var slider by remember(brightnessEntity, live) { mutableFloatStateOf(live.coerceIn(min, max)) }
+            val min = if (rawMin.isFinite()) rawMin else 0f
+            val maxCandidate = if (rawMax.isFinite()) rawMax else 255f
+            val max = if (maxCandidate > min) maxCandidate else min + 1f
+            val live = (if (rawLive.isFinite()) rawLive else min).coerceIn(min, max)
+            var slider by remember(brightnessEntity) { mutableFloatStateOf(live) }
             LaunchedEffect(live, min, max) {
                 slider = live.coerceIn(min, max)
             }
@@ -485,9 +486,9 @@ private fun ScreenTimeoutCard(viewModel: HaViewModel) {
                 fontWeight = FontWeight.Medium,
             )
             Slider(
-                value = slider,
-                onValueChange = { slider = it },
-                onValueChangeFinished = { viewModel.setDisplayBrightness(slider) },
+                value = slider.coerceIn(min, max),
+                onValueChange = { slider = it.coerceIn(min, max) },
+                onValueChangeFinished = { viewModel.setDisplayBrightness(slider.coerceIn(min, max)) },
                 valueRange = min..max,
                 colors = SliderDefaults.colors(thumbColor = ActiveYellow, activeTrackColor = ActiveYellow),
             )
@@ -526,10 +527,11 @@ private fun EntityPickerField(
     }
     val filtered = remember(filter, choices) {
         val q = filter.trim().lowercase()
-        if (q.isEmpty()) choices
+        val matches = if (q.isEmpty()) choices
         else choices.filter { (id, name) ->
             id.lowercase().contains(q) || name.lowercase().contains(q)
         }
+        matches.take(8)
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(label, color = overlay.text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
@@ -582,14 +584,13 @@ private fun EntityPickerField(
             }
         }
         if (filtered.isNotEmpty()) {
-            LazyColumn(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 180.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .background(overlay.well),
             ) {
-                items(filtered, key = { it.first }) { (id, name) ->
+                filtered.forEach { (id, name) ->
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
