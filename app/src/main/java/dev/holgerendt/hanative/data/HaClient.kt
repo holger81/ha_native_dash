@@ -516,19 +516,20 @@ class HaClient {
     }
 
     suspend fun cameraSnapshot(entityId: String): ByteArray? = withContext(Dispatchers.IO) {
-        val path = if (entityId.startsWith("camera.")) {
-            "/api/camera_proxy/$entityId"
-        } else {
-            "/api/image_proxy/$entityId"
+        val picture = state(entityId)?.entityPicture
+        val paths = buildList {
+            if (entityId.startsWith("camera.")) add("/api/camera_proxy/$entityId")
+            if (entityId.startsWith("image.")) add("/api/image_proxy/$entityId")
+            if (picture != null) add(picture)
+            if (!entityId.startsWith("camera.") && !entityId.startsWith("image.")) {
+                add("/api/camera_proxy/$entityId")
+                add("/api/image_proxy/$entityId")
+            }
+        }.distinct()
+        for (path in paths) {
+            authenticatedBytes(path)?.let { return@withContext it }
         }
-        val request = Request.Builder()
-            .url("$baseUrl$path")
-            .addHeader("Authorization", "Bearer $token")
-            .build()
-        http.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return@use null
-            response.body?.bytes()
-        }
+        null
     }
 
     /** HLS playlist path from the stream integration (`camera/stream`). Null if unavailable. */
@@ -723,7 +724,10 @@ class HaClient {
             startDate = startBound.second,
             endDate = endBound.second,
             uid = obj["uid"]?.jsonPrimitive?.contentOrNull ?: obj["id"]?.jsonPrimitive?.contentOrNull,
-            keyFrame = obj["key_frame"]?.jsonPrimitive?.contentOrNull,
+            keyFrame = obj["key_frame"]?.jsonPrimitive?.contentOrNull
+                ?: obj["keyFrame"]?.jsonPrimitive?.contentOrNull
+                ?: obj["image"]?.jsonPrimitive?.contentOrNull
+                ?: obj["snapshot"]?.jsonPrimitive?.contentOrNull,
             cameraName = obj["camera_name"]?.jsonPrimitive?.contentOrNull
                 ?: obj["cameraName"]?.jsonPrimitive?.contentOrNull,
             category = obj["category"]?.jsonPrimitive?.contentOrNull,

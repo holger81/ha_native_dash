@@ -41,6 +41,7 @@ data class UiState(
     val drawerOpen: Boolean = false,
     val popupHash: String? = null,
     val moreInfoId: String? = null,
+    val mediaPath: String? = null,
     val setupError: String? = null,
     val setupBusy: Boolean = false,
     val remotePin: String = "",
@@ -256,6 +257,15 @@ class HaViewModel(
 
     fun closeMoreInfo() {
         _ui.value = _ui.value.copy(moreInfoId = null)
+    }
+
+    fun openMedia(path: String?) {
+        if (path.isNullOrBlank()) return
+        _ui.value = _ui.value.copy(mediaPath = path)
+    }
+
+    fun closeMedia() {
+        _ui.value = _ui.value.copy(mediaPath = null)
     }
 
     fun plannerCalendars(defaults: List<CalendarSourceNode>): List<CalendarSourceNode> {

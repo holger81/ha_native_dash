@@ -4,6 +4,7 @@ import android.graphics.BitmapFactory
 import android.view.LayoutInflater
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -90,6 +91,7 @@ fun CameraCard(
         .then(if (fill) Modifier.fillMaxSize() else Modifier.aspectRatio(16f / 9f))
         .clip(CameraShape)
         .background(ChipDark)
+        .clickable { widget.entity?.let { viewModel.openMoreInfo(it) } }
     if (widget.hasLiveCameraSource()) {
         LiveCameraSurface(widget, viewModel, boxModifier)
     } else {

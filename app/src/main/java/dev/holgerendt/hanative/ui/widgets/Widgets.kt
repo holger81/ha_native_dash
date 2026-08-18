@@ -12,6 +12,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -49,11 +50,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
@@ -452,41 +457,17 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .clickable { dayOffset -= dayCount },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    MdiIcon("mdi:chevron-left", tint = TextDark, size = 22.dp)
-                }
-                Box(
-                    modifier = Modifier
-                        .size(18.dp)
-                        .clip(CircleShape)
-                        .clickable { dayOffset = 0 },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Box(Modifier.size(6.dp).clip(CircleShape).background(TextDark))
-                }
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .clickable { dayOffset += dayCount },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    MdiIcon("mdi:chevron-right", tint = TextDark, size = 22.dp)
-                }
+                CalendarNavIcon(left = true, onClick = { dayOffset -= dayCount })
+                CalendarTodayIcon(onClick = { dayOffset = 0 })
+                CalendarNavIcon(left = false, onClick = { dayOffset += dayCount })
                 Text(
                     text = days.firstOrNull()?.format(DateTimeFormatter.ofPattern("MMMM")) ?: "",
                     color = TextDark,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(start = 8.dp),
+                    modifier = Modifier.padding(start = 6.dp),
                 )
             }
         }
@@ -512,6 +493,45 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                 }
                 repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
             }
+        }
+    }
+}
+
+@Composable
+private fun CalendarNavIcon(left: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(14.dp, 18.dp)) {
+            val stroke = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Square, join = StrokeJoin.Miter)
+            val path = Path()
+            if (left) {
+                path.moveTo(size.width * 0.78f, 1.5.dp.toPx())
+                path.lineTo(size.width * 0.18f, size.height / 2f)
+                path.lineTo(size.width * 0.78f, size.height - 1.5.dp.toPx())
+            } else {
+                path.moveTo(size.width * 0.22f, 1.5.dp.toPx())
+                path.lineTo(size.width * 0.82f, size.height / 2f)
+                path.lineTo(size.width * 0.22f, size.height - 1.5.dp.toPx())
+            }
+            drawPath(path, TextDark, style = stroke)
+        }
+    }
+}
+
+@Composable
+private fun CalendarTodayIcon(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(10.dp)) {
+            drawRect(TextDark, size = Size(size.width, size.height))
         }
     }
 }
@@ -715,8 +735,14 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
                             .clip(RoundedCornerShape(16.dp))
                             .background(CardLight)
                             .clickable {
+                                val frame = event.keyFrame
+                                if (!frame.isNullOrBlank()) {
+                                    viewModel.openMedia(frame)
+                                } else {
+                                    val camera = event.cameraName?.takeIf { '.' in it }
+                                    viewModel.openMoreInfo(camera ?: event.entityId)
+                                }
                                 expandedId = if (expandedId == eventKey) null else eventKey
-                                viewModel.openMoreInfo(event.cameraName ?: event.entityId)
                             }
                             .padding(horizontal = 10.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -789,6 +815,66 @@ private fun TimelineSnapshot(path: String?, viewModel: HaViewModel, modifier: Mo
             LoadingSpinner(indicatorSize = 16.dp)
         }
         else -> Box(modifier.background(CardLight.copy(alpha = 0.12f)))
+    }
+}
+
+@Composable
+fun MediaImageDialog(path: String, viewModel: HaViewModel, onDismiss: () -> Unit) {
+    var bytes by remember(path) { mutableStateOf<ByteArray?>(null) }
+    var loaded by remember(path) { mutableStateOf(false) }
+    LaunchedEffect(path, viewModel.client.currentBaseUrl) {
+        bytes = runCatching { viewModel.client.mediaBytes(path) }.getOrNull()
+            ?: runCatching { viewModel.client.cameraSnapshot(path) }.getOrNull()
+        loaded = true
+    }
+    val bitmap = remember(bytes) { bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {},
+            ),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(24.dp))
+                .background(Color(0xFF1C1C1C))
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .size(40.dp)
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MdiIcon("mdi:close", tint = Color.White, size = 22.dp)
+                }
+            }
+            when {
+                bitmap != null -> Image(
+                    bitmap = bitmap,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp)),
+                    contentScale = ContentScale.Fit,
+                )
+                !loaded -> Box(
+                    modifier = Modifier.fillMaxWidth().height(220.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    LoadingSpinner(color = ChipOnDark)
+                }
+                else -> Text("Can't load image", color = ChipOnDark, fontSize = 14.sp)
+            }
+        }
     }
 }
 

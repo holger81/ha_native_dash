@@ -74,6 +74,7 @@ import dev.holgerendt.hanative.ui.theme.TextMuted
 import dev.holgerendt.hanative.ui.theme.accentColor
 import dev.holgerendt.hanative.ui.widgets.CameraPopup
 import dev.holgerendt.hanative.ui.widgets.ChipRow
+import dev.holgerendt.hanative.ui.widgets.MediaImageDialog
 import dev.holgerendt.hanative.ui.widgets.PersonCard
 import dev.holgerendt.hanative.ui.widgets.PopupScaffold
 import dev.holgerendt.hanative.ui.widgets.RoomGrid
@@ -148,6 +149,15 @@ fun HaApp(viewModel: HaViewModel) {
             }
         }
         ui.moreInfoId?.let { MoreInfoDialog(it, viewModel) }
+        ui.mediaPath?.let { path ->
+            InWindowOverlay(
+                onDismiss = { viewModel.closeMedia() },
+                dismissOnScrim = true,
+                scrim = Color.Black.copy(alpha = 0.7f),
+            ) {
+                MediaImageDialog(path, viewModel, onDismiss = { viewModel.closeMedia() })
+            }
+        }
     }
 }
 

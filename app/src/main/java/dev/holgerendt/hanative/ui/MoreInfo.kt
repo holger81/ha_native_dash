@@ -531,7 +531,7 @@ private fun MoreInfoExtras(entityId: String, entity: EntityState?, domain: Strin
     val overlay = LocalOverlay.current
     when (domain) {
         "calendar" -> CalendarEvents(entityId, viewModel)
-        "camera" -> CameraSnapshot(entityId, viewModel)
+        "camera", "image" -> CameraSnapshot(entityId, viewModel)
         "weather" -> {
             val temp = entity?.attrDouble("temperature")
             val humidity = entity?.attrDouble("humidity")
@@ -598,6 +598,7 @@ private fun CameraSnapshot(entityId: String, viewModel: HaViewModel) {
     LaunchedEffect(entityId, viewModel.client.currentBaseUrl) {
         bytes = try {
             viewModel.client.cameraSnapshot(entityId)
+                ?: viewModel.entity(entityId)?.entityPicture?.let { viewModel.client.authenticatedBytes(it) }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -612,9 +613,9 @@ private fun CameraSnapshot(entityId: String, viewModel: HaViewModel) {
             contentDescription = entityId,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(180.dp)
+                .height(280.dp)
                 .clip(RoundedCornerShape(16.dp)),
-            contentScale = ContentScale.Crop,
+            contentScale = ContentScale.Fit,
         )
         !loaded -> Box(
             modifier = Modifier.fillMaxWidth().height(180.dp),
