@@ -118,7 +118,6 @@ class HaViewModel(
         }
         watchCameraFlag()
         watchIdleTimeout()
-        prefetchWallCameras()
         if (credentials.isConfigured) {
             viewModelScope.launch { connect(credentials.baseUrl, credentials.token) }
         }
@@ -401,12 +400,13 @@ class HaViewModel(
 
     private fun prefetchWallCameras() {
         viewModelScope.launch {
+            if (client.currentBaseUrl.isBlank()) return@launch
             val widgets = _ui.value.dashboard?.home?.popups
                 ?.firstOrNull { it.hash == KioskCommands.CAMERA_POPUP }
                 ?.let { popup -> CameraStreams.camerasForPopup(popup) }
                 ?: CameraStreams.wallPanelCameras
-            client.prefetchCameraSnapshots(widgets.mapNotNull { it.entity })
-            CameraStreams.prefetch(client, widgets.map { CameraStreams.fromWidget(it) })
+            runCatching { client.prefetchCameraSnapshots(widgets.mapNotNull { it.entity }) }
+            runCatching { CameraStreams.prefetch(client, widgets.map { CameraStreams.fromWidget(it) }) }
         }
     }
 

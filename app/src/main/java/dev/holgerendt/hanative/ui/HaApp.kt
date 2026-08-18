@@ -509,11 +509,10 @@ private fun EntityPickerField(
     }
     val filtered = remember(filter, choices) {
         val q = filter.trim().lowercase()
-        val matches = if (q.isEmpty()) choices
+        if (q.isEmpty()) emptyList()
         else choices.filter { (id, name) ->
             id.lowercase().contains(q) || name.lowercase().contains(q)
-        }
-        matches.take(8)
+        }.take(8)
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(label, color = overlay.text, fontSize = 15.sp, fontWeight = FontWeight.Medium)

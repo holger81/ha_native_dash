@@ -1522,13 +1522,14 @@ fun PopupScaffold(
                 }
             }
             Spacer(Modifier.height(6.dp))
-            val bodyModifier = if (scrollContent) {
-                Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            if (scrollContent) {
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                    content()
+                }
             } else {
-                Modifier.fillMaxSize()
-            }
-            Box(bodyModifier) {
-                content()
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    content()
+                }
             }
         }
     }

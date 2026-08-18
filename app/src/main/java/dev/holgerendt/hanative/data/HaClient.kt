@@ -642,15 +642,18 @@ class HaClient {
         if (token.isBlank()) emptyMap() else mapOf("Authorization" to "Bearer $token")
 
     suspend fun authenticatedBytes(path: String): ByteArray? = withContext(Dispatchers.IO) {
+        if (!path.startsWith("http") && (baseUrl.isBlank() || token.isBlank())) return@withContext null
         val url = if (path.startsWith("http")) path else baseUrl + path
-        val request = Request.Builder()
-            .url(url)
-            .addHeader("Authorization", "Bearer $token")
-            .build()
-        http.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return@use null
-            response.body?.bytes()
-        }
+        runCatching {
+            val request = Request.Builder()
+                .url(url)
+                .addHeader("Authorization", "Bearer $token")
+                .build()
+            http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@use null
+                response.body?.bytes()
+            }
+        }.getOrNull()
     }
 
     suspend fun listCalendars(): List<CalendarInfo> {
