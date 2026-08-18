@@ -31,10 +31,10 @@ class CredentialsStore(context: Context) {
             persist()
         }
 
-    /** Minutes of idle time before the panel blanks. 0 keeps the screen on. */
-    var screenTimeoutMinutes: Int = 0
+    /** Seconds of idle time before the panel blanks. 0 keeps the screen on. */
+    var screenTimeoutSeconds: Int = 0
         set(value) {
-            field = value.coerceIn(0, 180)
+            field = value.coerceIn(0, MAX_SCREEN_TIMEOUT_SECONDS)
             persist()
         }
 
@@ -47,13 +47,15 @@ class CredentialsStore(context: Context) {
     val isConfigured: Boolean
         get() = baseUrl.isNotBlank() && token.isNotBlank()
 
-    private val timeoutFromPrefs = prefs.contains(KEY_TIMEOUT)
+    private val timeoutFromPrefs = prefs.contains(KEY_TIMEOUT_SECONDS) || prefs.contains(KEY_TIMEOUT_MINUTES_LEGACY)
 
     init {
-        screenTimeoutMinutes = if (timeoutFromPrefs) {
-            prefs.getInt(KEY_TIMEOUT, 0).coerceIn(0, 180)
-        } else {
-            0
+        screenTimeoutSeconds = when {
+            prefs.contains(KEY_TIMEOUT_SECONDS) ->
+                prefs.getInt(KEY_TIMEOUT_SECONDS, 0).coerceIn(0, MAX_SCREEN_TIMEOUT_SECONDS)
+            prefs.contains(KEY_TIMEOUT_MINUTES_LEGACY) ->
+                prefs.getInt(KEY_TIMEOUT_MINUTES_LEGACY, 0).coerceIn(0, 180) * 60
+            else -> 0
         }
         migrateFromLegacy()
         restoreFromDocuments()
@@ -110,7 +112,7 @@ class CredentialsStore(context: Context) {
             .putString(KEY_URL, baseUrl)
             .putString(KEY_TOKEN, token)
             .putString(KEY_PIN, managementPin)
-            .putInt(KEY_TIMEOUT, screenTimeoutMinutes)
+            .putInt(KEY_TIMEOUT_SECONDS, screenTimeoutSeconds)
             .apply()
         persistRecoverable()
     }
@@ -141,7 +143,7 @@ class CredentialsStore(context: Context) {
             put("ha_url", url)
             put("ha_token", accessToken)
             put("management_pin", pin)
-            put("screen_timeout_minutes", screenTimeoutMinutes)
+            put("screen_timeout_seconds", screenTimeoutSeconds)
             val calendars = subscribedCalendars ?: readCalendarList(existing)
             if (calendars != null) {
                 put("subscribed_calendars", JSONArray(calendars))
@@ -185,8 +187,15 @@ class CredentialsStore(context: Context) {
         if (subscribedCalendars == null) {
             subscribedCalendars = readCalendarList(obj)
         }
-        if (!timeoutFromPrefs && obj.has("screen_timeout_minutes")) {
-            screenTimeoutMinutes = obj.optInt("screen_timeout_minutes", 0).coerceIn(0, 180)
+        if (!timeoutFromPrefs) {
+            when {
+                obj.has("screen_timeout_seconds") ->
+                    screenTimeoutSeconds = obj.optInt("screen_timeout_seconds", 0)
+                        .coerceIn(0, MAX_SCREEN_TIMEOUT_SECONDS)
+                obj.has("screen_timeout_minutes") ->
+                    screenTimeoutSeconds = obj.optInt("screen_timeout_minutes", 0)
+                        .coerceIn(0, 180) * 60
+            }
         }
         val pin = obj.optString("management_pin").trim()
         val takeRestoredPin = PIN_PATTERN.matches(pin) &&
@@ -231,7 +240,9 @@ class CredentialsStore(context: Context) {
         private const val KEY_URL = "ha_url"
         private const val KEY_TOKEN = "ha_token"
         private const val KEY_PIN = "management_pin"
-        private const val KEY_TIMEOUT = "screen_timeout_minutes"
+        private const val KEY_TIMEOUT_SECONDS = "screen_timeout_seconds"
+        private const val KEY_TIMEOUT_MINUTES_LEGACY = "screen_timeout_minutes"
+        const val MAX_SCREEN_TIMEOUT_SECONDS = 86_400
 
         val PIN_PATTERN = Regex("^\\d{4,8}$")
 

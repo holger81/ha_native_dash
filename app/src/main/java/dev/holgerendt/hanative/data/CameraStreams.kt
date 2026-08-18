@@ -12,6 +12,8 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.ByteArrayOutputStream
+import java.net.URLEncoder
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 enum class StreamKind { HLS, MP4, MJPEG }
@@ -49,13 +51,7 @@ class CameraStreamException(message: String) : Exception(message)
 object CameraStreams {
     private val jpegStart = byteArrayOf(0xFF.toByte(), 0xD8.toByte())
     private val jpegEnd = byteArrayOf(0xFF.toByte(), 0xD9.toByte())
-
-    private val probeClient = OkHttpClient.Builder()
-        .connectTimeout(3, TimeUnit.SECONDS)
-        .readTimeout(4, TimeUnit.SECONDS)
-        .callTimeout(5, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .build()
+    private val resolveCache = ConcurrentHashMap<String, List<StreamCandidate>>()
 
     private val streamClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -106,42 +102,64 @@ object CameraStreams {
         else -> "Camera stream failed (HTTP $code)"
     }
 
-    suspend fun resolve(client: HaClient, target: CameraTarget): List<StreamCandidate> =
+    suspend fun resolve(client: HaClient, target: CameraTarget): List<StreamCandidate> {
+        val key = listOf(
+            target.streamServer.orEmpty(),
+            target.streamName.orEmpty(),
+            target.entityId.orEmpty(),
+            client.currentBaseUrl,
+        ).joinToString("|")
+        resolveCache[key]?.let { return it }
+        val result = resolveUncached(client, target)
+        if (result.isNotEmpty()) resolveCache[key] = result
+        return result
+    }
+
+    /** Warm stream URLs while the wall is idle so the camera popup opens faster. */
+    suspend fun prefetch(client: HaClient, targets: Collection<CameraTarget>) {
+        withContext(Dispatchers.IO) {
+            targets.forEach { target ->
+                if (target.hasLiveSource()) runCatching { resolve(client, target) }
+            }
+        }
+    }
+
+    private suspend fun resolveUncached(client: HaClient, target: CameraTarget): List<StreamCandidate> =
         withContext(Dispatchers.IO) {
             val headers = client.bearerHeaders()
             val out = mutableListOf<StreamCandidate>()
             val server = target.streamServer?.trim()?.trimEnd('/')
             val src = target.streamName?.trim()?.takeIf { it.isNotEmpty() }
             if (!server.isNullOrBlank() && src != null) {
-                val encoded = java.net.URLEncoder.encode(src, Charsets.UTF_8.name())
-                if (probe("$server/api", emptyMap())) {
-                    out += StreamCandidate(
-                        StreamKind.HLS,
-                        "$server/api/stream.m3u8?src=$encoded",
-                        emptyMap(),
-                        "go2rtc HLS",
-                    )
-                    out += StreamCandidate(
-                        StreamKind.MP4,
-                        "$server/api/stream.mp4?src=$encoded",
-                        emptyMap(),
-                        "go2rtc MP4",
-                    )
-                    out += StreamCandidate(
-                        StreamKind.MJPEG,
-                        "$server/api/stream.mjpeg?src=$encoded",
-                        emptyMap(),
-                        "go2rtc MJPEG",
-                    )
-                }
+                val encoded = URLEncoder.encode(src, Charsets.UTF_8.name())
+                // MJPEG first: fastest first frame on a wall panel; skip go2rtc probe (saves ~3–5s).
+                out += StreamCandidate(
+                    StreamKind.MJPEG,
+                    "$server/api/stream.mjpeg?src=$encoded",
+                    emptyMap(),
+                    "go2rtc MJPEG",
+                )
+                out += StreamCandidate(
+                    StreamKind.MP4,
+                    "$server/api/stream.mp4?src=$encoded",
+                    emptyMap(),
+                    "go2rtc MP4",
+                )
+                out += StreamCandidate(
+                    StreamKind.HLS,
+                    "$server/api/stream.m3u8?src=$encoded",
+                    emptyMap(),
+                    "go2rtc HLS",
+                )
+                return@withContext out.distinctBy { it.url }
             }
             val entity = target.entityId
             if (entity?.startsWith("camera.") == true) {
+                val mjpeg = "${client.currentBaseUrl}/api/camera_proxy_stream/$entity"
+                out += StreamCandidate(StreamKind.MJPEG, mjpeg, headers, "Home Assistant MJPEG")
                 client.cameraHlsUrl(entity)?.let { url ->
                     out += StreamCandidate(StreamKind.HLS, url, headers, "Home Assistant HLS")
                 }
-                val mjpeg = "${client.currentBaseUrl}/api/camera_proxy_stream/$entity"
-                out += StreamCandidate(StreamKind.MJPEG, mjpeg, headers, "Home Assistant MJPEG")
             }
             out.distinctBy { it.url }
         }
@@ -207,17 +225,6 @@ object CameraStreams {
                 call.cancel()
             }
         }
-    }
-
-    private fun probe(url: String, headers: Map<String, String>): Boolean {
-        val request = Request.Builder().url(url).apply {
-            headers.forEach { (key, value) -> addHeader(key, value) }
-        }.build()
-        return runCatching {
-            probeClient.newCall(request).execute().use { response ->
-                response.isSuccessful
-            }
-        }.getOrDefault(false)
     }
 
     private fun looksLikeHtmlOrJson(data: ByteArray): Boolean {

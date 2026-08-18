@@ -129,6 +129,7 @@ class HaClient {
     private val _connection = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val connection: StateFlow<ConnectionState> = _connection
     private val deviceNameCache = ConcurrentHashMap<String, String?>()
+    private val snapshotCache = ConcurrentHashMap<String, ByteArray>()
 
     val currentBaseUrl: String get() = baseUrl
     val currentToken: String get() = token
@@ -556,6 +557,23 @@ class HaClient {
     }
 
     suspend fun cameraSnapshot(entityId: String): ByteArray? = withContext(Dispatchers.IO) {
+        snapshotCache[entityId]?.let { return@withContext it }
+        val fresh = fetchCameraSnapshot(entityId) ?: return@withContext null
+        snapshotCache[entityId] = fresh
+        fresh
+    }
+
+    /** Prefetch stills so the camera popup can show a poster immediately. */
+    suspend fun prefetchCameraSnapshots(entityIds: Collection<String>) {
+        withContext(Dispatchers.IO) {
+            entityIds.distinct().forEach { entityId ->
+                if (snapshotCache.containsKey(entityId)) return@forEach
+                fetchCameraSnapshot(entityId)?.let { snapshotCache[entityId] = it }
+            }
+        }
+    }
+
+    private suspend fun fetchCameraSnapshot(entityId: String): ByteArray? = withContext(Dispatchers.IO) {
         val picture = state(entityId)?.entityPicture
         val paths = buildList {
             if (entityId.startsWith("camera.")) add("/api/camera_proxy/$entityId")
@@ -576,7 +594,7 @@ class HaClient {
     suspend fun cameraHlsUrl(entityId: String): String? {
         if (!entityId.startsWith("camera.") || baseUrl.isBlank()) return null
         return try {
-            withTimeout(15_000) {
+            withTimeout(5_000) {
                 val result = command {
                     put("type", "camera/stream")
                     put("entity_id", entityId)

@@ -374,14 +374,20 @@ private fun SettingsPopup(popup: PopupNode, viewModel: HaViewModel) {
 private fun ScreenTimeoutCard(viewModel: HaViewModel) {
     val overlay = LocalOverlay.current
     val ui by viewModel.ui.collectAsState()
-    val options = listOf(
-        0 to "Always on",
-        1 to "1 min",
-        2 to "2 min",
-        5 to "5 min",
-        10 to "10 min",
-        15 to "15 min",
-        30 to "30 min",
+    var secondsText by remember { mutableStateOf(ui.screenTimeoutSeconds.toString()) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var message by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(ui.screenTimeoutSeconds) {
+        secondsText = ui.screenTimeoutSeconds.toString()
+    }
+    val fieldColors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = overlay.text,
+        unfocusedTextColor = overlay.text,
+        focusedBorderColor = overlay.text,
+        unfocusedBorderColor = overlay.muted,
+        focusedLabelColor = overlay.text,
+        unfocusedLabelColor = overlay.muted,
+        cursorColor = overlay.text,
     )
     Column(
         modifier = Modifier
@@ -393,30 +399,49 @@ private fun ScreenTimeoutCard(viewModel: HaViewModel) {
     ) {
         Text("Screen timeout", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
         Text(
-            "After this idle time the panel goes black and dims the backlight. Tap to wake. Doorbell and other wall commands also wake it.",
+            "Idle seconds before the panel goes black and dims the backlight. Use 0 to keep the screen on. Tap to wake; doorbell and other wall commands wake it too.",
             color = overlay.muted,
             fontSize = 14.sp,
         )
-        options.chunked(2).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                row.forEach { (minutes, label) ->
-                    val selected = ui.screenTimeoutMinutes == minutes
-                    Text(
-                        text = label,
-                        color = if (selected) Color.Black else overlay.text,
-                        fontSize = 15.sp,
-                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(if (selected) ActiveYellow else overlay.well)
-                            .clickable { viewModel.setScreenTimeoutMinutes(minutes) }
-                            .padding(vertical = 14.dp),
-                    )
+        OutlinedTextField(
+            value = secondsText,
+            onValueChange = { value ->
+                if (value.length <= 6 && value.all { it.isDigit() }) {
+                    secondsText = value
+                    error = null
+                    message = null
                 }
-                if (row.size == 1) Spacer(Modifier.weight(1f))
-            }
+            },
+            label = { Text("Seconds") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = fieldColors,
+        )
+        error?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 13.sp) }
+        message?.let { Text(it, color = Color(0xFFC5E1A5), fontSize = 13.sp) }
+        Button(
+            onClick = {
+                val parsed = secondsText.toIntOrNull()
+                if (parsed == null) {
+                    message = null
+                    error = "Enter a number of seconds"
+                    return@Button
+                }
+                val result = viewModel.setScreenTimeoutSeconds(parsed)
+                if (result.isSuccess) {
+                    error = null
+                    message = if (parsed == 0) "Screen stays on" else "Timeout saved"
+                } else {
+                    message = null
+                    error = result.exceptionOrNull()?.message ?: "Could not save timeout"
+                }
+            },
+            enabled = secondsText.isNotBlank(),
+            colors = ButtonDefaults.buttonColors(ActiveYellow),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Save timeout", color = Color.Black)
         }
     }
 }

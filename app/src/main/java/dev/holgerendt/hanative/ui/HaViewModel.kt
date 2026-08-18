@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import dev.holgerendt.hanative.HaNativeApp
 import dev.holgerendt.hanative.data.CalendarInfo
+import dev.holgerendt.hanative.data.CameraStreams
 import dev.holgerendt.hanative.data.ConnectionState
 import dev.holgerendt.hanative.data.CredentialsStore
 import dev.holgerendt.hanative.data.DashboardLoader
@@ -53,7 +54,7 @@ data class UiState(
     val pinIsUserSet: Boolean = false,
     val remoteUrls: List<String> = emptyList(),
     val managementError: String? = null,
-    val screenTimeoutMinutes: Int = 0,
+    val screenTimeoutSeconds: Int = 0,
     val screenAsleep: Boolean = false,
 )
 
@@ -103,7 +104,7 @@ class HaViewModel(
             setupError = loadError,
             remotePin = currentPin,
             pinIsUserSet = credentials.managementPin.isNotBlank(),
-            screenTimeoutMinutes = credentials.screenTimeoutMinutes,
+            screenTimeoutSeconds = credentials.screenTimeoutSeconds,
         )
         startManagementServer()
         client.onKioskEvent = { params ->
@@ -113,6 +114,7 @@ class HaViewModel(
         }
         watchCameraFlag()
         watchIdleTimeout()
+        prefetchWallCameras()
         if (credentials.isConfigured) {
             viewModelScope.launch { connect(credentials.baseUrl, credentials.token) }
         }
@@ -221,6 +223,7 @@ class HaViewModel(
         }
         client.connect(url, token)
         refreshCalendars()
+        prefetchWallCameras()
         _ui.value = _ui.value.copy(
             showSetup = false,
             setupBusy = false,
@@ -317,11 +320,16 @@ class HaViewModel(
         lastActivityMs = System.currentTimeMillis()
     }
 
-    fun setScreenTimeoutMinutes(minutes: Int) {
-        val value = minutes.coerceIn(0, 180)
-        credentials.screenTimeoutMinutes = value
+    fun setScreenTimeoutSeconds(seconds: Int): Result<Unit> {
+        if (seconds !in 0..CredentialsStore.MAX_SCREEN_TIMEOUT_SECONDS) {
+            return Result.failure(
+                IllegalArgumentException("Enter 0 to ${CredentialsStore.MAX_SCREEN_TIMEOUT_SECONDS} seconds"),
+            )
+        }
+        credentials.screenTimeoutSeconds = seconds
         lastActivityMs = System.currentTimeMillis()
-        _ui.value = _ui.value.copy(screenTimeoutMinutes = value)
+        _ui.value = _ui.value.copy(screenTimeoutSeconds = seconds)
+        return Result.success(Unit)
     }
 
     fun sleepScreen() {
@@ -336,15 +344,26 @@ class HaViewModel(
         }
     }
 
+    private fun prefetchWallCameras() {
+        viewModelScope.launch {
+            val widgets = _ui.value.dashboard?.home?.popups
+                ?.firstOrNull { it.hash == KioskCommands.CAMERA_POPUP }
+                ?.let { popup -> CameraStreams.camerasForPopup(popup) }
+                ?: CameraStreams.wallPanelCameras
+            client.prefetchCameraSnapshots(widgets.mapNotNull { it.entity })
+            CameraStreams.prefetch(client, widgets.map { CameraStreams.fromWidget(it) })
+        }
+    }
+
     private fun watchIdleTimeout() {
         viewModelScope.launch {
             while (true) {
-                val minutes = _ui.value.screenTimeoutMinutes
-                if (minutes <= 0 || _ui.value.screenAsleep || _ui.value.showSetup) {
+                val seconds = _ui.value.screenTimeoutSeconds
+                if (seconds <= 0 || _ui.value.screenAsleep || _ui.value.showSetup) {
                     delay(1_000)
                     continue
                 }
-                val wait = lastActivityMs + minutes * 60_000L - System.currentTimeMillis()
+                val wait = lastActivityMs + seconds * 1_000L - System.currentTimeMillis()
                 if (wait <= 0) {
                     sleepScreen()
                 } else {

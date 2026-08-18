@@ -38,6 +38,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
@@ -187,7 +188,7 @@ private fun LiveCameraSurface(
     val current = candidates.getOrNull(index)
     Box(modifier, contentAlignment = Alignment.Center) {
         val still = poster
-        if (still != null && (current == null || current.kind == StreamKind.MJPEG)) {
+        if (still != null && current == null) {
             Image(
                 bitmap = still,
                 contentDescription = widget.name,
@@ -232,13 +233,19 @@ private fun HlsPlayer(
     val dataSourceFactory = remember {
         DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(8_000)
-            .setReadTimeoutMs(20_000)
+            .setConnectTimeoutMs(4_000)
+            .setReadTimeoutMs(12_000)
             .setUserAgent("ha-native-dash")
+    }
+    val loadControl = remember {
+        DefaultLoadControl.Builder()
+            .setBufferDurationsMs(500, 2_000, 500, 500)
+            .build()
     }
     val player = remember {
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+            .setLoadControl(loadControl)
             .build()
     }
     DisposableEffect(player) {
