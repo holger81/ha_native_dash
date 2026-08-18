@@ -14,6 +14,8 @@ class ManagementServer(
     private val savedUrlProvider: () -> String,
     private val screenshotProvider: () -> ScreenCapture.Jpeg,
     private val onSubmit: (pin: String, url: String, token: String) -> Result<Unit>,
+    private val onCommand: (KioskCommand) -> Unit,
+    private val kioskStateProvider: () -> Pair<String?, Boolean>,
     sslSocketFactory: SSLServerSocketFactory,
 ) : NanoHTTPD(port) {
 
@@ -36,6 +38,10 @@ class ManagementServer(
             session.method == Method.GET && uri == "/logout" -> handleLogout(session)
             session.method == Method.POST && uri == "/logout" -> handleLogout(session)
             session.method == Method.GET && uri == "/screenshot" -> handleScreenshot(session)
+            session.method == Method.OPTIONS && (uri == "/api/command" || uri == "/api/state") -> corsPreflight()
+            session.method == Method.GET && uri == "/api/state" -> handleKioskState(session)
+            (session.method == Method.GET || session.method == Method.POST) && uri == "/api/command" ->
+                handleKioskCommand(session)
             session.method == Method.POST && uri == "/setup" -> handleSetup(session)
             else -> newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not found")
         }
@@ -82,6 +88,98 @@ class ManagementServer(
             if (shot.bytes.isNotEmpty()) shot
             else ScreenCapture.errorJpeg(shot.error ?: "Screenshot failed"),
         )
+    }
+
+    private fun handleKioskState(session: IHTTPSession): Response {
+        apiPinError(session)?.let { return json(Response.Status.UNAUTHORIZED, """{"ok":false,"error":"${escape(it)}"}""") }
+        val (popup, connected) = kioskStateProvider()
+        val popupJson = popup?.let { "\"${escape(it)}\"" } ?: "null"
+        return json(
+            Response.Status.OK,
+            """{"ok":true,"popup":$popupJson,"connected":$connected,"panel":"${KioskCommands.PANEL_ID}"}""",
+        )
+    }
+
+    private fun handleKioskCommand(session: IHTTPSession): Response {
+        val files = HashMap<String, String>()
+        if (session.method == Method.POST) {
+            runCatching { session.parseBody(files) }
+        }
+        val params = mutableMapOf<String, String>()
+        session.parameters.forEach { (key, values) ->
+            values.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }?.let { params[key] = it }
+        }
+        formParams(session, files).forEach { (key, value) ->
+            if (value.isNotBlank()) params[key] = value
+        }
+        val body = files["postData"].orEmpty()
+        if (body.trimStart().startsWith("{")) {
+            params.putAll(flattenBody(body))
+        }
+        apiPinError(session, params["pin"])?.let {
+            return json(Response.Status.UNAUTHORIZED, """{"ok":false,"error":"${escape(it)}"}""")
+        }
+        if (!KioskCommands.panelAllowed(params)) {
+            return json(Response.Status.OK, """{"ok":true,"ignored":true,"reason":"panel mismatch"}""")
+        }
+        val command = if (body.trimStart().startsWith("{")) {
+            KioskCommands.fromJson(body) ?: KioskCommands.fromParams(params)
+        } else {
+            KioskCommands.fromParams(params)
+        }
+        if (command == null) {
+            return json(
+                Response.Status.BAD_REQUEST,
+                """{"ok":false,"error":"Unknown command. Use cmd=camera, cmd=navigate&path=#camerafront_view, or cmd=home."}""",
+            )
+        }
+        onCommand(command)
+        val (popup, connected) = kioskStateProvider()
+        val popupJson = popup?.let { "\"${escape(it)}\"" } ?: "null"
+        return json(Response.Status.OK, """{"ok":true,"popup":$popupJson,"connected":$connected}""")
+    }
+
+    private fun flattenBody(body: String): Map<String, String> {
+        val obj = runCatching { org.json.JSONObject(body) }.getOrNull() ?: return emptyMap()
+        val out = mutableMapOf<String, String>()
+        fun take(source: org.json.JSONObject) {
+            source.keys().forEach { key ->
+                val value = source.opt(key) ?: return@forEach
+                if (value !is org.json.JSONObject && value !== org.json.JSONObject.NULL) {
+                    out[key] = value.toString()
+                }
+            }
+        }
+        take(obj)
+        obj.optJSONObject("data")?.let(::take)
+        return out
+    }
+
+    private fun apiPinError(session: IHTTPSession, bodyPin: String? = null): String? {
+        val headerPin = session.headers["x-ha-pin"]
+            ?: session.headers["authorization"]?.removePrefix("Bearer ")?.trim()
+        val queryPin = session.parameters["pin"]?.firstOrNull()
+        val pin = (headerPin ?: queryPin ?: bodyPin).orEmpty().replace(" ", "")
+        return pinError(pin)
+    }
+
+    private fun corsPreflight(): Response {
+        val response = newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "")
+        addCors(response)
+        response.addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        response.addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-HA-PIN")
+        return response
+    }
+
+    private fun json(status: Response.Status, body: String): Response {
+        val response = newFixedLengthResponse(status, "application/json", body)
+        response.addHeader("Cache-Control", "no-store")
+        addCors(response)
+        return response
+    }
+
+    private fun addCors(response: Response) {
+        response.addHeader("Access-Control-Allow-Origin", "*")
     }
 
     private fun handleSetup(session: IHTTPSession): Response {

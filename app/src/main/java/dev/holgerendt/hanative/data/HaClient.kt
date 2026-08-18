@@ -108,6 +108,7 @@ sealed interface ConnectionState {
 }
 
 class HaClient {
+    @Volatile var onKioskEvent: ((Map<String, String>) -> Unit)? = null
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val mediaType = "application/json; charset=utf-8".toMediaType()
     private val http = OkHttpClient.Builder()
@@ -190,6 +191,11 @@ class HaClient {
                 })
                 send(buildJsonObject {
                     put("id", nextId.getAndIncrement())
+                    put("type", "subscribe_events")
+                    put("event_type", KioskCommands.EVENT)
+                })
+                send(buildJsonObject {
+                    put("id", nextId.getAndIncrement())
                     put("type", "get_states")
                 })
             }
@@ -214,13 +220,19 @@ class HaClient {
             }
             "event" -> {
                 val event = obj["event"]?.jsonObject ?: return
-                if (event["event_type"]?.jsonPrimitive?.contentOrNull == "state_changed") {
-                    val data = event["data"]?.jsonObject ?: return
-                    val newState = data["new_state"]
-                    if (newState is JsonObject) {
-                        parseEntity(newState)?.let { entity ->
-                            _states.update { it + (entity.entityId to entity) }
+                when (event["event_type"]?.jsonPrimitive?.contentOrNull) {
+                    "state_changed" -> {
+                        val data = event["data"]?.jsonObject ?: return
+                        val newState = data["new_state"]
+                        if (newState is JsonObject) {
+                            parseEntity(newState)?.let { entity ->
+                                _states.update { it + (entity.entityId to entity) }
+                            }
                         }
+                    }
+                    KioskCommands.EVENT -> {
+                        val data = event["data"]?.jsonObject ?: return
+                        onKioskEvent?.invoke(jsonMap(data))
                     }
                 }
             }
@@ -248,6 +260,18 @@ class HaClient {
             lastChanged = parseInstantOrDate(obj["last_changed"] as? JsonPrimitive),
             lastUpdated = parseInstantOrDate(obj["last_updated"] as? JsonPrimitive),
         )
+    }
+
+    private fun jsonMap(obj: JsonObject): Map<String, String> {
+        val out = mutableMapOf<String, String>()
+        obj.forEach { (key, value) ->
+            when (value) {
+                is JsonPrimitive -> value.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }?.let { out[key] = it }
+                is JsonObject -> out.putAll(jsonMap(value))
+                else -> Unit
+            }
+        }
+        return out
     }
 
     private fun send(obj: JsonObject) {

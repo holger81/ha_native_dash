@@ -49,6 +49,58 @@ The app keeps the screen on and prefers landscape, like the kiosk wall dashboard
 - **Hold menu** toggles `input_boolean.kiosk_mode_greatroom` (same as the Lovelace hold action)
 - Tap a room tile to open that room’s controls
 
+## Remote camera / kiosk commands
+
+Home Assistant can open the camera popup on the wall panel the same way Fully Kiosk / WallPanel take a `loadUrl` command. Prefer the **HA event** (no panel IP, no certificate). The REST API is there if you already use `rest_command`.
+
+### Event (recommended)
+
+```yaml
+actions:
+  - event: ha_native_dash
+    event_data:
+      command: camera
+```
+
+Other payloads: `command: home` closes the popup; `command: navigate` + `path: "#power"` opens any wall popup; `command: more_info` + `entity_id: camera.front_door` opens more-info. Optional `panel: greatroom` is ignored unless it names a different panel.
+
+### Input boolean
+
+Create `input_boolean.greatroom_wall_camera`. Turn it **on** to show the camera popup, **off** to close it (if that popup is still open). Example doorbell automation:
+
+```yaml
+alias: Greatroom wall camera on doorbell
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.front_doorbell_visitor
+    to: "on"
+actions:
+  - action: input_boolean.turn_on
+    target:
+      entity_id: input_boolean.greatroom_wall_camera
+  - delay: "00:01:00"
+  - action: input_boolean.turn_off
+    target:
+      entity_id: input_boolean.greatroom_wall_camera
+```
+
+### REST (Fully / WallPanel style)
+
+HTTPS on port **8765**, authenticated with the wall **PIN** (`pin` query, JSON field, `X-HA-PIN` header, or `Authorization: Bearer <PIN>`).
+
+```yaml
+rest_command:
+  greatroom_wall:
+    url: "https://WALL_PANEL_IP:8765/api/command"
+    method: POST
+    verify_ssl: false
+    headers:
+      Content-Type: application/json
+    payload: '{"cmd":"{{ cmd }}","path":"{{ path }}","pin":"YOUR_PIN"}'
+```
+
+Then `action: rest_command.greatroom_wall` with `cmd: camera` (or `navigate` and `path: "#camerafront_view"`). `GET /api/state?pin=PIN` returns the current popup.
+
 Dashboard layout is generated from `~/Projects/ha_dashboards/greatroom-wall.yaml` into `app/src/main/assets/dashboard.json`. Re-run:
 
 ```bash

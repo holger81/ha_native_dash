@@ -11,6 +11,8 @@ import dev.holgerendt.hanative.data.CredentialsStore
 import dev.holgerendt.hanative.data.DashboardLoader
 import dev.holgerendt.hanative.data.EntityState
 import dev.holgerendt.hanative.data.HaClient
+import dev.holgerendt.hanative.data.KioskCommand
+import dev.holgerendt.hanative.data.KioskCommands
 import dev.holgerendt.hanative.data.LanAddresses
 import dev.holgerendt.hanative.data.ManagementServer
 import dev.holgerendt.hanative.data.ManagementTls
@@ -25,6 +27,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -96,6 +100,12 @@ class HaViewModel(
             pinIsUserSet = credentials.managementPin.isNotBlank(),
         )
         startManagementServer()
+        client.onKioskEvent = { params ->
+            if (KioskCommands.panelAllowed(params)) {
+                KioskCommands.fromParams(params)?.let { applyKioskCommand(it) }
+            }
+        }
+        watchCameraFlag()
         if (credentials.isConfigured) {
             viewModelScope.launch { connect(credentials.baseUrl, credentials.token) }
         }
@@ -155,6 +165,10 @@ class HaViewModel(
                 runBlocking {
                     withTimeout(20_000) { connect(url, token) }
                 }
+            },
+            onCommand = { applyKioskCommand(it) },
+            kioskStateProvider = {
+                _ui.value.popupHash to (client.connection.value is ConnectionState.Connected)
             },
             sslSocketFactory = ssl.getOrThrow(),
         )
@@ -266,6 +280,40 @@ class HaViewModel(
 
     fun closeMedia() {
         _ui.value = _ui.value.copy(mediaPath = null)
+    }
+
+    fun applyKioskCommand(command: KioskCommand) {
+        when (command) {
+            is KioskCommand.Home -> {
+                closePopup()
+                closeMoreInfo()
+                closeMedia()
+            }
+            is KioskCommand.Navigate -> {
+                closeMoreInfo()
+                closeMedia()
+                openPopup(command.hash)
+            }
+            is KioskCommand.MoreInfo -> {
+                closePopup()
+                openMoreInfo(command.entityId)
+            }
+        }
+    }
+
+    private fun watchCameraFlag() {
+        viewModelScope.launch {
+            var previous: String? = null
+            states.map { it[KioskCommands.CAMERA_FLAG]?.state }.distinctUntilChanged().collect { state ->
+                val last = previous
+                previous = state
+                if (state == "on" && last != "on") {
+                    applyKioskCommand(KioskCommand.Navigate(KioskCommands.CAMERA_POPUP))
+                } else if (state == "off" && last == "on" && _ui.value.popupHash == KioskCommands.CAMERA_POPUP) {
+                    closePopup()
+                }
+            }
+        }
     }
 
     fun plannerCalendars(defaults: List<CalendarSourceNode>): List<CalendarSourceNode> {
