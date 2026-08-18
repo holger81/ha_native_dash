@@ -135,6 +135,22 @@ class HaClient {
 
     fun state(entityId: String?): EntityState? = entityId?.let { _states.value[it] }
 
+    fun applyOptimisticState(
+        entityId: String,
+        state: String,
+        attributes: Map<String, JsonElement>? = null,
+    ) {
+        _states.update { current ->
+            val existing = current[entityId] ?: EntityState(entityId = entityId, state = state)
+            current + (entityId to existing.copy(
+                state = state,
+                attributes = if (attributes != null) existing.attributes + attributes else existing.attributes,
+                lastChanged = Instant.now(),
+                lastUpdated = Instant.now(),
+            ))
+        }
+    }
+
     suspend fun connect(url: String, accessToken: String) {
         disconnect()
         baseUrl = url.trim().trimEnd('/')

@@ -38,6 +38,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import java.security.SecureRandom
+import kotlin.math.roundToInt
 
 data class UiState(
     val dashboard: DashboardFile? = null,
@@ -379,7 +380,7 @@ class HaViewModel(
             "menu_toggle" -> setDrawer(!_ui.value.drawerOpen)
             "navigate" -> openPopup(action.hash)
             "more_info" -> openMoreInfo(entity)
-            "toggle" -> entity?.let { id -> viewModelScope.launch { client.toggle(id) } }
+            "toggle" -> entity?.let { toggleEntity(it) }
             "vent_tilt_toggle" -> entity?.let { id ->
                 viewModelScope.launch {
                     val open = client.state(id)?.state in setOf("open", "opening")
@@ -408,11 +409,33 @@ class HaViewModel(
     }
 
     fun toggleEntity(entityId: String) {
-        viewModelScope.launch { client.toggle(entityId) }
+        viewModelScope.launch {
+            when (entityId.substringBefore('.')) {
+                "light", "switch", "input_boolean", "fan" -> {
+                    val current = client.state(entityId)
+                    val on = current?.state == "on"
+                    client.applyOptimisticState(entityId, if (on) "off" else "on")
+                }
+            }
+            client.toggle(entityId)
+        }
     }
 
     fun setBrightness(entityId: String, pct: Int) {
-        viewModelScope.launch { client.setLightBrightness(entityId, pct) }
+        viewModelScope.launch {
+            val clamped = pct.coerceIn(0, 100)
+            if (clamped <= 0) {
+                client.applyOptimisticState(entityId, "off")
+            } else {
+                val brightness = ((clamped / 100.0) * 255.0).roundToInt().coerceIn(1, 255)
+                client.applyOptimisticState(
+                    entityId,
+                    "on",
+                    mapOf("brightness" to JsonPrimitive(brightness)),
+                )
+            }
+            client.setLightBrightness(entityId, clamped)
+        }
     }
 
     fun setTemperature(entityId: String, temperature: Double) {

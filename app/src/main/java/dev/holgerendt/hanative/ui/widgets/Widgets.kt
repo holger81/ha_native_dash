@@ -11,7 +11,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -33,8 +34,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -112,6 +111,8 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.roundToInt
 
 private val CardShape = RoundedCornerShape(28.dp)
@@ -945,51 +946,91 @@ fun LightSlider(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
     val entity = states[widget.entity]
     val on = entity?.state == "on"
     val pct = states.brightnessPct(widget.entity)
+    var lastOnPct by remember(widget.entity) { mutableIntStateOf(if (pct > 0) pct else 100) }
     var sliding by remember { mutableFloatStateOf(pct.toFloat()) }
-    LaunchedEffect(pct) { sliding = pct.toFloat() }
-    val fill by animateFloatAsState(if (on) sliding / 100f else 0f, label = "light")
+    var isSliding by remember { mutableStateOf(false) }
+    LaunchedEffect(pct, on) {
+        if (on && pct > 0) lastOnPct = pct
+        if (!isSliding) sliding = if (on) (if (pct > 0) pct else lastOnPct).toFloat() else 0f
+    }
+    val restFill = if (on) (if (pct > 0) pct else lastOnPct) / 100f else 0f
+    val animatedFill by animateFloatAsState(restFill, label = "light")
+    val fill = if (isSliding) sliding / 100f else animatedFill
+    val shownOn = isSliding || on
     Box(
         modifier = modifier
             .height(75.dp)
             .clip(RoundedCornerShape(22.dp))
             .background(overlay.well)
             .pointerInput(widget.entity) {
-                detectTapGestures(
-                    onTap = { viewModel.onTap(widget) },
-                    onLongPress = { viewModel.onHold(widget) },
-                )
+                val entityId = widget.entity ?: return@pointerInput
+                val holdTimeMs = 600L
+                val touchSlop = viewConfiguration.touchSlop
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val downTime = System.currentTimeMillis()
+                    var dragging = false
+                    var longPressed = false
+                    var current = down
+                    while (current.pressed) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        val dx = change.position.x - down.position.x
+                        val dy = change.position.y - down.position.y
+                        if (!dragging && !longPressed) {
+                            val dist = hypot(dx, dy)
+                            if (dist > touchSlop) {
+                                if (abs(dx) > abs(dy)) {
+                                    dragging = true
+                                    isSliding = true
+                                    change.consume()
+                                    sliding = (change.position.x / size.width.toFloat() * 100f).coerceIn(0f, 100f)
+                                } else {
+                                    return@awaitEachGesture
+                                }
+                            } else if (change.pressed && System.currentTimeMillis() - downTime >= holdTimeMs) {
+                                longPressed = true
+                                change.consume()
+                                viewModel.onHold(widget)
+                            }
+                        } else if (dragging) {
+                            change.consume()
+                            sliding = (change.position.x / size.width.toFloat() * 100f).coerceIn(0f, 100f)
+                        } else {
+                            change.consume()
+                        }
+                        current = change
+                    }
+                    if (dragging) {
+                        val value = sliding.roundToInt()
+                        if (value > 0) lastOnPct = value
+                        viewModel.setBrightness(entityId, value)
+                        isSliding = false
+                    } else if (!longPressed) {
+                        viewModel.onTap(widget)
+                    }
+                }
             },
     ) {
         Box(
             modifier = Modifier
                 .fillMaxHeight()
                 .fillMaxWidth(fill)
-                .background(if (on) ActiveLight else Color.Transparent),
+                .background(if (shownOn) ActiveLight else Color.Transparent),
         )
         Row(
             modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val tint = if (on) Color.Black else overlay.text
+            val tint = if (shownOn) Color.Black else overlay.text
             MdiIcon(widget.icon, tint = tint, size = 22.dp)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(widget.name.orEmpty(), color = if (on) Color.Black else overlay.muted, fontSize = 14.sp)
-                Text(if (on) "${pct}%" else "Off", color = if (on) Color.Black else overlay.text, fontWeight = FontWeight.Medium)
+                Text(widget.name.orEmpty(), color = if (shownOn) Color.Black else overlay.muted, fontSize = 14.sp)
+                val label = if (shownOn) "${(if (isSliding) sliding.roundToInt() else if (pct > 0) pct else lastOnPct)}%" else "Off"
+                Text(label, color = if (shownOn) Color.Black else overlay.text, fontWeight = FontWeight.Medium)
             }
         }
-        Slider(
-            value = sliding,
-            onValueChange = { sliding = it },
-            onValueChangeFinished = { widget.entity?.let { viewModel.setBrightness(it, sliding.roundToInt()) } },
-            valueRange = 0f..100f,
-            modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
-            colors = SliderDefaults.colors(
-                thumbColor = Color.Transparent,
-                activeTrackColor = Color.Transparent,
-                inactiveTrackColor = Color.Transparent,
-            ),
-        )
     }
 }
 
