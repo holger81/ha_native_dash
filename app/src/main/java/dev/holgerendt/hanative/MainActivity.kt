@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.view.MotionEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -13,9 +14,13 @@ import androidx.activity.viewModels
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import dev.holgerendt.hanative.ui.HaApp
 import dev.holgerendt.hanative.ui.HaViewModel
 import dev.holgerendt.hanative.ui.theme.HaNativeTheme
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val viewModel: HaViewModel by viewModels { HaViewModel.factory(application) }
@@ -27,11 +32,23 @@ class MainActivity : ComponentActivity() {
         maybeRequestStorage()
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.ui.collect { applyScreenBrightness(it.screenAsleep) }
+            }
+        }
         setContent {
             HaNativeTheme {
                 HaApp(viewModel = viewModel)
             }
         }
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            viewModel.noteUserActivity()
+        }
+        return super.dispatchTouchEvent(ev)
     }
 
     override fun onResume() {
@@ -47,7 +64,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) hideSystemUi()
+        if (hasFocus) {
+            hideSystemUi()
+            applyScreenBrightness(viewModel.ui.value.screenAsleep)
+        }
     }
 
     private fun maybeRequestStorage() {
@@ -80,5 +100,21 @@ class MainActivity : ComponentActivity() {
         controller.hide(WindowInsetsCompat.Type.systemBars())
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    }
+
+    private fun applyScreenBrightness(asleep: Boolean) {
+        if (!window.decorView.isAttachedToWindow) return
+        runCatching {
+            val lp = window.attributes
+            val target = if (asleep) {
+                0f
+            } else {
+                WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
+            if (lp.screenBrightness != target) {
+                lp.screenBrightness = target
+                window.attributes = lp
+            }
+        }
     }
 }

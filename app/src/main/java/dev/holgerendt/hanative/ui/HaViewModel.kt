@@ -338,16 +338,20 @@ class HaViewModel(
 
     fun sleepScreen() {
         if (_ui.value.screenAsleep || _ui.value.showSetup) return
-        _ui.value.displayOffEntity.takeIf { it.isNotBlank() }?.let { entityId ->
-            viewModelScope.launch { runCatching { client.setEntityPower(entityId, on = false) } }
+        if (connection.value is ConnectionState.Connected) {
+            _ui.value.displayOffEntity.takeIf { it.isNotBlank() }?.let { entityId ->
+                viewModelScope.launch { runCatching { client.setEntityPower(entityId, on = false) } }
+            }
         }
         _ui.value = _ui.value.copy(screenAsleep = true, drawerOpen = false)
     }
 
     fun wakeScreen() {
         lastActivityMs = System.currentTimeMillis()
-        _ui.value.displayOffEntity.takeIf { it.isNotBlank() }?.let { entityId ->
-            viewModelScope.launch { runCatching { client.setEntityPower(entityId, on = true) } }
+        if (connection.value is ConnectionState.Connected) {
+            _ui.value.displayOffEntity.takeIf { it.isNotBlank() }?.let { entityId ->
+                viewModelScope.launch { runCatching { client.setEntityPower(entityId, on = true) } }
+            }
         }
         if (_ui.value.screenAsleep) {
             _ui.value = _ui.value.copy(screenAsleep = false)

@@ -39,16 +39,20 @@ class CredentialsStore(context: Context) {
         }
 
     /** HA entity to turn off/on when the wall sleeps (e.g. switch.uc_display). Empty = app overlay only. */
-    var displayOffEntity: String = readPref(KEY_DISPLAY_OFF)
+    private var displayOffEntityBacking = readPref(KEY_DISPLAY_OFF)
+    var displayOffEntity: String
+        get() = displayOffEntityBacking
         set(value) {
-            field = normalizeEntityId(value)
+            displayOffEntityBacking = normalizeEntityId(value)
             persist()
         }
 
     /** HA number/light entity for panel brightness (e.g. number.uc_display_brightness). */
-    var displayBrightnessEntity: String = readPref(KEY_DISPLAY_BRIGHTNESS)
+    private var displayBrightnessEntityBacking = readPref(KEY_DISPLAY_BRIGHTNESS)
+    var displayBrightnessEntity: String
+        get() = displayBrightnessEntityBacking
         set(value) {
-            field = normalizeEntityId(value)
+            displayBrightnessEntityBacking = normalizeEntityId(value)
             persist()
         }
 
@@ -73,11 +77,11 @@ class CredentialsStore(context: Context) {
         }
         migrateFromLegacy()
         restoreFromDocuments()
-        if (!prefs.contains(KEY_DISPLAY_OFF) && displayOffEntity.isBlank()) {
-            displayOffEntity = DEFAULT_DISPLAY_OFF_ENTITY
+        if (!prefs.contains(KEY_DISPLAY_OFF) && displayOffEntityBacking.isBlank()) {
+            displayOffEntityBacking = DEFAULT_DISPLAY_OFF_ENTITY
         }
-        if (!prefs.contains(KEY_DISPLAY_BRIGHTNESS) && displayBrightnessEntity.isBlank()) {
-            displayBrightnessEntity = DEFAULT_DISPLAY_BRIGHTNESS_ENTITY
+        if (!prefs.contains(KEY_DISPLAY_BRIGHTNESS) && displayBrightnessEntityBacking.isBlank()) {
+            displayBrightnessEntityBacking = DEFAULT_DISPLAY_BRIGHTNESS_ENTITY
         }
         persistEnabled = true
         if (isConfigured || managementPin.isNotBlank()) persist()

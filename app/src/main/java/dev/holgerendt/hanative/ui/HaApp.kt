@@ -1,7 +1,5 @@
 package dev.holgerendt.hanative.ui
 
-import android.app.Activity
-import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -41,7 +39,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -54,11 +51,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -121,19 +116,7 @@ fun HaApp(viewModel: HaViewModel) {
     if (ui.screenAsleep) {
         BackHandler { viewModel.wakeScreen() }
     }
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(ScreenBackground)
-            .pointerInput(Unit) {
-                awaitPointerEventScope {
-                    while (true) {
-                        awaitPointerEvent(PointerEventPass.Initial)
-                        viewModel.noteUserActivity()
-                    }
-                }
-            },
-    ) {
+    Box(Modifier.fillMaxSize().background(ScreenBackground)) {
         ModalNavigationDrawer(
             drawerState = drawerState,
             drawerContent = {
@@ -183,7 +166,6 @@ fun HaApp(viewModel: HaViewModel) {
                 MediaImageDialog(path, viewModel, onDismiss = { viewModel.closeMedia() })
             }
         }
-        ScreenSleepEffect(ui.screenAsleep)
         if (ui.screenAsleep) {
             Box(
                 modifier = Modifier
@@ -610,24 +592,6 @@ private fun EntityPickerField(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun ScreenSleepEffect(asleep: Boolean) {
-    val view = LocalView.current
-    DisposableEffect(asleep) {
-        val window = (view.context as? Activity)?.window
-        if (window != null) {
-            val lp = window.attributes
-            lp.screenBrightness = if (asleep) {
-                0f
-            } else {
-                WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-            }
-            window.attributes = lp
-        }
-        onDispose { }
     }
 }
 
