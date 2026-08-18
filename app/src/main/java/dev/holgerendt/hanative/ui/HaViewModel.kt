@@ -53,6 +53,8 @@ data class UiState(
     val pinIsUserSet: Boolean = false,
     val remoteUrls: List<String> = emptyList(),
     val managementError: String? = null,
+    val screenTimeoutMinutes: Int = 0,
+    val screenAsleep: Boolean = false,
 )
 
 class HaViewModel(
@@ -82,6 +84,8 @@ class HaViewModel(
     private val _availableCalendars = MutableStateFlow(listOf<CalendarInfo>())
     val availableCalendars: StateFlow<List<CalendarInfo>> = _availableCalendars
 
+    private var lastActivityMs = System.currentTimeMillis()
+
     private val extraCalendarColors = listOf(
         "var(--blue)",
         "var(--orange)",
@@ -99,6 +103,7 @@ class HaViewModel(
             setupError = loadError,
             remotePin = currentPin,
             pinIsUserSet = credentials.managementPin.isNotBlank(),
+            screenTimeoutMinutes = credentials.screenTimeoutMinutes,
         )
         startManagementServer()
         client.onKioskEvent = { params ->
@@ -107,6 +112,7 @@ class HaViewModel(
             }
         }
         watchCameraFlag()
+        watchIdleTimeout()
         if (credentials.isConfigured) {
             viewModelScope.launch { connect(credentials.baseUrl, credentials.token) }
         }
@@ -286,18 +292,64 @@ class HaViewModel(
     fun applyKioskCommand(command: KioskCommand) {
         when (command) {
             is KioskCommand.Home -> {
+                wakeScreen()
                 closePopup()
                 closeMoreInfo()
                 closeMedia()
             }
             is KioskCommand.Navigate -> {
+                wakeScreen()
                 closeMoreInfo()
                 closeMedia()
                 openPopup(command.hash)
             }
             is KioskCommand.MoreInfo -> {
+                wakeScreen()
                 closePopup()
                 openMoreInfo(command.entityId)
+            }
+            is KioskCommand.Sleep -> sleepScreen()
+            is KioskCommand.Wake -> wakeScreen()
+        }
+    }
+
+    fun noteUserActivity() {
+        lastActivityMs = System.currentTimeMillis()
+    }
+
+    fun setScreenTimeoutMinutes(minutes: Int) {
+        val value = minutes.coerceIn(0, 180)
+        credentials.screenTimeoutMinutes = value
+        lastActivityMs = System.currentTimeMillis()
+        _ui.value = _ui.value.copy(screenTimeoutMinutes = value)
+    }
+
+    fun sleepScreen() {
+        if (_ui.value.screenAsleep || _ui.value.showSetup) return
+        _ui.value = _ui.value.copy(screenAsleep = true, drawerOpen = false)
+    }
+
+    fun wakeScreen() {
+        lastActivityMs = System.currentTimeMillis()
+        if (_ui.value.screenAsleep) {
+            _ui.value = _ui.value.copy(screenAsleep = false)
+        }
+    }
+
+    private fun watchIdleTimeout() {
+        viewModelScope.launch {
+            while (true) {
+                val minutes = _ui.value.screenTimeoutMinutes
+                if (minutes <= 0 || _ui.value.screenAsleep || _ui.value.showSetup) {
+                    delay(1_000)
+                    continue
+                }
+                val wait = lastActivityMs + minutes * 60_000L - System.currentTimeMillis()
+                if (wait <= 0) {
+                    sleepScreen()
+                } else {
+                    delay(wait.coerceAtMost(15_000L))
+                }
             }
         }
     }

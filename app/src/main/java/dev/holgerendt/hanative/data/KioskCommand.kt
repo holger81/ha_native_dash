@@ -7,6 +7,8 @@ sealed class KioskCommand {
     data class Navigate(val hash: String) : KioskCommand()
     data object Home : KioskCommand()
     data class MoreInfo(val entityId: String) : KioskCommand()
+    data object Sleep : KioskCommand()
+    data object Wake : KioskCommand()
 }
 
 object KioskCommands {
@@ -56,7 +58,11 @@ object KioskCommands {
         return when {
             command in setOf("camera", "show_camera", "doorbell", "video") ->
                 KioskCommand.Navigate(CAMERA_POPUP)
-            command in setOf("home", "close", "dismiss", "clear", "clearurl", "sleep") ->
+            command in setOf("sleep", "screen_off", "screensaver") ->
+                KioskCommand.Sleep
+            command in setOf("wake", "screen_on") ->
+                KioskCommand.Wake
+            command in setOf("home", "close", "dismiss", "clear", "clearurl") ->
                 KioskCommand.Home
             command in setOf("more_info", "more-info", "moreinfo") -> {
                 val id = entity?.trim().orEmpty()

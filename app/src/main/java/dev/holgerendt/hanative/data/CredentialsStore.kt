@@ -31,6 +31,13 @@ class CredentialsStore(context: Context) {
             persist()
         }
 
+    /** Minutes of idle time before the panel blanks. 0 keeps the screen on. */
+    var screenTimeoutMinutes: Int = 0
+        set(value) {
+            field = value.coerceIn(0, 180)
+            persist()
+        }
+
     private var pinValue: String = readPref(KEY_PIN)
 
     var managementPin: String
@@ -40,7 +47,14 @@ class CredentialsStore(context: Context) {
     val isConfigured: Boolean
         get() = baseUrl.isNotBlank() && token.isNotBlank()
 
+    private val timeoutFromPrefs = prefs.contains(KEY_TIMEOUT)
+
     init {
+        screenTimeoutMinutes = if (timeoutFromPrefs) {
+            prefs.getInt(KEY_TIMEOUT, 0).coerceIn(0, 180)
+        } else {
+            0
+        }
         migrateFromLegacy()
         restoreFromDocuments()
         persistEnabled = true
@@ -96,6 +110,7 @@ class CredentialsStore(context: Context) {
             .putString(KEY_URL, baseUrl)
             .putString(KEY_TOKEN, token)
             .putString(KEY_PIN, managementPin)
+            .putInt(KEY_TIMEOUT, screenTimeoutMinutes)
             .apply()
         persistRecoverable()
     }
@@ -126,7 +141,8 @@ class CredentialsStore(context: Context) {
             put("ha_url", url)
             put("ha_token", accessToken)
             put("management_pin", pin)
-            val calendars = subscribedCalendars
+            put("screen_timeout_minutes", screenTimeoutMinutes)
+            val calendars = subscribedCalendars ?: readCalendarList(existing)
             if (calendars != null) {
                 put("subscribed_calendars", JSONArray(calendars))
             }
@@ -168,6 +184,9 @@ class CredentialsStore(context: Context) {
         }
         if (subscribedCalendars == null) {
             subscribedCalendars = readCalendarList(obj)
+        }
+        if (!timeoutFromPrefs && obj.has("screen_timeout_minutes")) {
+            screenTimeoutMinutes = obj.optInt("screen_timeout_minutes", 0).coerceIn(0, 180)
         }
         val pin = obj.optString("management_pin").trim()
         val takeRestoredPin = PIN_PATTERN.matches(pin) &&
@@ -212,6 +231,7 @@ class CredentialsStore(context: Context) {
         private const val KEY_URL = "ha_url"
         private const val KEY_TOKEN = "ha_token"
         private const val KEY_PIN = "management_pin"
+        private const val KEY_TIMEOUT = "screen_timeout_minutes"
 
         val PIN_PATTERN = Regex("^\\d{4,8}$")
 

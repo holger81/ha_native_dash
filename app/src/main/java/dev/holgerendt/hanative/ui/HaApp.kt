@@ -1,5 +1,7 @@
 package dev.holgerendt.hanative.ui
 
+import android.app.Activity
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -37,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -48,9 +51,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -108,7 +113,22 @@ fun HaApp(viewModel: HaViewModel) {
     LaunchedEffect(drawerState.currentValue) {
         viewModel.setDrawer(drawerState.currentValue == DrawerValue.Open)
     }
-    Box(Modifier.fillMaxSize().background(ScreenBackground)) {
+    if (ui.screenAsleep) {
+        BackHandler { viewModel.wakeScreen() }
+    }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(ScreenBackground)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent(PointerEventPass.Initial)
+                        viewModel.noteUserActivity()
+                    }
+                }
+            },
+    ) {
         ModalNavigationDrawer(
             drawerState = drawerState,
             drawerContent = {
@@ -157,6 +177,17 @@ fun HaApp(viewModel: HaViewModel) {
             ) {
                 MediaImageDialog(path, viewModel, onDismiss = { viewModel.closeMedia() })
             }
+        }
+        ScreenSleepEffect(ui.screenAsleep)
+        if (ui.screenAsleep) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .pointerInput(Unit) {
+                        detectTapGestures { viewModel.wakeScreen() }
+                    },
+            )
         }
     }
 }
@@ -332,9 +363,79 @@ private fun PopupHost(popup: PopupNode, viewModel: HaViewModel) {
 @Composable
 private fun SettingsPopup(popup: PopupNode, viewModel: HaViewModel) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        ScreenTimeoutCard(viewModel)
         ManagementPinCard(viewModel)
         CalendarSubscriptionsCard(viewModel)
         WidgetTree(popup.cards, viewModel)
+    }
+}
+
+@Composable
+private fun ScreenTimeoutCard(viewModel: HaViewModel) {
+    val overlay = LocalOverlay.current
+    val ui by viewModel.ui.collectAsState()
+    val options = listOf(
+        0 to "Always on",
+        1 to "1 min",
+        2 to "2 min",
+        5 to "5 min",
+        10 to "10 min",
+        15 to "15 min",
+        30 to "30 min",
+    )
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .background(overlay.card)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("Screen timeout", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            "After this idle time the panel goes black and dims the backlight. Tap to wake. Doorbell and other wall commands also wake it.",
+            color = overlay.muted,
+            fontSize = 14.sp,
+        )
+        options.chunked(2).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { (minutes, label) ->
+                    val selected = ui.screenTimeoutMinutes == minutes
+                    Text(
+                        text = label,
+                        color = if (selected) Color.Black else overlay.text,
+                        fontSize = 15.sp,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(if (selected) ActiveYellow else overlay.well)
+                            .clickable { viewModel.setScreenTimeoutMinutes(minutes) }
+                            .padding(vertical = 14.dp),
+                    )
+                }
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScreenSleepEffect(asleep: Boolean) {
+    val view = LocalView.current
+    DisposableEffect(asleep) {
+        val window = (view.context as? Activity)?.window
+        if (window != null) {
+            val lp = window.attributes
+            lp.screenBrightness = if (asleep) {
+                0f
+            } else {
+                WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
+            window.attributes = lp
+        }
+        onDispose { }
     }
 }
 
