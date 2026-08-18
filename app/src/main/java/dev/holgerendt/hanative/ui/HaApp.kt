@@ -56,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.holgerendt.hanative.data.ConnectionState
@@ -66,7 +67,7 @@ import dev.holgerendt.hanative.ui.theme.CardLight
 import dev.holgerendt.hanative.ui.theme.ChipDark
 import dev.holgerendt.hanative.ui.theme.ChipOnDark
 import dev.holgerendt.hanative.ui.theme.DockBackground
-import dev.holgerendt.hanative.ui.theme.PopupCard
+import dev.holgerendt.hanative.ui.theme.LocalOverlay
 import dev.holgerendt.hanative.ui.theme.ScreenBackground
 import dev.holgerendt.hanative.ui.theme.TextDark
 import dev.holgerendt.hanative.ui.theme.TextMuted
@@ -141,7 +142,7 @@ fun HaApp(viewModel: HaViewModel) {
         if (popup != null) {
             InWindowOverlay(
                 onDismiss = { viewModel.closePopup() },
-                scrim = Color.Black.copy(alpha = 0.28f),
+                scrim = Color.Black.copy(alpha = 0.55f),
             ) {
                 PopupHost(popup, viewModel)
             }
@@ -329,6 +330,7 @@ private fun SettingsPopup(popup: PopupNode, viewModel: HaViewModel) {
 
 @Composable
 private fun CalendarSubscriptionsCard(viewModel: HaViewModel) {
+    val overlay = LocalOverlay.current
     val available by viewModel.availableCalendars.collectAsState()
     val subscribed by viewModel.subscribedCalendars.collectAsState()
     val defaults = viewModel.ui.collectAsState().value.dashboard?.home?.calendar?.calendars.orEmpty()
@@ -337,18 +339,18 @@ private fun CalendarSubscriptionsCard(viewModel: HaViewModel) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(28.dp))
-            .background(CardLight)
+            .background(overlay.card)
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("Subscribed calendars", color = TextDark, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Text("Subscribed calendars", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
         Text(
             "These calendars appear on the 10-day planner, same as the Lovelace week-planner card.",
-            color = TextMuted,
+            color = overlay.muted,
             fontSize = 14.sp,
         )
         if (available.isEmpty()) {
-            Text("No calendars found yet", color = TextMuted, fontSize = 13.sp)
+            Text("No calendars found yet", color = overlay.muted, fontSize = 13.sp)
         }
         available.forEach { calendar ->
             val selected = subscribed ?: defaults.mapNotNull { it.entity }
@@ -359,8 +361,8 @@ private fun CalendarSubscriptionsCard(viewModel: HaViewModel) {
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Column(Modifier.weight(1f).padding(end = 12.dp)) {
-                    Text(calendar.name, color = TextDark, fontSize = 16.sp)
-                    Text(calendar.entityId.removePrefix("calendar."), color = TextMuted, fontSize = 12.sp)
+                    Text(calendar.name, color = overlay.text, fontSize = 16.sp)
+                    Text(calendar.entityId.removePrefix("calendar."), color = overlay.muted, fontSize = 12.sp)
                 }
                 Switch(
                     checked = on,
@@ -374,7 +376,7 @@ private fun CalendarSubscriptionsCard(viewModel: HaViewModel) {
         }
         if (subscribed != null) {
             TextButton(onClick = { viewModel.resetCalendarSubscriptions() }) {
-                Text("Use Lovelace defaults", color = TextDark)
+                Text("Use Lovelace defaults", color = overlay.text)
             }
         }
     }
@@ -382,35 +384,36 @@ private fun CalendarSubscriptionsCard(viewModel: HaViewModel) {
 
 @Composable
 private fun ManagementPinCard(viewModel: HaViewModel) {
+    val overlay = LocalOverlay.current
     val ui by viewModel.ui.collectAsState()
     var pin by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     val fieldColors = OutlinedTextFieldDefaults.colors(
-        focusedTextColor = TextDark,
-        unfocusedTextColor = TextDark,
-        focusedBorderColor = TextDark,
-        unfocusedBorderColor = TextMuted,
-        focusedLabelColor = TextDark,
-        unfocusedLabelColor = TextMuted,
-        cursorColor = TextDark,
+        focusedTextColor = overlay.text,
+        unfocusedTextColor = overlay.text,
+        focusedBorderColor = overlay.text,
+        unfocusedBorderColor = overlay.muted,
+        focusedLabelColor = overlay.text,
+        unfocusedLabelColor = overlay.muted,
+        cursorColor = overlay.text,
     )
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(28.dp))
-            .background(CardLight)
+            .background(overlay.card)
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("Remote setup PIN", color = TextDark, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Text("Remote setup PIN", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
         Text(
             "This PIN is saved on the panel and survives app upgrades and reinstalls. Use it to log in on the HTTPS admin page. Changing it here signs out existing admin sessions.",
-            color = TextMuted,
+            color = overlay.muted,
             fontSize = 14.sp,
         )
-        Text("Current PIN ${ui.remotePin}", color = TextDark, fontSize = 16.sp, fontFamily = FontFamily.Monospace)
+        Text("Current PIN ${ui.remotePin}", color = overlay.text, fontSize = 16.sp, fontFamily = FontFamily.Monospace)
         OutlinedTextField(
             value = pin,
             onValueChange = { value ->
@@ -461,6 +464,7 @@ private fun ManagementPinCard(viewModel: HaViewModel) {
 
 @Composable
 private fun WeatherPopup(viewModel: HaViewModel) {
+    val overlay = LocalOverlay.current
     val states by viewModel.states.collectAsState()
     val weather = states["weather.forecast_tankerland_ct"]
     val temp = states["sensor.st_00063154_temperature"]?.state?.toDoubleOrNull()
@@ -469,10 +473,12 @@ private fun WeatherPopup(viewModel: HaViewModel) {
     val rain = states["sensor.rain_sum_today"]?.state
     val day = states["sun.sun"]?.state == "above_horizon"
     var forecasts by remember { mutableStateOf(listOf<JsonObject>()) }
+    var forecastLoaded by remember { mutableStateOf(false) }
     LaunchedEffect(viewModel.client.currentBaseUrl, weather?.state) {
         forecasts = runCatching {
             viewModel.client.weatherForecast("weather.forecast_tankerland_ct")
         }.getOrDefault(emptyList())
+        forecastLoaded = true
     }
     val upcoming = if (forecasts.size > 1) forecasts.drop(1) else forecasts
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -480,23 +486,31 @@ private fun WeatherPopup(viewModel: HaViewModel) {
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(28.dp))
-                .background(PopupCard)
+                .background(overlay.card)
                 .padding(24.dp),
         ) {
-            Text("Now", color = TextMuted, fontSize = 14.sp)
+            Text("Now", color = overlay.muted, fontSize = 14.sp)
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                MdiIcon(weatherIcon(weather?.state, day), tint = TextDark, size = 120.dp)
+                MdiIcon(weatherIcon(weather?.state, day), tint = overlay.text, size = 120.dp)
             }
             Text(
                 "${temp.format(1, "°")}  ${feels.format(1, "°")}",
-                color = TextDark,
+                color = overlay.text,
                 fontSize = 42.sp,
                 fontWeight = FontWeight.Light,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(weather?.state?.replace('_', ' ')?.replaceFirstChar { it.uppercase() }.orEmpty(), color = TextDark)
-                Text("${wind.format(1)} km/h", color = TextDark)
-                Text("${rain ?: "—"} mm", color = TextDark)
+                Text(weather?.state?.replace('_', ' ')?.replaceFirstChar { it.uppercase() }.orEmpty(), color = overlay.text)
+                Text("${wind.format(1)} km/h", color = overlay.text)
+                Text("${rain ?: "—"} mm", color = overlay.text)
+            }
+        }
+        if (!forecastLoaded) {
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(24.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                LoadingSpinner(color = overlay.muted)
             }
         }
         upcoming.forEach { dayForecast ->
@@ -509,16 +523,16 @@ private fun WeatherPopup(viewModel: HaViewModel) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(28.dp))
-                    .background(PopupCard)
+                    .background(overlay.card)
                     .padding(24.dp)
                     .height(150.dp),
             ) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.SpaceBetween) {
-                        Text(forecastWeekday(jsonText(dayForecast["datetime"])), color = TextDark, fontSize = 16.sp)
+                        Text(forecastWeekday(jsonText(dayForecast["datetime"])), color = overlay.text, fontSize = 16.sp)
                         Text(
                             listOfNotNull(high?.let { "${it.format(0)}°" }, low?.let { "${it.format(0)}°" }).joinToString("  "),
-                            color = TextDark,
+                            color = overlay.text,
                             fontSize = 36.sp,
                             fontWeight = FontWeight.Light,
                         )
@@ -528,11 +542,11 @@ private fun WeatherPopup(viewModel: HaViewModel) {
                                 pop?.let { append("   ${it.format(0)}%") }
                                 precip?.let { append("   ${it.format(1)}mm") }
                             },
-                            color = TextDark,
+                            color = overlay.text,
                             fontSize = 16.sp,
                         )
                     }
-                    MdiIcon(weatherIcon(condition, day), tint = TextDark, size = 72.dp)
+                    MdiIcon(weatherIcon(condition, day), tint = overlay.text, size = 72.dp)
                 }
             }
         }
@@ -717,4 +731,17 @@ fun SetupScreen(viewModel: HaViewModel) {
             }
         }
     }
+}
+
+@Composable
+fun LoadingSpinner(
+    modifier: Modifier = Modifier,
+    color: Color = TextMuted,
+    indicatorSize: Dp = 22.dp,
+) {
+    CircularProgressIndicator(
+        modifier = modifier.size(indicatorSize),
+        color = color,
+        strokeWidth = 2.dp,
+    )
 }

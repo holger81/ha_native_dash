@@ -49,6 +49,7 @@ import dev.holgerendt.hanative.data.hasLiveCameraSource
 import dev.holgerendt.hanative.model.PopupNode
 import dev.holgerendt.hanative.model.WidgetNode
 import dev.holgerendt.hanative.ui.HaViewModel
+import dev.holgerendt.hanative.ui.LoadingSpinner
 import dev.holgerendt.hanative.ui.theme.ChipDark
 import dev.holgerendt.hanative.ui.theme.ChipOnDark
 import kotlinx.coroutines.CancellationException
@@ -144,7 +145,7 @@ private fun SnapshotCameraSurface(
         }
         when {
             bitmap == null && error != null -> CameraErrorText(error!!)
-            bitmap == null -> Text("Loading camera…", color = ChipOnDark)
+            bitmap == null -> LoadingSpinner(color = ChipOnDark)
         }
         CameraTitle(widget.name)
     }
@@ -209,7 +210,7 @@ private fun LiveCameraSurface(
                 },
             )
             error != null -> CameraErrorText(error!!)
-            else -> Text("Starting live stream…", color = ChipOnDark)
+            else -> LoadingSpinner(color = ChipOnDark)
         }
         if (error != null && current != null) {
             CameraErrorText(error!!)
@@ -317,7 +318,7 @@ private fun MjpegPlayer(
                 contentScale = ContentScale.Crop,
             )
         } else {
-            Text("Connecting MJPEG…", color = ChipOnDark)
+            LoadingSpinner(color = ChipOnDark)
         }
     }
 }

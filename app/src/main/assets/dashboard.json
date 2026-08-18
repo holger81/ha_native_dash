@@ -319,25 +319,6 @@
     "rooms": [
       {
         "type": "room_card",
-        "name": "Hallway",
-        "icon": "mdi:door",
-        "path": "#hallway",
-        "display": {
-          "kind": "temp_hum",
-          "temp_entity": null,
-          "hum_entity": null,
-          "climate_entity": "climate.hallway_room"
-        },
-        "accent": "yellow",
-        "radius": "36px 6px 6px 36px",
-        "tap": {
-          "type": "navigate",
-          "hash": "#hallway"
-        },
-        "grid_area": "hallway"
-      },
-      {
-        "type": "room_card",
         "name": "Jonathan's\nRoom",
         "icon": "mdi:alpha-j-circle-outline",
         "path": "#jonathans_room",
@@ -354,82 +335,6 @@
           "hash": "#jonathans_room"
         },
         "grid_area": "jonathan"
-      },
-      {
-        "type": "room_card",
-        "name": "Emilia's\nRoom",
-        "icon": "mdi:alpha-e-circle-outline",
-        "path": "#emilias_room",
-        "display": {
-          "kind": "temp_hum",
-          "temp_entity": "sensor.emilias_room_2733_temperature",
-          "hum_entity": "sensor.emilias_room_2733_humidity",
-          "climate_entity": null
-        },
-        "accent": "green",
-        "radius": "36px 6px 6px 36px",
-        "tap": {
-          "type": "navigate",
-          "hash": "#emilias_room"
-        },
-        "grid_area": "emilia"
-      },
-      {
-        "type": "room_card",
-        "name": "Office",
-        "icon": "mdi:desk",
-        "path": "#office",
-        "display": {
-          "kind": "temp_hum",
-          "temp_entity": "sensor.office_abfd_temperature",
-          "hum_entity": "sensor.office_abfd_humidity",
-          "climate_entity": null
-        },
-        "accent": "yellow",
-        "radius": "36px 36px 36px 36px",
-        "tap": {
-          "type": "navigate",
-          "hash": "#office"
-        },
-        "grid_area": "office"
-      },
-      {
-        "type": "room_card",
-        "name": "Main\nBath",
-        "icon": "mdi:shower-head",
-        "path": "#mainbath",
-        "display": {
-          "kind": "temp_hum",
-          "temp_entity": "sensor.main_bathroom_6eca_temperature",
-          "hum_entity": "sensor.main_bathroom_6eca_humidity",
-          "climate_entity": null
-        },
-        "accent": "red",
-        "radius": "6px 36px 36px 6px",
-        "tap": {
-          "type": "navigate",
-          "hash": "#mainbath"
-        },
-        "grid_area": "mainbath"
-      },
-      {
-        "type": "room_card",
-        "name": "Great\nRoom",
-        "icon": "mdi:seat-outline",
-        "path": "#great_room",
-        "display": {
-          "kind": "temp_hum",
-          "temp_entity": "sensor.great_room_4afa_temperature",
-          "hum_entity": "sensor.great_room_4afa_humidity",
-          "climate_entity": null
-        },
-        "accent": "blue",
-        "radius": "6px 36px 36px 6px",
-        "tap": {
-          "type": "navigate",
-          "hash": "#great_room"
-        },
-        "grid_area": "greatroom"
       },
       {
         "type": "room_card",
@@ -452,22 +357,22 @@
       },
       {
         "type": "room_card",
-        "name": "Guestroom",
-        "icon": "mdi:bed",
-        "path": "#guestroom",
+        "name": "Main\nBath",
+        "icon": "mdi:shower-head",
+        "path": "#mainbath",
         "display": {
           "kind": "temp_hum",
-          "temp_entity": "sensor.guestroom_f628_temperature",
-          "hum_entity": "sensor.guestroom_f628_humidity",
+          "temp_entity": "sensor.main_bathroom_6eca_temperature",
+          "hum_entity": "sensor.main_bathroom_6eca_humidity",
           "climate_entity": null
         },
-        "accent": "pink",
+        "accent": "red",
         "radius": "6px 36px 36px 6px",
         "tap": {
           "type": "navigate",
-          "hash": "#guestroom"
+          "hash": "#mainbath"
         },
-        "grid_area": "guestroom"
+        "grid_area": "mainbath"
       },
       {
         "type": "room_card",
@@ -487,6 +392,101 @@
           "hash": "#mainbedroom"
         },
         "grid_area": "mainbed"
+      },
+      {
+        "type": "room_card",
+        "name": "Great\nRoom",
+        "icon": "mdi:seat-outline",
+        "path": "#great_room",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.great_room_4afa_temperature",
+          "hum_entity": "sensor.great_room_4afa_humidity",
+          "climate_entity": null
+        },
+        "accent": "blue",
+        "radius": "6px 36px 36px 6px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#great_room"
+        },
+        "grid_area": "greatroom"
+      },
+      {
+        "type": "room_card",
+        "name": "Emilia's\nRoom",
+        "icon": "mdi:alpha-e-circle-outline",
+        "path": "#emilias_room",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.emilias_room_2733_temperature",
+          "hum_entity": "sensor.emilias_room_2733_humidity",
+          "climate_entity": null
+        },
+        "accent": "green",
+        "radius": "36px 6px 6px 36px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#emilias_room"
+        },
+        "grid_area": "emilia"
+      },
+      {
+        "type": "room_card",
+        "name": "Guestroom",
+        "icon": "mdi:bed",
+        "path": "#guestroom",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.guestroom_f628_temperature",
+          "hum_entity": "sensor.guestroom_f628_humidity",
+          "climate_entity": null
+        },
+        "accent": "pink",
+        "radius": "6px 36px 36px 6px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#guestroom"
+        },
+        "grid_area": "guestroom"
+      },
+      {
+        "type": "room_card",
+        "name": "Hallway",
+        "icon": "mdi:door",
+        "path": "#hallway",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": null,
+          "hum_entity": null,
+          "climate_entity": "climate.hallway_room"
+        },
+        "accent": "yellow",
+        "radius": "36px 6px 6px 36px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#hallway"
+        },
+        "grid_area": "hallway"
+      },
+      {
+        "type": "room_card",
+        "name": "Office",
+        "icon": "mdi:desk",
+        "path": "#office",
+        "display": {
+          "kind": "temp_hum",
+          "temp_entity": "sensor.office_abfd_temperature",
+          "hum_entity": "sensor.office_abfd_humidity",
+          "climate_entity": null
+        },
+        "accent": "yellow",
+        "radius": "36px 36px 36px 36px",
+        "tap": {
+          "type": "navigate",
+          "hash": "#office"
+        },
+        "grid_area": "office"
       }
     ],
     "popups": [
@@ -1026,10 +1026,16 @@
                       {
                         "name": "Netto Export",
                         "icon": "mdi:home-lightning-bolt",
-                        "entity": null,
+                        "entity": "sensor.emporia_vue_3_total_power_return",
                         "background": "var(--popupBG)",
                         "type": "sensor_big_2columns",
-                        "label": "[[[\n  const v = parseFloat(states['sensor.emporia_vue_3_total_power_return'].state || 0);\n  return v.toFixed(2) + '<span style=\"font-size:14px\"> W</span>';\n]]]\n",
+                        "label": null,
+                        "state": {
+                          "kind": "number",
+                          "entity": "sensor.emporia_vue_3_total_power_return",
+                          "decimals": 2,
+                          "suffix": " W"
+                        },
                         "tap": {
                           "type": "more_info"
                         }
@@ -1037,10 +1043,16 @@
                       {
                         "name": "Netto Import",
                         "icon": "mdi:home-lightning-bolt",
-                        "entity": null,
+                        "entity": "sensor.emporia_vue_3_total_power",
                         "background": "var(--popupBG)",
                         "type": "sensor_big",
-                        "label": "[[[\n  const v = parseFloat(states['sensor.emporia_vue_3_total_power'].state || 0);\n  return v.toFixed(2) + '<span style=\"font-size:14px\"> W</span>';\n]]]\n",
+                        "label": null,
+                        "state": {
+                          "kind": "number",
+                          "entity": "sensor.emporia_vue_3_total_power",
+                          "decimals": 2,
+                          "suffix": " W"
+                        },
                         "tap": {
                           "type": "more_info"
                         }
@@ -1080,10 +1092,16 @@
                       {
                         "name": "Production now",
                         "icon": "mdi:solar-power-variant-outline",
-                        "entity": null,
+                        "entity": "sensor.envoy_202234122877_current_power_production",
                         "background": "var(--popupBG)",
                         "type": "sensor_big",
-                        "label": "[[[\n  const v = parseFloat(states['sensor.envoy_202234122877_current_power_production'].state || 0);\n  return v.toFixed(2) + '<span style=\"font-size:14px\"> W</span>';\n]]]\n",
+                        "label": null,
+                        "state": {
+                          "kind": "number",
+                          "entity": "sensor.envoy_202234122877_current_power_production",
+                          "decimals": 2,
+                          "suffix": " W"
+                        },
                         "tap": {
                           "type": "more_info"
                         }
@@ -1137,10 +1155,16 @@
                       {
                         "name": "Power Price Now",
                         "icon": "mdi:lightning-bolt",
-                        "entity": null,
+                        "entity": "sensor.current_electrical_energy_import_cost",
                         "background": "var(--popupBG)",
                         "type": "sensor_big",
-                        "label": "[[[\n  const s = states['sensor.current_electrical_energy_import_cost']?.state;\n  const value = s === undefined || s === 'unknown' || s === 'unavailable'\n    ? 0\n    : parseFloat(s);\n  const rounded = Math.round(value * 1000) / 1000;\n  return rounded + '<span style=\"font-size:14px\"> USD/kWh</span>';\n]]]\n",
+                        "label": null,
+                        "state": {
+                          "kind": "number",
+                          "entity": "sensor.current_electrical_energy_import_cost",
+                          "decimals": 2,
+                          "suffix": " kW"
+                        },
                         "tap": {
                           "type": "more_info"
                         }
@@ -1151,7 +1175,8 @@
                         "entity": null,
                         "background": "var(--popupBG)",
                         "type": "sensor_big",
-                        "label": "[[[\n  const parseNumber = (entityId) => {\n    const value = states[entityId]?.state;\n    if (value === undefined || value === null || value === '' || value === 'unknown' || value === 'unavailable') {\n      return null;\n    }\n    const parsed = parseFloat(value);\n    return Number.isFinite(parsed) ? parsed : null;\n  };\n  const forecastedCost = parseNumber('sensor.current_bill_electric_forecasted_cost');\n  const costToDate = parseNumber('sensor.current_bill_electric_cost_to_date');\n  const forecastedUsage = parseNumber('sensor.current_bill_electric_forecasted_usage');\n  const usageToDate = parseNumber('sensor.current_bill_electric_usage_to_date');\n  const importRate = parseNumber('sensor.current_electrical_energy_import_cost');\n  let estimate = null;\n\n  if (forecastedCost !== null && forecastedCost > 0) {\n    estimate = forecastedCost;\n  } else if (forecastedUsage !== null && importRate !== null) {\n    estimate = forecastedUsage * importRate;\n  } else if (costToDate !== null && costToDate > 0) {\n    estimate = costToDate;\n  } else if (usageToDate !== null && importRate !== null) {\n    estimate = usageToDate * importRate;\n  }\n\n  if (estimate === null) {\n    return '--<span style=\"font-size:14px\"> USD</span>';\n  }\n\n  return estimate.toFixed(2) + '<span style=\"font-size:14px\"> USD</span>';\n]]]\n",
+                        "label": null,
+                        "state": null,
                         "tap": {
                           "type": "more_info"
                         }
@@ -2192,6 +2217,7 @@
                     "background": "var(--popupBG)",
                     "type": "sensor_big",
                     "label": null,
+                    "state": null,
                     "tap": {
                       "type": "more_info"
                     }
@@ -2203,6 +2229,7 @@
                     "background": "var(--popupBG)",
                     "type": "sensor_big",
                     "label": null,
+                    "state": null,
                     "tap": {
                       "type": "more_info"
                     }

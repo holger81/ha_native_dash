@@ -44,17 +44,18 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -68,6 +69,7 @@ import dev.holgerendt.hanative.data.hasLiveCameraSource
 import dev.holgerendt.hanative.model.PopupNode
 import dev.holgerendt.hanative.model.WidgetNode
 import dev.holgerendt.hanative.ui.HaViewModel
+import dev.holgerendt.hanative.ui.LoadingSpinner
 import dev.holgerendt.hanative.ui.MdiIcon
 import dev.holgerendt.hanative.ui.brightnessPct
 import dev.holgerendt.hanative.ui.format
@@ -84,8 +86,13 @@ import dev.holgerendt.hanative.ui.theme.ActiveYellow
 import dev.holgerendt.hanative.ui.theme.CardLight
 import dev.holgerendt.hanative.ui.theme.ChipDark
 import dev.holgerendt.hanative.ui.theme.ChipOnDark
-import dev.holgerendt.hanative.ui.theme.PopupCard
-import dev.holgerendt.hanative.ui.theme.PopupOverlay
+import dev.holgerendt.hanative.ui.theme.HistoryGraph
+import dev.holgerendt.hanative.ui.theme.LocalOverlay
+import dev.holgerendt.hanative.ui.theme.OverlayColors
+import dev.holgerendt.hanative.ui.theme.OverlayLightPopup
+import dev.holgerendt.hanative.ui.theme.OverlayPopup
+import dev.holgerendt.hanative.ui.theme.TabActiveEnd
+import dev.holgerendt.hanative.ui.theme.TabActiveStart
 import dev.holgerendt.hanative.ui.theme.TextDark
 import dev.holgerendt.hanative.ui.theme.TextMuted
 import dev.holgerendt.hanative.ui.theme.VacuumStart
@@ -184,18 +191,24 @@ fun WidgetItem(
             ToggleRow(widget, viewModel, modifier)
         }
         "chart", "mini_graph", "energy_usage_graph", "energy_solar_graph" -> HistoryChart(widget, viewModel, modifier)
-        "energy_date_selection" -> { /* native charts always show a rolling window */ }
+        "energy_date_selection" -> EnergyDateBar(modifier)
         "energy_sources_table", "energy_solar_consumed_gauge", "energy_self_sufficiency_gauge" ->
             EnergyStats(viewModel, modifier)
-        "markdown" -> Text(
-            text = widget.content.orEmpty().replace(Regex("[{}|]"), "").take(400),
-            color = TextDark,
-            modifier = modifier
-                .clip(CardShape)
-                .background(PopupCard)
-                .padding(16.dp),
-        )
-        "heading" -> Text(widget.name.orEmpty(), color = TextDark, fontWeight = FontWeight.Medium, modifier = modifier.padding(8.dp))
+        "markdown" -> {
+            val overlay = LocalOverlay.current
+            Text(
+                text = widget.content.orEmpty().replace(Regex("[{}|]"), "").take(400),
+                color = overlay.text,
+                modifier = modifier
+                    .clip(CardShape)
+                    .background(overlay.card)
+                    .padding(16.dp),
+            )
+        }
+        "heading" -> {
+            val overlay = LocalOverlay.current
+            Text(widget.name.orEmpty(), color = overlay.text, fontWeight = FontWeight.Medium, modifier = modifier.padding(8.dp))
+        }
         else -> if (widget.cards.isNotEmpty()) {
             WidgetTree(widget.cards, viewModel, modifier)
         } else if (widget.entity != null || widget.name != null) {
@@ -391,35 +404,31 @@ fun RoomGrid(rooms: List<WidgetNode>, viewModel: HaViewModel, modifier: Modifier
 @Composable
 fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val zone = remember { ZoneId.systemDefault() }
-    val widthDp = LocalConfiguration.current.screenWidthDp
-    val columns = when {
-        widthDp >= 1024 -> 7
-        widthDp > 768 -> widget.columnCount().coerceIn(1, 7)
-        widthDp > 580 -> 3
-        else -> 1
-    }
+    val columns = (if (widget.columns == null) 5 else widget.columnCount()).coerceIn(1, 7)
     val dayCount = widget.days ?: 10
     val subscribed by viewModel.subscribedCalendars.collectAsState()
     val sources = remember(subscribed, widget.calendars) { viewModel.plannerCalendars(widget.calendars) }
     var dayOffset by remember { mutableIntStateOf(0) }
     var events by remember { mutableStateOf(listOf<HaCalendarEvent>()) }
     var forecasts by remember { mutableStateOf(listOf<Map<String, String>>()) }
+    var loaded by remember { mutableStateOf(false) }
     val weatherEntity = widget.weatherEntity ?: "weather.forecast_tankerland_ct"
     LaunchedEffect(sources, dayOffset, viewModel.client.currentBaseUrl) {
+        loaded = false
         while (true) {
             val startDay = LocalDate.now(zone).plusDays(dayOffset.toLong())
             val rangeStart = startDay.atStartOfDay(zone).toInstant()
             val rangeEnd = startDay.plusDays(dayCount.toLong()).atStartOfDay(zone).toInstant()
-            val loaded = sources.flatMap { source ->
+            val loadedEvents = sources.flatMap { source ->
                 val entity = source.entity ?: return@flatMap emptyList()
                 runCatching { viewModel.client.calendarEvents(entity, rangeStart, rangeEnd) }
                     .getOrDefault(emptyList())
                     .map { event -> event.copy(color = source.color, icon = source.icon, entityId = entity) }
             }
             events = if (widget.combineSimilar == true) {
-                loaded.distinctBy { Triple(it.start, it.end, it.summary.lowercase()) }
+                loadedEvents.distinctBy { Triple(it.start, it.end, it.summary.lowercase()) }
             } else {
-                loaded
+                loadedEvents
             }
             if (widget.showCondition != false || widget.showTemperature == true) {
                 val raw = runCatching { viewModel.client.weatherForecast(weatherEntity) }.getOrDefault(emptyList())
@@ -432,17 +441,18 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                     )
                 }
             }
+            loaded = true
             delay(60_000)
         }
     }
     val today = LocalDate.now(zone)
     val days = (0 until dayCount).map { today.plusDays(dayOffset.toLong() + it) }
-    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (widget.showNavigation == true) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Box(
                     modifier = Modifier
@@ -453,12 +463,15 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                 ) {
                     MdiIcon("mdi:chevron-left", tint = TextDark, size = 22.dp)
                 }
-                Text(
-                    text = days.firstOrNull()?.format(DateTimeFormatter.ofPattern("MMMM")) ?: "",
-                    color = TextDark,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                Box(
+                    modifier = Modifier
+                        .size(18.dp)
+                        .clip(CircleShape)
+                        .clickable { dayOffset = 0 },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(Modifier.size(6.dp).clip(CircleShape).background(TextDark))
+                }
                 Box(
                     modifier = Modifier
                         .size(32.dp)
@@ -468,12 +481,19 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                 ) {
                     MdiIcon("mdi:chevron-right", tint = TextDark, size = 22.dp)
                 }
+                Text(
+                    text = days.firstOrNull()?.format(DateTimeFormatter.ofPattern("MMMM")) ?: "",
+                    color = TextDark,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
             }
         }
         days.chunked(columns).forEach { row ->
             Row(
                 modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 row.forEach { day ->
                     WeekPlannerDay(
@@ -485,6 +505,7 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                         showCondition = widget.showCondition != false,
                         showTemperature = widget.showTemperature == true,
                         showLowTemperature = widget.showLowTemperature == true,
+                        loading = !loaded,
                         viewModel = viewModel,
                         modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 280.dp),
                     )
@@ -504,6 +525,7 @@ private fun WeekPlannerDay(
     showCondition: Boolean,
     showTemperature: Boolean,
     showLowTemperature: Boolean,
+    loading: Boolean,
     viewModel: HaViewModel,
     modifier: Modifier = Modifier,
 ) {
@@ -511,79 +533,119 @@ private fun WeekPlannerDay(
         today -> "Today"
         today.plusDays(1) -> "Tomorrow"
         today.minusDays(1) -> "Yesterday"
-        else -> day.format(DateTimeFormatter.ofPattern("EEE"))
+        else -> day.format(DateTimeFormatter.ofPattern("EEEE"))
+    }
+    val high = forecastC(forecast?.get("temp"))
+    val low = forecastC(forecast?.get("templow"))
+    val temp = buildString {
+        if (showTemperature && !high.isNullOrBlank()) append(high)
+        if (showTemperature && showLowTemperature && !low.isNullOrBlank()) {
+            if (isNotEmpty()) append(" / ")
+            append(low)
+        }
     }
     Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (day == today) Color.White else Color.Transparent)
-            .padding(10.dp),
+        modifier = modifier.padding(vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            Column(Modifier.weight(1f)) {
-                Text(weekday, color = TextDark, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-                Text(day.dayOfMonth.toString(), color = TextDark, fontSize = 28.sp, fontWeight = FontWeight.Light)
-            }
+        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                day.dayOfMonth.toString(),
+                color = TextDark,
+                fontSize = 32.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                weekday,
+                color = TextMuted,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                modifier = Modifier.padding(top = 10.dp).weight(1f),
+            )
             if (showCondition || showTemperature) {
                 Column(horizontalAlignment = Alignment.End) {
-                    if (showCondition) {
-                        MdiIcon(weatherIcon(forecast?.get("condition"), true), tint = TextDark, size = 28.dp)
+                    if (loading && forecast == null) {
+                        LoadingSpinner(indicatorSize = 18.dp)
+                    } else {
+                        if (temp.isNotBlank()) {
+                            Text(temp, color = TextMuted, fontSize = 11.sp, maxLines = 1)
+                        }
+                        if (showCondition) {
+                            MdiIcon(
+                                weatherIcon(forecast?.get("condition"), true),
+                                tint = weatherTint(forecast?.get("condition")),
+                                size = 22.dp,
+                            )
+                        }
                     }
-                    if (showTemperature) {
-                        val high = forecastC(forecast?.get("temp"))
-                        val low = forecastC(forecast?.get("templow"))
-                        val temp = buildString {
-                            if (!high.isNullOrBlank()) append(high)
-                            if (showLowTemperature && !low.isNullOrBlank()) {
-                                if (isNotEmpty()) append(" / ")
-                                append(low)
+                }
+            }
+        }
+        when {
+            loading && events.isEmpty() -> Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(CardLight)
+                    .padding(12.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                LoadingSpinner(indicatorSize = 18.dp)
+            }
+            events.isEmpty() -> Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(CardLight)
+                    .padding(horizontal = 12.dp, vertical = 14.dp),
+            ) {
+                Text("No events", color = TextMuted, fontSize = 13.sp)
+            }
+            else -> {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    events.forEach { event ->
+                        val stripe = accentColor(event.color?.removePrefix("var(--")?.removeSuffix(")"))
+                            .takeIf { event.color != null } ?: AccentBlue
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(IntrinsicSize.Min)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(CardLight)
+                                .clickable { viewModel.openMoreInfo(event.entityId) },
+                        ) {
+                            Box(Modifier.width(3.dp).fillMaxHeight().background(stripe))
+                            Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp).weight(1f)) {
+                                Text(
+                                    text = eventTimeLabel(event),
+                                    color = TextMuted,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                )
+                                Text(
+                                    text = event.summary,
+                                    color = TextDark,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
                         }
-                        if (temp.isNotBlank()) {
-                            Text(temp, color = TextMuted, fontSize = 12.sp, maxLines = 2)
-                        }
                     }
                 }
             }
         }
-        if (events.isEmpty()) {
-            Text("No events", color = TextMuted.copy(alpha = 0.7f), fontSize = 13.sp)
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                events.forEach { event ->
-                    val stripe = accentColor(event.color?.removePrefix("var(--")?.removeSuffix(")"))
-                        .takeIf { event.color != null } ?: AccentBlue
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(IntrinsicSize.Min)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color.White)
-                            .clickable { viewModel.openMoreInfo(event.entityId) },
-                    ) {
-                        Box(Modifier.width(4.dp).fillMaxHeight().background(stripe))
-                        Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp).weight(1f)) {
-                            Text(
-                                text = eventTimeLabel(event),
-                                color = TextMuted,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                            )
-                            Text(
-                                text = event.summary,
-                                color = TextDark,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 3,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                }
-            }
-        }
+    }
+}
+
+private fun weatherTint(condition: String?): Color {
+    val value = condition.orEmpty().lowercase()
+    return when {
+        "rain" in value || "pour" in value || "snow" in value -> AccentBlue
+        "cloud" in value && "partly" !in value && "sun" !in value -> TextMuted
+        else -> Color(0xFFFFB300)
     }
 }
 
@@ -596,12 +658,15 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
     val entityId = widget.entity ?: "calendar.llm_vision_timeline"
     var events by remember { mutableStateOf(listOf<HaCalendarEvent>()) }
     var expandedId by remember { mutableStateOf<String?>(null) }
+    var loaded by remember { mutableStateOf(false) }
     LaunchedEffect(entityId, limit, hours, days, viewModel.client.currentBaseUrl) {
+        loaded = false
         while (true) {
-            val loaded = runCatching {
+            val fetched = runCatching {
                 viewModel.client.llmVisionEvents(entityId, limit, hours, days)
             }.getOrDefault(emptyList())
-            events = loaded.sortedByDescending { it.start ?: Instant.EPOCH }.take(limit)
+            events = fetched.sortedByDescending { it.start ?: Instant.EPOCH }.take(limit)
+            loaded = true
             delay(20_000)
         }
     }
@@ -612,89 +677,97 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
             fontSize = 16.sp,
             fontWeight = FontWeight.Medium,
         )
-        events.groupBy { event -> event.start?.atZone(ZoneId.systemDefault())?.toLocalDate() }.forEach { (date, dayEvents) ->
-            date?.let {
-                Text(visionDateLabel(it), color = TextDark, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        when {
+            !loaded -> Box(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                LoadingSpinner()
             }
-            dayEvents.forEach { event ->
-                val start = event.start?.atZone(ZoneId.systemDefault())
-                val cameraLabel = event.cameraName?.let { id ->
-                    states[id]?.friendlyName ?: id.substringAfter('.').replace('_', ' ')
-                }
-                val timeLabel = start?.format(DateTimeFormatter.ofPattern("HH:mm")).orEmpty()
-                val subtitle = listOfNotNull(
-                    timeLabel.takeIf { it.isNotBlank() },
-                    cameraLabel?.takeIf { it.isNotBlank() && it != "clip" },
-                ).joinToString(" • ")
-                val style = timelineStyle(event)
-                val eventKey = event.uid ?: "${event.start}-${event.summary}"
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(75.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(CardLight)
-                        .clickable {
-                            expandedId = if (expandedId == eventKey) null else eventKey
-                            viewModel.openMoreInfo(event.cameraName ?: event.entityId)
-                        }
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(style.second.copy(alpha = 0.22f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        MdiIcon(style.first, tint = style.second, size = 20.dp)
-                    }
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            event.summary,
-                            color = TextDark,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        if (subtitle.isNotBlank()) {
-                            Text(subtitle, color = TextMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                    if (!event.keyFrame.isNullOrBlank()) {
-                        TimelineSnapshot(
-                            path = event.keyFrame,
-                            viewModel = viewModel,
-                            modifier = Modifier
-                                .size(59.dp)
-                                .clip(RoundedCornerShape(12.dp)),
-                        )
-                    }
-                }
-                if (expandedId == eventKey && !event.description.isNullOrBlank()) {
-                    Text(
-                        text = event.description.orEmpty(),
-                        color = TextMuted,
-                        fontSize = 13.sp,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(CardLight)
-                            .padding(12.dp),
-                    )
-                }
-            }
-        }
-        if (events.isEmpty()) {
-            Text(
+            events.isEmpty() -> Text(
                 text = if (hours != null) "No events in the last $hours hours" else "No events",
                 color = TextMuted,
                 fontSize = 14.sp,
                 modifier = Modifier.padding(vertical = 12.dp),
             )
+            else -> events.groupBy { event ->
+                event.start?.atZone(ZoneId.systemDefault())?.toLocalDate()
+            }.forEach { (date, dayEvents) ->
+                date?.let {
+                    Text(visionDateLabel(it), color = TextDark, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                }
+                dayEvents.forEach { event ->
+                    val start = event.start?.atZone(ZoneId.systemDefault())
+                    val cameraLabel = event.cameraName?.let { id ->
+                        states[id]?.friendlyName ?: id.substringAfter('.').replace('_', ' ')
+                    }
+                    val timeLabel = start?.format(DateTimeFormatter.ofPattern("HH:mm")).orEmpty()
+                    val subtitle = listOfNotNull(
+                        timeLabel.takeIf { it.isNotBlank() },
+                        cameraLabel?.takeIf { it.isNotBlank() && it != "clip" },
+                    ).joinToString(" • ")
+                    val style = timelineStyle(event)
+                    val eventKey = event.uid ?: "${event.start}-${event.summary}"
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(75.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(CardLight)
+                            .clickable {
+                                expandedId = if (expandedId == eventKey) null else eventKey
+                                viewModel.openMoreInfo(event.cameraName ?: event.entityId)
+                            }
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(style.second.copy(alpha = 0.22f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            MdiIcon(style.first, tint = style.second, size = 20.dp)
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                event.summary,
+                                color = TextDark,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (subtitle.isNotBlank()) {
+                                Text(subtitle, color = TextMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                        if (!event.keyFrame.isNullOrBlank()) {
+                            TimelineSnapshot(
+                                path = event.keyFrame,
+                                viewModel = viewModel,
+                                modifier = Modifier
+                                    .size(59.dp)
+                                    .clip(RoundedCornerShape(12.dp)),
+                            )
+                        }
+                    }
+                    if (expandedId == eventKey && !event.description.isNullOrBlank()) {
+                        Text(
+                            text = event.description.orEmpty(),
+                            color = TextMuted,
+                            fontSize = 13.sp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(CardLight)
+                                .padding(12.dp),
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -702,16 +775,20 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
 @Composable
 private fun TimelineSnapshot(path: String?, viewModel: HaViewModel, modifier: Modifier) {
     var bytes by remember(path) { mutableStateOf<ByteArray?>(null) }
+    var loaded by remember(path) { mutableStateOf(path.isNullOrBlank()) }
     LaunchedEffect(path, viewModel.client.currentBaseUrl) {
         if (!path.isNullOrBlank()) {
-            bytes = viewModel.client.mediaBytes(path)
+            bytes = runCatching { viewModel.client.mediaBytes(path) }.getOrNull()
         }
+        loaded = true
     }
     val bitmap = remember(bytes) { bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
-    if (bitmap != null) {
-        Image(bitmap, contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop)
-    } else {
-        Box(modifier.background(CardLight.copy(alpha = 0.12f)))
+    when {
+        bitmap != null -> Image(bitmap, contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop)
+        !loaded -> Box(modifier.background(CardLight.copy(alpha = 0.12f)), contentAlignment = Alignment.Center) {
+            LoadingSpinner(indicatorSize = 16.dp)
+        }
+        else -> Box(modifier.background(CardLight.copy(alpha = 0.12f)))
     }
 }
 
@@ -777,6 +854,7 @@ private fun primitiveContent(element: JsonElement): String {
 
 @Composable
 fun LightSlider(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
+    val overlay = LocalOverlay.current
     val states by viewModel.states.collectAsState()
     val entity = states[widget.entity]
     val on = entity?.state == "on"
@@ -788,7 +866,7 @@ fun LightSlider(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
         modifier = modifier
             .height(75.dp)
             .clip(RoundedCornerShape(22.dp))
-            .background(PopupCard)
+            .background(overlay.well)
             .pointerInput(widget.entity) {
                 detectTapGestures(
                     onTap = { viewModel.onTap(widget) },
@@ -806,11 +884,12 @@ fun LightSlider(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
             modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            MdiIcon(widget.icon, tint = if (on) Color.Black else TextDark, size = 22.dp)
+            val tint = if (on) Color.Black else overlay.text
+            MdiIcon(widget.icon, tint = tint, size = 22.dp)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(widget.name.orEmpty(), color = if (on) Color.Black else TextMuted, fontSize = 14.sp)
-                Text(if (on) "${pct}%" else "Off", color = if (on) Color.Black else TextDark, fontWeight = FontWeight.Medium)
+                Text(widget.name.orEmpty(), color = if (on) Color.Black else overlay.muted, fontSize = 14.sp)
+                Text(if (on) "${pct}%" else "Off", color = if (on) Color.Black else overlay.text, fontWeight = FontWeight.Medium)
             }
         }
         Slider(
@@ -830,6 +909,7 @@ fun LightSlider(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
 
 @Composable
 fun ToggleRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
+    val overlay = LocalOverlay.current
     val states by viewModel.states.collectAsState()
     val entity = states[widget.entity]
     val on = isOn(entity?.state)
@@ -838,22 +918,23 @@ fun ToggleRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = M
         modifier = modifier
             .height(75.dp)
             .clip(RoundedCornerShape(22.dp))
-            .background(if (on) ActiveLight else PopupCard)
+            .background(if (on) ActiveLight else overlay.well)
             .widgetClicks(widget, viewModel)
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        MdiIcon(widget.icon ?: "mdi:power", tint = if (on) Color.Black else TextDark, size = 24.dp)
+        MdiIcon(widget.icon ?: "mdi:power", tint = if (on) Color.Black else overlay.text, size = 24.dp)
         Spacer(Modifier.width(12.dp))
         Column {
-            Text(widget.name ?: entity?.friendlyName.orEmpty(), color = if (on) Color.Black else TextMuted, fontSize = 14.sp)
-            Text(label, color = if (on) Color.Black else TextDark, fontWeight = FontWeight.Medium, fontSize = 16.sp)
+            Text(widget.name ?: entity?.friendlyName.orEmpty(), color = if (on) Color.Black else overlay.muted, fontSize = 14.sp)
+            Text(label, color = if (on) Color.Black else overlay.text, fontWeight = FontWeight.Medium, fontSize = 16.sp)
         }
     }
 }
 
 @Composable
 fun VentRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier, ids: List<String>) {
+    val overlay = LocalOverlay.current
     val states by viewModel.states.collectAsState()
     val open = ids.any { states[it]?.state in setOf("open", "opening") }
     val label = when {
@@ -861,11 +942,12 @@ fun VentRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier, ids:
         ids.all { states[it]?.state == "closed" } -> "Closed"
         else -> "Unknown"
     }
+    val tint = if (open) Color.Black else overlay.text
     Row(
         modifier = modifier
             .height(56.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(if (open) ActiveLight else PopupCard)
+            .background(if (open) ActiveLight else overlay.well)
             .combinedClickable(
                 onClick = {
                     if (ids.size > 1) viewModel.tiltGroup(ids) else viewModel.onTap(widget)
@@ -879,17 +961,18 @@ fun VentRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier, ids:
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        MdiIcon(widget.icon ?: "mdi:air-filter", tint = Color.Black, size = 20.dp)
+        MdiIcon(widget.icon ?: "mdi:air-filter", tint = tint, size = 20.dp)
         Spacer(Modifier.width(10.dp))
         Column {
-            Text(widget.name ?: "Vents", color = Color.Black.copy(alpha = 0.7f), fontSize = 12.sp)
-            Text(label, color = Color.Black, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+            Text(widget.name ?: "Vents", color = if (open) Color.Black.copy(alpha = 0.7f) else overlay.muted, fontSize = 12.sp)
+            Text(label, color = tint, fontWeight = FontWeight.Medium, fontSize = 13.sp)
         }
     }
 }
 
 @Composable
 fun ClimateCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
+    val overlay = LocalOverlay.current
     val states by viewModel.states.collectAsState()
     val climate = states[widget.entity]
     val current = climate?.attrDouble("current_temperature")
@@ -899,33 +982,34 @@ fun ClimateCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
     Column(
         modifier = modifier
             .clip(CardShape)
-            .background(PopupCard)
+            .background(overlay.card)
             .padding(16.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.widgetClicks(widget, viewModel),
         ) {
-            Text(widget.name ?: "Climate", color = TextDark, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-            MdiIcon(if (heating) "mdi:thermometer" else "mdi:thermostat", tint = if (heating) AccentRed else TextDark, size = 22.dp)
+            Text(widget.name ?: "Climate", color = overlay.text, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+            MdiIcon(if (heating) "mdi:thermometer" else "mdi:thermostat", tint = if (heating) AccentRed else overlay.text, size = 22.dp)
         }
-        Text("${current.format(1, "°")}  →  ${target.format(1, "°")}", color = TextDark, fontSize = 28.sp, fontWeight = FontWeight.Light)
+        Text("${current.format(1, "°")}  →  ${target.format(1, "°")}", color = overlay.text, fontSize = 28.sp, fontWeight = FontWeight.Light)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("–", color = TextDark, fontSize = 28.sp, modifier = Modifier.clickable {
+            Text("–", color = overlay.text, fontSize = 28.sp, modifier = Modifier.clickable {
                 target?.let { widget.entity?.let { id -> viewModel.setTemperature(id, it - 0.5) } }
             }.padding(8.dp))
-            Text(target.format(1, "°"), color = TextDark, fontSize = 22.sp, fontWeight = FontWeight.Medium)
-            Text("+", color = TextDark, fontSize = 28.sp, modifier = Modifier.clickable {
+            Text(target.format(1, "°"), color = overlay.text, fontSize = 22.sp, fontWeight = FontWeight.Medium)
+            Text("+", color = overlay.text, fontSize = 28.sp, modifier = Modifier.clickable {
                 target?.let { widget.entity?.let { id -> viewModel.setTemperature(id, it + 0.5) } }
             }.padding(8.dp))
             Spacer(Modifier.weight(1f))
-            Text(climate?.state?.replaceFirstChar { it.uppercase() } ?: "—", color = TextMuted)
+            Text(climate?.state?.replaceFirstChar { it.uppercase() } ?: "—", color = overlay.muted)
         }
     }
 }
 
 @Composable
 fun RoomConditions(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
+    val overlay = LocalOverlay.current
     val states by viewModel.states.collectAsState()
     var points by remember { mutableStateOf(listOf<Pair<Long, Double>>()) }
     LaunchedEffect(widget.entity) {
@@ -935,52 +1019,67 @@ fun RoomConditions(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
         modifier = modifier
             .height(140.dp)
             .clip(CardShape)
-            .background(PopupCard)
+            .background(overlay.card)
             .widgetClicks(widget, viewModel)
             .padding(20.dp),
     ) {
         Sparkline(points, Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(70.dp), AccentRed.copy(alpha = 0.7f))
-        Text(states.tempHum(widget.display), color = TextDark, fontSize = 48.sp, fontWeight = FontWeight.Light)
+        Text(states.tempHum(widget.display), color = overlay.text, fontSize = 48.sp, fontWeight = FontWeight.Light)
     }
 }
 
 @Composable
 fun SensorCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
+    val overlay = LocalOverlay.current
     val states by viewModel.states.collectAsState()
-    val entity = states[widget.entity]
-    val value = widget.label ?: entity?.state ?: "—"
+    val entityId = widget.entity ?: widget.state?.entity
+    val value = when {
+        widget.state != null -> states.formatState(widget.state)
+        entityId != null -> {
+            val raw = states[entityId]?.state?.toDoubleOrNull()
+            val unit = states[entityId]?.attrString("unit_of_measurement").orEmpty().ifBlank { "W" }
+            if (raw != null) String.format("%.2f %s", raw, unit) else states[entityId]?.state ?: "—"
+        }
+        widget.label != null && "[[[" !in widget.label -> widget.label
+        else -> "—"
+    }
     Box(
         modifier = modifier
             .height(if (widget.type == "sensor_small") 66.dp else 160.dp)
             .clip(if (widget.type == "sensor_small") RoundedCornerShape(40.dp) else CardShape)
-            .background(PopupCard)
-            .widgetClicks(widget, viewModel)
+            .background(overlay.card)
+            .widgetClicks(widget.copy(entity = entityId ?: widget.entity), viewModel)
             .padding(16.dp),
     ) {
-        MdiIcon(widget.icon, tint = TextDark, size = 22.dp, modifier = Modifier.align(Alignment.TopEnd))
-        Column(Modifier.align(Alignment.BottomStart)) {
-            Text(value, color = TextDark, fontSize = if (widget.type == "sensor_small") 16.sp else 32.sp, fontWeight = FontWeight.Light)
-            Text(widget.name ?: entity?.friendlyName.orEmpty(), color = TextMuted, fontSize = 14.sp)
+        MdiIcon(widget.icon, tint = overlay.muted, size = 22.dp, modifier = Modifier.align(Alignment.TopCenter))
+        Column(Modifier.align(Alignment.BottomCenter), horizontalAlignment = Alignment.CenterHorizontally) {
+            SensorValueText(
+                value = value,
+                color = overlay.text,
+                size = if (widget.type == "sensor_small") 16.sp else 32.sp,
+            )
+            Text(widget.name ?: states[entityId]?.friendlyName.orEmpty(), color = overlay.muted, fontSize = 14.sp)
         }
     }
 }
 
 @Composable
 fun ButtonToggle(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
+    val overlay = LocalOverlay.current
     val states by viewModel.states.collectAsState()
     val on = states[widget.entity]?.state == "on"
     Box(
         modifier = modifier
             .height(if (widget.type == "button_toggle_small") 66.dp else 160.dp)
             .clip(if (widget.type == "button_toggle_small") RoundedCornerShape(40.dp) else CardShape)
-            .background(if (on) PopupCard else ChipDark)
+            .background(if (on) ActiveYellow else overlay.card)
             .widgetClicks(widget, viewModel)
             .padding(16.dp),
     ) {
-        MdiIcon(widget.icon, tint = if (on) TextDark else ChipOnDark, size = 22.dp, modifier = Modifier.align(Alignment.TopEnd))
+        MdiIcon(widget.icon, tint = if (on) Color.Black else overlay.text, size = 22.dp, modifier = Modifier.align(Alignment.TopEnd))
         Column(Modifier.align(Alignment.BottomStart)) {
-            Text(if (on) "On" else "Off", color = if (on) TextDark else ChipOnDark, fontSize = 32.sp, fontWeight = FontWeight.Light)
-            Text(widget.name.orEmpty(), color = if (on) TextMuted else ChipOnDark.copy(alpha = 0.7f), fontSize = 14.sp)
+            Text(if (on) "On" else "Off", color = if (on) Color.Black else overlay.text, fontSize = 32.sp, fontWeight = FontWeight.Light)
+            Text(widget.name.orEmpty(), color = if (on) Color.Black.copy(alpha = 0.7f) else overlay.muted, fontSize = 14.sp)
         }
     }
 }
@@ -1003,16 +1102,19 @@ fun ActionChip(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = 
 
 @Composable
 fun VacuumButton(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
+    val overlay = LocalOverlay.current
     val states by viewModel.states.collectAsState()
     val on = isOn(states[widget.entity]?.state)
     val stop = widget.name.equals("Stop", ignoreCase = true)
     val start = widget.name.equals("Start", ignoreCase = true)
+    val accented = start || stop || on
     val background = when {
         start -> VacuumStart
         stop -> VacuumStop
         on -> ActiveYellow
-        else -> PopupCard
+        else -> overlay.card
     }
+    val tint = if (accented) Color.Black else overlay.text
     Column(
         modifier = modifier
             .height(120.dp)
@@ -1022,23 +1124,25 @@ fun VacuumButton(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier 
             .padding(16.dp),
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
-        MdiIcon(widget.icon ?: "mdi:vacuum", tint = Color.Black, size = 24.dp)
-        Text(widget.name ?: states[widget.entity]?.friendlyName.orEmpty(), color = Color.Black, fontSize = 14.sp)
+        MdiIcon(widget.icon ?: "mdi:vacuum", tint = tint, size = 24.dp)
+        Text(widget.name ?: states[widget.entity]?.friendlyName.orEmpty(), color = tint, fontSize = 14.sp)
     }
 }
 
 @Composable
 fun MediaCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
+    val overlay = LocalOverlay.current
     val states by viewModel.states.collectAsState()
     val tv = states[widget.entity]
     val apple = states[widget.companionEntity ?: "media_player.living_room_appletv"]
     val playing = apple?.state in setOf("playing", "paused")
     val on = tv?.state == "on" || playing
+    val tint = if (on) Color.Black else overlay.text
     Row(
         modifier = modifier
             .height(140.dp)
             .clip(CardShape)
-            .background(if (on) ActiveYellow else CardLight)
+            .background(if (on) ActiveYellow else overlay.card)
             .widgetClicks(widget, viewModel)
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1047,14 +1151,14 @@ fun MediaCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = M
             EntityPicture(apple.entityPicture, viewModel, Modifier.size(88.dp).clip(RoundedCornerShape(12.dp)))
             Spacer(Modifier.width(16.dp))
         } else {
-            MdiIcon(widget.icon ?: "mdi:television-classic", tint = if (on) Color.Black else TextDark, size = 48.dp)
+            MdiIcon(widget.icon ?: "mdi:television-classic", tint = tint, size = 48.dp)
             Spacer(Modifier.width(16.dp))
         }
         Column {
-            Text(apple?.attrString("app_name") ?: widget.name ?: "TV", color = if (on) Color.Black else TextDark, fontSize = 18.sp)
+            Text(apple?.attrString("app_name") ?: widget.name ?: "TV", color = tint, fontSize = 18.sp)
             Text(
                 apple?.attrString("media_title") ?: apple?.state?.replaceFirstChar { it.uppercase() } ?: "Off",
-                color = if (on) Color.Black else TextMuted,
+                color = if (on) Color.Black.copy(alpha = 0.7f) else overlay.muted,
             )
         }
     }
@@ -1062,26 +1166,32 @@ fun MediaCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = M
 
 @Composable
 fun HistoryChart(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
-    val entity = widget.entity ?: widget.graphEntity ?: widget.series.firstOrNull()?.entity
-    var points by remember { mutableStateOf(listOf<Pair<Long, Double>>()) }
-    LaunchedEffect(entity) {
-        entity?.let { points = viewModel.client.history(it, 24) }
+    val overlay = LocalOverlay.current
+    val entity = widget.entity ?: widget.graphEntity ?: widget.series.firstOrNull()?.entity ?: when (widget.type) {
+        "energy_solar_graph" -> "sensor.envoy_202234122877_current_power_production"
+        "energy_usage_graph" -> "sensor.envoy_202234122877_current_net_power_consumption"
+        else -> null
+    }
+    var points by remember(entity) { mutableStateOf(listOf<Pair<Long, Double>>()) }
+    LaunchedEffect(entity, viewModel.client.currentBaseUrl) {
+        entity?.let { points = runCatching { viewModel.client.history(it, 24) }.getOrDefault(emptyList()) }
     }
     Column(
         modifier = modifier
-            .height(180.dp)
+            .height(220.dp)
             .clip(CardShape)
-            .background(PopupCard)
+            .background(overlay.card)
             .clickable { entity?.let { viewModel.openMoreInfo(it) } }
             .padding(16.dp),
     ) {
-        Text(widget.name ?: widget.series.firstOrNull()?.name ?: "History", color = TextDark, fontSize = 14.sp)
-        Sparkline(points, Modifier.fillMaxSize(), AccentRed)
+        Text(widget.name ?: widget.series.firstOrNull()?.name ?: "kWh", color = overlay.muted, fontSize = 14.sp)
+        Sparkline(points, Modifier.fillMaxSize(), HistoryGraph)
     }
 }
 
 @Composable
 fun EnergyStats(viewModel: HaViewModel, modifier: Modifier = Modifier) {
+    val overlay = LocalOverlay.current
     val states by viewModel.states.collectAsState()
     val solar = states.number("sensor.envoy_202234122877_current_power_production", 2, " kW")
     val net = states.number("sensor.envoy_202234122877_current_net_power_consumption", 2, " kW")
@@ -1097,46 +1207,101 @@ fun EnergyStats(viewModel: HaViewModel, modifier: Modifier = Modifier) {
                 modifier = Modifier
                     .weight(1f)
                     .clip(CardShape)
-                    .background(PopupCard)
+                    .background(overlay.card)
                     .clickable { viewModel.openMoreInfo(entityId) }
                     .padding(16.dp),
             ) {
-                Text(value, color = TextDark, fontSize = 22.sp, fontWeight = FontWeight.Light)
-                Text(name, color = TextMuted, fontSize = 13.sp)
+                Text(value, color = overlay.text, fontSize = 22.sp, fontWeight = FontWeight.Light)
+                Text(name, color = overlay.muted, fontSize = 13.sp)
             }
         }
     }
 }
 
 @Composable
+fun EnergyDateBar(modifier: Modifier = Modifier) {
+    val overlay = LocalOverlay.current
+    val today = LocalDate.now().format(DateTimeFormatter.ofPattern("MMM d"))
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .background(overlay.card)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        MdiIcon("mdi:calendar", tint = overlay.text, size = 20.dp)
+        Text(today, color = overlay.text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.weight(1f))
+        Text(
+            "Now",
+            color = Color.White,
+            fontSize = 13.sp,
+            modifier = Modifier
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color(0xFF3D5A80))
+                .padding(horizontal = 14.dp, vertical = 6.dp),
+        )
+        MdiIcon("mdi:chevron-left", tint = overlay.muted, size = 22.dp)
+        MdiIcon("mdi:chevron-right", tint = overlay.muted, size = 22.dp)
+        MdiIcon("mdi:dots-vertical", tint = overlay.muted, size = 22.dp)
+    }
+}
+
+@Composable
 fun TabsWidget(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
-    var selected by remember { mutableIntStateOf(widget.defaultTab ?: 0) }
+    val overlay = LocalOverlay.current
+    val initial = (widget.defaultTab ?: 1).let { if (it > 0) it - 1 else 0 }.coerceIn(0, (widget.tabs.size - 1).coerceAtLeast(0))
+    var selected by remember { mutableIntStateOf(initial) }
+    val activeBrush = Brush.horizontalGradient(listOf(TabActiveStart, TabActiveEnd))
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(
-            modifier = Modifier
-                .clip(ChipShape)
-                .background(CardLight)
-                .padding(4.dp)
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             widget.tabs.forEachIndexed { index, tab ->
                 val active = index == selected
                 Row(
                     modifier = Modifier
                         .clip(ChipShape)
-                        .background(if (active) ActiveYellow else Color.Transparent)
+                        .then(
+                            if (active) Modifier.background(activeBrush)
+                            else Modifier.background(if (overlay.dark) overlay.card else ChipDark),
+                        )
                         .clickable { selected = index }
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    MdiIcon(tab.icon, tint = if (active) Color.Black else TextDark, size = 16.dp)
-                    Text(tab.title.orEmpty(), color = if (active) Color.Black else TextDark, fontSize = 14.sp)
+                    val tint = if (active) Color.Black else if (overlay.dark) overlay.text else ChipOnDark
+                    MdiIcon(tab.icon, tint = tint, size = 18.dp)
+                    Text(tab.title.orEmpty(), color = tint, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 }
             }
         }
         widget.tabs.getOrNull(selected)?.let { WidgetTree(it.cards, viewModel) }
+    }
+}
+
+@Composable
+private fun SensorValueText(value: String, color: Color, size: androidx.compose.ui.unit.TextUnit) {
+    val number = value.substringBeforeLast(' ', missingDelimiterValue = value)
+    val unit = value.substringAfterLast(' ', missingDelimiterValue = "")
+        .takeIf { it.isNotBlank() && it != number && it.any { ch -> ch.isLetter() } }
+    if (unit == null) {
+        Text(value, color = color, fontSize = size, fontWeight = FontWeight.Light)
+    } else {
+        Row(verticalAlignment = Alignment.Top) {
+            Text(number, color = color, fontSize = size, fontWeight = FontWeight.Light)
+            Text(
+                unit,
+                color = color.copy(alpha = 0.85f),
+                fontSize = (size.value * 0.42f).sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(start = 3.dp, top = 4.dp),
+            )
+        }
     }
 }
 
@@ -1183,47 +1348,81 @@ fun PopupScaffold(
     popup: PopupNode,
     viewModel: HaViewModel,
     scrollContent: Boolean = true,
+    overlay: OverlayColors = overlayForPopup(popup),
     content: @Composable () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(PopupOverlay)
-            .padding(20.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(accentColor(popup.accent ?: "green")),
-                contentAlignment = Alignment.Center,
-            ) {
-                MdiIcon(popup.icon, tint = Color.Black, size = 22.dp)
+    CompositionLocalProvider(LocalOverlay provides overlay) {
+        val iconBg = if (overlay.dark) overlay.well else ChipDark
+        val iconTint = if (overlay.dark) overlay.onWell else Color.White
+        val closeBg = if (overlay.dark) overlay.well else Color(0xFFDDDAD4)
+        val closeTint = if (overlay.dark) overlay.onWell else TextDark
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(10.dp)
+                .clip(RoundedCornerShape(32.dp))
+                .background(overlay.sheet)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+        ) {
+            Box(Modifier.fillMaxWidth().height(52.dp)) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(iconBg),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MdiIcon(popup.icon, tint = iconTint, size = 22.dp)
+                }
+                Text(
+                    popup.name.orEmpty(),
+                    color = overlay.text,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(closeBg)
+                        .clickable { viewModel.closePopup() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MdiIcon("mdi:close", tint = closeTint, size = 22.dp)
+                }
             }
-            Spacer(Modifier.width(10.dp))
-            Text(popup.name.orEmpty(), color = TextDark, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(CardLight)
-                    .clickable { viewModel.closePopup() },
-                contentAlignment = Alignment.Center,
-            ) {
-                MdiIcon("mdi:close", tint = TextDark, size = 22.dp)
+            Spacer(Modifier.height(12.dp))
+            val bodyModifier = if (scrollContent) {
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            } else {
+                Modifier.fillMaxSize()
             }
-        }
-        Spacer(Modifier.height(12.dp))
-        val bodyModifier = if (scrollContent) {
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-        } else {
-            Modifier.fillMaxSize()
-        }
-        Box(bodyModifier) {
-            content()
+            Box(bodyModifier) {
+                content()
+            }
         }
     }
+}
+
+private val LightPopupWidgets = setOf(
+    "light_slider",
+    "light_toggle",
+    "cover_toggle",
+    "vent_toggle",
+    "vents_group",
+    "climate",
+    "room_conditions",
+    "media_player",
+)
+
+fun overlayForPopup(popup: PopupNode): OverlayColors =
+    if (popupHasType(popup.cards, LightPopupWidgets)) OverlayLightPopup else OverlayPopup
+
+private fun popupHasType(cards: List<WidgetNode>, types: Set<String>): Boolean = cards.any { node ->
+    node.type in types || popupHasType(node.cards, types) || node.tabs.any { popupHasType(it.cards, types) }
 }
 
 private fun parseRadius(raw: String?): List<Dp> {

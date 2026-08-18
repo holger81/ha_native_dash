@@ -7,14 +7,17 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,7 +27,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -45,6 +47,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -52,11 +55,12 @@ import dev.holgerendt.hanative.data.EntityState
 import dev.holgerendt.hanative.data.HaCalendarEvent
 import dev.holgerendt.hanative.data.HistoryBucket
 import dev.holgerendt.hanative.ui.theme.ActiveYellow
-import dev.holgerendt.hanative.ui.theme.CardLight
 import dev.holgerendt.hanative.ui.theme.HistoryGraph
-import dev.holgerendt.hanative.ui.theme.TextDark
-import dev.holgerendt.hanative.ui.theme.TextMuted
+import dev.holgerendt.hanative.ui.theme.LocalOverlay
+import dev.holgerendt.hanative.ui.theme.OverlayColors
+import dev.holgerendt.hanative.ui.theme.OverlayMoreInfo
 import dev.holgerendt.hanative.ui.widgets.EntityPicture
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import java.util.Locale
 import kotlin.math.ceil
@@ -122,59 +126,89 @@ private val ToggleDomains = setOf(
 
 @Composable
 fun MoreInfoDialog(entityId: String, viewModel: HaViewModel) {
+    val overlay = OverlayMoreInfo
     val states by viewModel.states.collectAsState()
     val entity = states[entityId]
     val domain = entityId.substringBefore('.')
-    InWindowOverlay(
-        onDismiss = { viewModel.closeMoreInfo() },
-        dismissOnScrim = true,
-        scrim = Color.Black.copy(alpha = 0.5f),
-    ) {
-        Column(
-            modifier = Modifier
-                .padding(horizontal = 24.dp)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(28.dp))
-                .background(CardLight)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = {},
-                )
-                .padding(24.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+    val now = rememberNowTick()
+    CompositionLocalProvider(LocalOverlay provides overlay) {
+        InWindowOverlay(
+            onDismiss = { viewModel.closeMoreInfo() },
+            dismissOnScrim = true,
+            scrim = Color.Black.copy(alpha = 0.55f),
         ) {
-            MoreInfoTitle(entityId, entity, viewModel)
-            MoreInfoStateRow(entityId, entity, domain, viewModel)
-            MoreInfoControls(entityId, entity, domain, viewModel)
-            if (domain in HistoryDomains) {
-                MoreInfoHistory(entityId, entity, viewModel)
-            }
-            MoreInfoExtras(entityId, entity, domain, viewModel)
-            MoreInfoAttributes(entity)
-            Spacer(Modifier.height(4.dp))
-            TextButton(onClick = { viewModel.closeMoreInfo() }, modifier = Modifier.align(Alignment.End)) {
-                Text("Close", color = TextDark)
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 12.dp, vertical = 24.dp)
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.92f)
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(overlay.sheet)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {},
+                    )
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                MoreInfoChrome(entityId, entity, viewModel, overlay)
+                MoreInfoStateRow(entityId, entity, domain, viewModel, now)
+                MoreInfoControls(entityId, entity, domain, viewModel)
+                if (domain in HistoryDomains) {
+                    MoreInfoHistory(entityId, entity, viewModel, now)
+                }
+                MoreInfoExtras(entityId, entity, domain, viewModel)
+                MoreInfoAttributes(entity)
             }
         }
     }
 }
 
 @Composable
-private fun MoreInfoTitle(entityId: String, entity: EntityState?, viewModel: HaViewModel) {
+private fun MoreInfoChrome(entityId: String, entity: EntityState?, viewModel: HaViewModel, overlay: OverlayColors) {
     var deviceName by remember(entityId) { mutableStateOf<String?>(null) }
     LaunchedEffect(entityId, viewModel.client.currentBaseUrl) {
         deviceName = runCatching { viewModel.client.deviceNameFor(entityId) }.getOrNull()
     }
-    if (!deviceName.isNullOrBlank()) {
-        Text(deviceName!!, color = TextMuted, fontSize = 13.sp)
+    Box(Modifier.fillMaxWidth()) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .size(40.dp)
+                .clickable { viewModel.closeMoreInfo() },
+            contentAlignment = Alignment.Center,
+        ) {
+            MdiIcon("mdi:close", tint = overlay.text, size = 22.dp)
+        }
+        Column(
+            Modifier.align(Alignment.Center).padding(horizontal = 44.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            if (!deviceName.isNullOrBlank()) {
+                Text(deviceName!!, color = overlay.muted, fontSize = 13.sp)
+            }
+            Text(
+                entity?.friendlyName ?: entityId,
+                color = overlay.text,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Spacer(Modifier.align(Alignment.CenterEnd).size(40.dp))
     }
-    Text(entity?.friendlyName ?: entityId, color = TextDark, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
 }
 
 @Composable
-private fun MoreInfoStateRow(entityId: String, entity: EntityState?, domain: String, viewModel: HaViewModel) {
+private fun MoreInfoStateRow(
+    entityId: String,
+    entity: EntityState?,
+    domain: String,
+    viewModel: HaViewModel,
+    now: Instant,
+) {
+    val overlay = LocalOverlay.current
     val unit = entity?.attrString("unit_of_measurement").orEmpty()
     val numeric = domain in setOf("sensor", "number", "input_number") && entity?.state?.toDoubleOrNull() != null
     val display = when {
@@ -190,8 +224,8 @@ private fun MoreInfoStateRow(entityId: String, entity: EntityState?, domain: Str
                 modifier = Modifier.size(56.dp).clip(CircleShape),
             )
             Column {
-                Text(display, color = TextDark, fontSize = 22.sp, fontWeight = FontWeight.Light)
-                entity?.lastChanged?.let { Text(it.relativeToNow(), color = TextMuted, fontSize = 13.sp) }
+                Text(display, color = overlay.text, fontSize = 22.sp, fontWeight = FontWeight.Light)
+                entity?.lastChanged?.let { Text(it.relativeToNow(now), color = overlay.muted, fontSize = 13.sp) }
             }
         }
         return
@@ -203,10 +237,10 @@ private fun MoreInfoStateRow(entityId: String, entity: EntityState?, domain: Str
     ) {
         MdiIcon(moreInfoIcon(entity, domain), tint = HistoryGraph, size = 28.dp)
         Column(Modifier.weight(1f)) {
-            Text(entity?.friendlyName ?: entityId, color = TextDark, fontSize = 16.sp)
-            entity?.lastChanged?.let { Text(it.relativeToNow(), color = TextMuted, fontSize = 13.sp) }
+            Text(entity?.friendlyName ?: entityId, color = overlay.text, fontSize = 16.sp)
+            entity?.lastChanged?.let { Text(it.relativeToNow(now), color = overlay.muted, fontSize = 13.sp) }
         }
-        Text(display, color = TextDark, fontSize = 20.sp, fontWeight = FontWeight.Medium)
+        Text(display, color = overlay.text, fontSize = 20.sp, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -228,6 +262,7 @@ private fun moreInfoIcon(entity: EntityState?, domain: String): String {
 
 @Composable
 private fun MoreInfoControls(entityId: String, entity: EntityState?, domain: String, viewModel: HaViewModel) {
+    val overlay = LocalOverlay.current
     val yellow = ButtonDefaults.buttonColors(ActiveYellow)
     when (domain) {
         "light" -> {
@@ -249,13 +284,13 @@ private fun MoreInfoControls(entityId: String, entity: EntityState?, domain: Str
         "climate" -> {
             val current = entity?.attrDouble("current_temperature")
             val target = entity?.attrDouble("temperature") ?: entity?.attrDouble("target_temp_high") ?: 20.0
-            Text("Current  ${current.format(1, "°")}", color = TextMuted, fontSize = 14.sp)
+            Text("Current  ${current.format(1, "°")}", color = overlay.muted, fontSize = 14.sp)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("–", fontSize = 28.sp, color = TextDark, modifier = Modifier.clickable {
+                Text("–", fontSize = 28.sp, color = overlay.text, modifier = Modifier.clickable {
                     viewModel.setTemperature(entityId, target - 0.5)
                 }.padding(8.dp))
-                Text(target.format(1, "°"), fontSize = 28.sp, color = TextDark, fontWeight = FontWeight.Medium)
-                Text("+", fontSize = 28.sp, color = TextDark, modifier = Modifier.clickable {
+                Text(target.format(1, "°"), fontSize = 28.sp, color = overlay.text, fontWeight = FontWeight.Medium)
+                Text("+", fontSize = 28.sp, color = overlay.text, modifier = Modifier.clickable {
                     viewModel.setTemperature(entityId, target + 0.5)
                 }.padding(8.dp))
             }
@@ -290,29 +325,66 @@ private fun MoreInfoControls(entityId: String, entity: EntityState?, domain: Str
 }
 
 @Composable
-private fun MoreInfoHistory(entityId: String, entity: EntityState?, viewModel: HaViewModel) {
+private fun MoreInfoHistory(entityId: String, entity: EntityState?, viewModel: HaViewModel, now: Instant) {
+    val states by viewModel.states.collectAsState()
+    val live = states[entityId] ?: entity
     var buckets by remember(entityId) { mutableStateOf(listOf<HistoryBucket>()) }
-    LaunchedEffect(entityId, viewModel.client.currentBaseUrl, entity?.state) {
+    var loaded by remember(entityId) { mutableStateOf(false) }
+    LaunchedEffect(entityId, viewModel.client.currentBaseUrl, live?.state, live?.lastChanged) {
         while (true) {
-            buckets = runCatching { viewModel.client.historyBuckets(entityId, 24) }.getOrDefault(emptyList())
-            delay(60_000)
+            buckets = try {
+                viewModel.client.historyBuckets(entityId, 24)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                buckets
+            }
+            loaded = true
+            delay(45_000)
         }
     }
-    Spacer(Modifier.height(8.dp))
-    Text("History", color = TextDark, fontSize = 20.sp, fontWeight = FontWeight.Medium)
-    Text("5-minute aggregated", color = TextMuted, fontSize = 12.sp)
-    if (buckets.size < 2) {
-        Text("No history yet", color = TextMuted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
-        return
+    val plotted = remember(buckets, live?.state, live?.lastChanged, now) {
+        withLiveSample(buckets, live, now.toEpochMilli())
     }
-    val unit = entity?.attrString("unit_of_measurement").orEmpty()
-    HistoryGraphChart(buckets = buckets, unit = unit)
+    Spacer(Modifier.height(8.dp))
+    val overlay = LocalOverlay.current
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Text("History", color = overlay.text, fontSize = 20.sp, fontWeight = FontWeight.Medium)
+        Text(
+            "Show more",
+            color = HistoryGraph,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            textDecoration = TextDecoration.Underline,
+        )
+    }
+    Text("5-minute aggregated", color = overlay.muted, fontSize = 12.sp)
+    when {
+        !loaded -> Box(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            LoadingSpinner(color = overlay.muted)
+        }
+        plotted.size < 2 -> Text(
+            "No history yet",
+            color = overlay.muted,
+            fontSize = 13.sp,
+            modifier = Modifier.padding(vertical = 8.dp),
+        )
+        else -> HistoryGraphChart(
+            buckets = plotted,
+            unit = live?.attrString("unit_of_measurement").orEmpty(),
+            nowMs = now.toEpochMilli(),
+        )
+    }
 }
 
 @Composable
-private fun HistoryGraphChart(buckets: List<HistoryBucket>, unit: String) {
+private fun HistoryGraphChart(buckets: List<HistoryBucket>, unit: String, nowMs: Long) {
+    val overlay = LocalOverlay.current
     val textMeasurer = rememberTextMeasurer()
-    val endMs = remember { Instant.now().toEpochMilli() }
+    val endMs = nowMs
     val startMs = endMs - 24L * 60L * 60L * 1000L
     val dataMin = buckets.minOf { it.min }
     val dataMax = buckets.maxOf { it.max }
@@ -321,8 +393,8 @@ private fun HistoryGraphChart(buckets: List<HistoryBucket>, unit: String) {
     val timeFmt = DateTimeFormatter.ofPattern("h:mm a", Locale.US)
     val dateFmt = DateTimeFormatter.ofPattern("MMM d", Locale.US)
     val decimals = historyDecimals(yMin, yMax)
-    val labelStyle = TextStyle(color = TextMuted, fontSize = 10.sp)
-    val unitStyle = TextStyle(color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+    val labelStyle = TextStyle(color = overlay.muted, fontSize = 10.sp)
+    val unitStyle = TextStyle(color = overlay.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
 
     Canvas(
         modifier = Modifier
@@ -339,25 +411,25 @@ private fun HistoryGraphChart(buckets: List<HistoryBucket>, unit: String) {
         val tSpan = (endMs - startMs).toFloat().coerceAtLeast(1f)
         fun xOf(time: Long) = left + plotW * (time - startMs).toFloat() / tSpan
         fun yOf(value: Double) = top + ((yMax - value) / ySpan * plotH).toFloat()
+        val xLabelCount = 5
 
         yTicks.forEach { tick ->
             val y = yOf(tick)
             drawLine(
-                color = TextMuted.copy(alpha = if (tick == 0.0) 0.45f else 0.18f),
+                color = if (tick == 0.0) overlay.gridZero else overlay.grid,
                 start = Offset(left, y),
                 end = Offset(size.width, y),
                 strokeWidth = if (tick == 0.0) 2f else 1f,
             )
-            val label = tick.format(decimals)
-            val layout = textMeasurer.measure(label, labelStyle)
-            drawText(
-                textLayoutResult = layout,
-                topLeft = Offset((left - layout.size.width - 6.dp.toPx()).coerceAtLeast(0f), y - layout.size.height / 2f),
-            )
         }
-        if (unit.isNotBlank()) {
-            val unitLayout = textMeasurer.measure(unit, unitStyle)
-            drawText(textLayoutResult = unitLayout, topLeft = Offset(left, 0f))
+        for (i in 0..xLabelCount) {
+            val time = startMs + (endMs - startMs) * i / xLabelCount
+            drawLine(
+                color = overlay.grid,
+                start = Offset(xOf(time), top),
+                end = Offset(xOf(time), top + plotH),
+                strokeWidth = 1f,
+            )
         }
 
         val band = Path()
@@ -380,7 +452,18 @@ private fun HistoryGraphChart(buckets: List<HistoryBucket>, unit: String) {
         }
         drawPath(line, HistoryGraph, style = Stroke(width = 3.5f))
 
-        val xLabelCount = 5
+        yTicks.forEach { tick ->
+            val y = yOf(tick)
+            val layout = textMeasurer.measure(tick.format(decimals), labelStyle)
+            drawText(
+                textLayoutResult = layout,
+                topLeft = Offset((left - layout.size.width - 6.dp.toPx()).coerceAtLeast(0f), y - layout.size.height / 2f),
+            )
+        }
+        if (unit.isNotBlank()) {
+            val unitLayout = textMeasurer.measure(unit, unitStyle)
+            drawText(textLayoutResult = unitLayout, topLeft = Offset(left, 0f))
+        }
         for (i in 0..xLabelCount) {
             val time = startMs + (endMs - startMs) * i / xLabelCount
             val instant = Instant.ofEpochMilli(time).atZone(zone)
@@ -445,6 +528,7 @@ private fun niceCeil(value: Double): Double {
 
 @Composable
 private fun MoreInfoExtras(entityId: String, entity: EntityState?, domain: String, viewModel: HaViewModel) {
+    val overlay = LocalOverlay.current
     when (domain) {
         "calendar" -> CalendarEvents(entityId, viewModel)
         "camera" -> CameraSnapshot(entityId, viewModel)
@@ -458,7 +542,7 @@ private fun MoreInfoExtras(entityId: String, entity: EntityState?, domain: Strin
                     humidity?.let { "Humidity ${it.format(0, "%")}" },
                     wind?.let { "Wind ${it.format(1)} km/h" },
                 ).joinToString("   ·   "),
-                color = TextDark,
+                color = overlay.text,
                 fontSize = 14.sp,
             )
         }
@@ -468,38 +552,62 @@ private fun MoreInfoExtras(entityId: String, entity: EntityState?, domain: Strin
 
 @Composable
 private fun CalendarEvents(entityId: String, viewModel: HaViewModel) {
+    val overlay = LocalOverlay.current
     var events by remember(entityId) { mutableStateOf(listOf<HaCalendarEvent>()) }
+    var loaded by remember(entityId) { mutableStateOf(false) }
     LaunchedEffect(entityId, viewModel.client.currentBaseUrl) {
-        val now = Instant.now()
-        events = runCatching {
-            viewModel.client.calendarEvents(entityId, now, now.plus(Duration.ofDays(7)))
-        }.getOrDefault(emptyList()).take(6)
+        val start = Instant.now()
+        events = try {
+            viewModel.client.calendarEvents(entityId, start, start.plus(Duration.ofDays(7))).take(6)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            emptyList()
+        }
+        loaded = true
     }
-    if (events.isEmpty()) {
-        Text("No upcoming events", color = TextMuted, fontSize = 13.sp)
-        return
-    }
-    Text("Upcoming", color = TextMuted, fontSize = 12.sp)
-    events.forEach { event ->
-        val whenText = event.start?.atZone(ZoneId.systemDefault())?.format(DateTimeFormatter.ofPattern("EEE d MMM HH:mm"))
-            ?: event.startDate?.toString()
-            ?: ""
-        Column(Modifier.padding(vertical = 4.dp)) {
-            Text(event.summary, color = TextDark, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-            if (whenText.isNotBlank()) Text(whenText, color = TextMuted, fontSize = 12.sp)
+    when {
+        !loaded -> Box(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            LoadingSpinner(color = overlay.muted)
+        }
+        events.isEmpty() -> Text("No upcoming events", color = overlay.muted, fontSize = 13.sp)
+        else -> {
+            Text("Upcoming", color = overlay.muted, fontSize = 12.sp)
+            events.forEach { event ->
+                val whenText = event.start?.atZone(ZoneId.systemDefault())
+                    ?.format(DateTimeFormatter.ofPattern("EEE d MMM HH:mm"))
+                    ?: event.startDate?.toString()
+                    ?: ""
+                Column(Modifier.padding(vertical = 4.dp)) {
+                    Text(event.summary, color = overlay.text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    if (whenText.isNotBlank()) Text(whenText, color = overlay.muted, fontSize = 12.sp)
+                }
+            }
         }
     }
 }
 
 @Composable
 private fun CameraSnapshot(entityId: String, viewModel: HaViewModel) {
+    val overlay = LocalOverlay.current
     var bytes by remember(entityId) { mutableStateOf<ByteArray?>(null) }
+    var loaded by remember(entityId) { mutableStateOf(false) }
     LaunchedEffect(entityId, viewModel.client.currentBaseUrl) {
-        bytes = runCatching { viewModel.client.cameraSnapshot(entityId) }.getOrNull()
+        bytes = try {
+            viewModel.client.cameraSnapshot(entityId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+        loaded = true
     }
     val bitmap = remember(bytes) { bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
-    if (bitmap != null) {
-        Image(
+    when {
+        bitmap != null -> Image(
             bitmap = bitmap,
             contentDescription = entityId,
             modifier = Modifier
@@ -508,22 +616,28 @@ private fun CameraSnapshot(entityId: String, viewModel: HaViewModel) {
                 .clip(RoundedCornerShape(16.dp)),
             contentScale = ContentScale.Crop,
         )
-    } else {
-        Text("No snapshot", color = TextMuted, fontSize = 13.sp)
+        !loaded -> Box(
+            modifier = Modifier.fillMaxWidth().height(180.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            LoadingSpinner(color = overlay.muted)
+        }
+        else -> Text("No snapshot", color = overlay.muted, fontSize = 13.sp)
     }
 }
 
 @Composable
 private fun MoreInfoAttributes(entity: EntityState?) {
+    val overlay = LocalOverlay.current
     val entries = entity?.attributes.orEmpty().entries
         .filter { it.key !in SkipAttributes }
         .filter { it.value.isCompact() }
         .take(12)
     if (entries.isEmpty()) return
     Spacer(Modifier.height(4.dp))
-    Text("Attributes", color = TextMuted, fontSize = 12.sp)
+    Text("Attributes", color = overlay.muted, fontSize = 12.sp)
     entries.forEach { (key, value) ->
-        Text("$key: ${value.pretty()}", color = TextMuted, fontSize = 12.sp)
+        Text("$key: ${value.pretty()}", color = overlay.muted, fontSize = 12.sp)
     }
 }
 
@@ -539,8 +653,20 @@ private fun ActionButton(label: String, onClick: () -> Unit) {
     }
 }
 
-private fun Instant.relativeToNow(): String {
-    val seconds = Duration.between(this, Instant.now()).seconds.coerceAtLeast(0)
+@Composable
+private fun rememberNowTick(periodMs: Long = 1_000L): Instant {
+    var now by remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(periodMs) {
+        while (true) {
+            now = Instant.now()
+            delay(periodMs)
+        }
+    }
+    return now
+}
+
+private fun Instant.relativeToNow(now: Instant = Instant.now()): String {
+    val seconds = Duration.between(this, now).seconds.coerceAtLeast(0)
     return when {
         seconds < 60 -> if (seconds <= 1) "1 second ago" else "$seconds seconds ago"
         seconds < 90 -> "1 minute ago"
@@ -549,6 +675,33 @@ private fun Instant.relativeToNow(): String {
         seconds < 86400 -> "${seconds / 3600} hours ago"
         seconds < 172800 -> "1 day ago"
         else -> "${seconds / 86400} days ago"
+    }
+}
+
+private fun withLiveSample(buckets: List<HistoryBucket>, entity: EntityState?, nowMs: Long): List<HistoryBucket> {
+    val value = liveHistoryValue(entity) ?: return buckets
+    if (buckets.isEmpty()) return buckets
+    val out = ArrayList<HistoryBucket>(buckets.size + 2)
+    out.addAll(buckets)
+    val changeMs = entity?.lastChanged?.toEpochMilli()
+    val last = out.last()
+    if (changeMs != null && changeMs > last.startMs + 1000 && changeMs <= nowMs) {
+        out += HistoryBucket(changeMs, value, value, value)
+    }
+    val tail = out.last()
+    if (nowMs > tail.startMs + 1000) {
+        out += HistoryBucket(nowMs, value, value, value)
+    }
+    return out
+}
+
+private fun liveHistoryValue(entity: EntityState?): Double? {
+    val raw = entity?.state ?: return null
+    raw.toDoubleOrNull()?.let { return it }
+    return when (raw.lowercase()) {
+        "on", "home", "open", "opening", "locked", "true", "active", "cleaning", "playing" -> 1.0
+        "off", "not_home", "closed", "closing", "unlocked", "false", "idle", "docked", "paused" -> 0.0
+        else -> null
     }
 }
 

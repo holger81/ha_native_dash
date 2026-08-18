@@ -492,6 +492,34 @@ def flatten_cards(cards) -> list:
     return out
 
 
+def sensor_card(kind: str, variables: dict, tap) -> dict:
+    label = stringify(variables.get("label"))
+    entity = stringify(variables.get("entity"))
+    if not entity and isinstance(label, str):
+        match = ENTITY_RE.search(label)
+        if match:
+            entity = match.group(1)
+    clean_label = None if isinstance(label, str) and "[[[" in str(label) else label
+    suffix = ""
+    if isinstance(label, str) and re.search(r"\bW\b", label) and "kW" not in label:
+        suffix = " W"
+    elif isinstance(label, str) and "kW" in label:
+        suffix = " kW"
+    state = None
+    if entity:
+        state = {"kind": "number", "entity": entity, "decimals": 2, "suffix": suffix}
+    return {
+        "name": stringify(variables.get("name")),
+        "icon": stringify(variables.get("icon")),
+        "entity": entity,
+        "background": stringify(variables.get("background")),
+        "type": kind,
+        "label": clean_label,
+        "state": state,
+        "tap": tap or MORE_INFO,
+    }
+
+
 def convert_template(template: str, variables: dict, card: dict | None = None) -> dict:
     raw_tap = (card or {}).get("tap_action") or variables.get("tap_action")
     raw_hold = (card or {}).get("hold_action") or variables.get("hold_action")
@@ -550,23 +578,19 @@ def convert_template(template: str, variables: dict, card: dict | None = None) -
             "tap": tap or MORE_INFO,
         }
     if template == "sensor_big":
-        return {**base, "type": "sensor_big", "label": stringify(variables.get("label")), "tap": tap or MORE_INFO}
+        return sensor_card("sensor_big", variables, tap)
     if template == "sensor_big_graph":
-        return {
-            **base,
-            "type": "sensor_graph",
-            "label": stringify(variables.get("label")),
-            "graph_entity": stringify(variables.get("graph")),
-            "tap": tap or MORE_INFO,
-        }
+        widget = sensor_card("sensor_graph", variables, tap)
+        widget["graph_entity"] = stringify(variables.get("graph")) or widget.get("entity")
+        return widget
     if template == "sensor_big_percentage":
-        return {**base, "type": "sensor_percentage", "label": stringify(variables.get("label")), "tap": tap or MORE_INFO}
+        return sensor_card("sensor_percentage", variables, tap)
     if template == "sensor_small":
-        return {**base, "type": "sensor_small", "label": stringify(variables.get("label")), "tap": tap or MORE_INFO}
+        return sensor_card("sensor_small", variables, tap)
     if template == "sensor_big_static":
-        return {**base, "type": "sensor_big", "label": stringify(variables.get("label")), "tap": tap or MORE_INFO}
+        return sensor_card("sensor_big", variables, tap)
     if template == "sensor_big_2columns":
-        return {**base, "type": "sensor_big_2columns", "label": stringify(variables.get("label")), "tap": tap or MORE_INFO}
+        return sensor_card("sensor_big_2columns", variables, tap)
     if template == "button_toggle":
         return {**base, "type": "button_toggle", "tap": tap or {"type": "toggle"}, "hold": hold}
     if template == "button_toggle_small":
