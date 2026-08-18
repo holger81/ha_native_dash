@@ -38,6 +38,20 @@ class CredentialsStore(context: Context) {
             persist()
         }
 
+    /** HA entity to turn off/on when the wall sleeps (e.g. switch.uc_display). Empty = app overlay only. */
+    var displayOffEntity: String = readPref(KEY_DISPLAY_OFF)
+        set(value) {
+            field = normalizeEntityId(value)
+            persist()
+        }
+
+    /** HA number/light entity for panel brightness (e.g. number.uc_display_brightness). */
+    var displayBrightnessEntity: String = readPref(KEY_DISPLAY_BRIGHTNESS)
+        set(value) {
+            field = normalizeEntityId(value)
+            persist()
+        }
+
     private var pinValue: String = readPref(KEY_PIN)
 
     var managementPin: String
@@ -59,6 +73,12 @@ class CredentialsStore(context: Context) {
         }
         migrateFromLegacy()
         restoreFromDocuments()
+        if (!prefs.contains(KEY_DISPLAY_OFF) && displayOffEntity.isBlank()) {
+            displayOffEntity = DEFAULT_DISPLAY_OFF_ENTITY
+        }
+        if (!prefs.contains(KEY_DISPLAY_BRIGHTNESS) && displayBrightnessEntity.isBlank()) {
+            displayBrightnessEntity = DEFAULT_DISPLAY_BRIGHTNESS_ENTITY
+        }
         persistEnabled = true
         if (isConfigured || managementPin.isNotBlank()) persist()
     }
@@ -113,6 +133,8 @@ class CredentialsStore(context: Context) {
             .putString(KEY_TOKEN, token)
             .putString(KEY_PIN, managementPin)
             .putInt(KEY_TIMEOUT_SECONDS, screenTimeoutSeconds)
+            .putString(KEY_DISPLAY_OFF, displayOffEntity)
+            .putString(KEY_DISPLAY_BRIGHTNESS, displayBrightnessEntity)
             .apply()
         persistRecoverable()
     }
@@ -144,6 +166,8 @@ class CredentialsStore(context: Context) {
             put("ha_token", accessToken)
             put("management_pin", pin)
             put("screen_timeout_seconds", screenTimeoutSeconds)
+            if (displayOffEntity.isNotBlank()) put("display_off_entity", displayOffEntity)
+            if (displayBrightnessEntity.isNotBlank()) put("display_brightness_entity", displayBrightnessEntity)
             val calendars = subscribedCalendars ?: readCalendarList(existing)
             if (calendars != null) {
                 put("subscribed_calendars", JSONArray(calendars))
@@ -197,6 +221,12 @@ class CredentialsStore(context: Context) {
                         .coerceIn(0, 180) * 60
             }
         }
+        if (!prefs.contains(KEY_DISPLAY_OFF) && obj.has("display_off_entity")) {
+            displayOffEntity = normalizeEntityId(obj.optString("display_off_entity"))
+        }
+        if (!prefs.contains(KEY_DISPLAY_BRIGHTNESS) && obj.has("display_brightness_entity")) {
+            displayBrightnessEntity = normalizeEntityId(obj.optString("display_brightness_entity"))
+        }
         val pin = obj.optString("management_pin").trim()
         val takeRestoredPin = PIN_PATTERN.matches(pin) &&
             (managementPin.isBlank() || (overwriteGeneratedPin && generatedThisProcess))
@@ -242,7 +272,23 @@ class CredentialsStore(context: Context) {
         private const val KEY_PIN = "management_pin"
         private const val KEY_TIMEOUT_SECONDS = "screen_timeout_seconds"
         private const val KEY_TIMEOUT_MINUTES_LEGACY = "screen_timeout_minutes"
+        private const val KEY_DISPLAY_OFF = "display_off_entity"
+        private const val KEY_DISPLAY_BRIGHTNESS = "display_brightness_entity"
         const val MAX_SCREEN_TIMEOUT_SECONDS = 86_400
+        const val DEFAULT_DISPLAY_OFF_ENTITY = "switch.uc_display"
+        const val DEFAULT_DISPLAY_BRIGHTNESS_ENTITY = "number.uc_display_brightness"
+        private val ENTITY_ID = Regex("^[a-z_]+\\.[a-z0-9_]+$")
+
+        fun normalizeEntityId(raw: String): String = raw.trim().lowercase()
+
+        fun entityIdError(raw: String): String? {
+            val id = normalizeEntityId(raw)
+            return when {
+                id.isEmpty() -> null
+                !ENTITY_ID.matches(id) -> "Use domain.name (e.g. switch.uc_display)"
+                else -> null
+            }
+        }
 
         val PIN_PATTERN = Regex("^\\d{4,8}$")
 

@@ -43,6 +43,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.math.roundToInt
 import kotlinx.coroutines.suspendCancellableCoroutine
 
 data class EntityState(
@@ -379,6 +380,33 @@ class HaClient {
             listOf(entityId),
             mapOf("temperature" to JsonPrimitive(temperature)),
         )
+    }
+
+    suspend fun setEntityPower(entityId: String, on: Boolean) {
+        val domain = entityId.substringBefore('.')
+        when (domain) {
+            "script" -> callService("script", "turn_on", listOf(entityId))
+            "button" -> callService("button", "press", listOf(entityId))
+            else -> callService(domain, if (on) "turn_on" else "turn_off", listOf(entityId))
+        }
+    }
+
+    suspend fun setNumericEntityValue(entityId: String, value: Double) {
+        when (entityId.substringBefore('.')) {
+            "number" -> callService(
+                "number",
+                "set_value",
+                listOf(entityId),
+                mapOf("value" to JsonPrimitive(value)),
+            )
+            "light" -> setLightBrightness(entityId, value.roundToInt().coerceIn(0, 100))
+            else -> callService(
+                entityId.substringBefore('.'),
+                "set_value",
+                listOf(entityId),
+                mapOf("value" to JsonPrimitive(value)),
+            )
+        }
     }
 
     suspend fun tiltVents(entityIds: List<String>, open: Boolean) {

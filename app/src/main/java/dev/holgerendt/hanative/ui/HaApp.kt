@@ -20,6 +20,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,6 +36,8 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -43,6 +48,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -67,12 +73,14 @@ import androidx.compose.ui.unit.sp
 import dev.holgerendt.hanative.data.ConnectionState
 import dev.holgerendt.hanative.data.QrCodes
 import dev.holgerendt.hanative.model.PopupNode
+import dev.holgerendt.hanative.ui.brightnessPct
 import dev.holgerendt.hanative.ui.theme.ActiveYellow
 import dev.holgerendt.hanative.ui.theme.CardLight
 import dev.holgerendt.hanative.ui.theme.ChipDark
 import dev.holgerendt.hanative.ui.theme.ChipOnDark
 import dev.holgerendt.hanative.ui.theme.DockBackground
 import dev.holgerendt.hanative.ui.theme.LocalOverlay
+import dev.holgerendt.hanative.ui.theme.OverlayColors
 import dev.holgerendt.hanative.ui.theme.ScreenBackground
 import dev.holgerendt.hanative.ui.theme.TextDark
 import dev.holgerendt.hanative.ui.theme.TextMuted
@@ -374,21 +382,14 @@ private fun SettingsPopup(popup: PopupNode, viewModel: HaViewModel) {
 private fun ScreenTimeoutCard(viewModel: HaViewModel) {
     val overlay = LocalOverlay.current
     val ui by viewModel.ui.collectAsState()
+    val states by viewModel.states.collectAsState()
     var secondsText by remember { mutableStateOf(ui.screenTimeoutSeconds.toString()) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var message by remember { mutableStateOf<String?>(null) }
+    var timeoutError by remember { mutableStateOf<String?>(null) }
+    var timeoutMessage by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(ui.screenTimeoutSeconds) {
         secondsText = ui.screenTimeoutSeconds.toString()
     }
-    val fieldColors = OutlinedTextFieldDefaults.colors(
-        focusedTextColor = overlay.text,
-        unfocusedTextColor = overlay.text,
-        focusedBorderColor = overlay.text,
-        unfocusedBorderColor = overlay.muted,
-        focusedLabelColor = overlay.text,
-        unfocusedLabelColor = overlay.muted,
-        cursorColor = overlay.text,
-    )
+    val fieldColors = settingsFieldColors(overlay)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -397,9 +398,9 @@ private fun ScreenTimeoutCard(viewModel: HaViewModel) {
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("Screen timeout", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Text("Screen & display", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
         Text(
-            "Idle seconds before the panel goes black and dims the backlight. Use 0 to keep the screen on. Tap to wake; doorbell and other wall commands wake it too.",
+            "Idle timeout blanks the panel locally. Optionally control UniFi / HA display entities for hardware off and brightness.",
             color = overlay.muted,
             fontSize = 14.sp,
         )
@@ -408,33 +409,33 @@ private fun ScreenTimeoutCard(viewModel: HaViewModel) {
             onValueChange = { value ->
                 if (value.length <= 6 && value.all { it.isDigit() }) {
                     secondsText = value
-                    error = null
-                    message = null
+                    timeoutError = null
+                    timeoutMessage = null
                 }
             },
-            label = { Text("Seconds") },
+            label = { Text("Idle timeout (seconds, 0 = always on)") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
             colors = fieldColors,
         )
-        error?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 13.sp) }
-        message?.let { Text(it, color = Color(0xFFC5E1A5), fontSize = 13.sp) }
+        timeoutError?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 13.sp) }
+        timeoutMessage?.let { Text(it, color = Color(0xFFC5E1A5), fontSize = 13.sp) }
         Button(
             onClick = {
                 val parsed = secondsText.toIntOrNull()
                 if (parsed == null) {
-                    message = null
-                    error = "Enter a number of seconds"
+                    timeoutMessage = null
+                    timeoutError = "Enter a number of seconds"
                     return@Button
                 }
                 val result = viewModel.setScreenTimeoutSeconds(parsed)
                 if (result.isSuccess) {
-                    error = null
-                    message = if (parsed == 0) "Screen stays on" else "Timeout saved"
+                    timeoutError = null
+                    timeoutMessage = if (parsed == 0) "Screen stays on" else "Timeout saved"
                 } else {
-                    message = null
-                    error = result.exceptionOrNull()?.message ?: "Could not save timeout"
+                    timeoutMessage = null
+                    timeoutError = result.exceptionOrNull()?.message ?: "Could not save timeout"
                 }
             },
             enabled = secondsText.isNotBlank(),
@@ -442,6 +443,171 @@ private fun ScreenTimeoutCard(viewModel: HaViewModel) {
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("Save timeout", color = Color.Black)
+        }
+        EntityPickerField(
+            label = "Turn off display entity",
+            hint = "switch.uc_display turns the panel off on sleep and on when waking",
+            selected = ui.displayOffEntity,
+            choices = viewModel.displayOffEntityChoices(),
+            noneLabel = "None (app overlay only)",
+            fieldColors = fieldColors,
+            onSelect = viewModel::setDisplayOffEntity,
+        )
+        EntityPickerField(
+            label = "Brightness entity",
+            hint = "number.uc_display_brightness controls panel backlight",
+            selected = ui.displayBrightnessEntity,
+            choices = viewModel.displayBrightnessEntityChoices(),
+            noneLabel = "None",
+            fieldColors = fieldColors,
+            onSelect = viewModel::setDisplayBrightnessEntity,
+        )
+        val brightnessEntity = ui.displayBrightnessEntity.takeIf { it.isNotBlank() }
+        if (brightnessEntity != null) {
+            val entity = states[brightnessEntity]
+            val domain = brightnessEntity.substringBefore('.')
+            val (min, max, live) = when (domain) {
+                "light" -> Triple(0f, 100f, states.brightnessPct(brightnessEntity).toFloat())
+                else -> Triple(
+                    entity?.attrDouble("min")?.toFloat() ?: 0f,
+                    entity?.attrDouble("max")?.toFloat() ?: 255f,
+                    entity?.state?.toFloatOrNull() ?: 0f,
+                )
+            }
+            var slider by remember(brightnessEntity, live) { mutableFloatStateOf(live.coerceIn(min, max)) }
+            LaunchedEffect(live, min, max) {
+                slider = live.coerceIn(min, max)
+            }
+            Text(
+                "Brightness ${slider.toInt()}",
+                color = overlay.text,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            Slider(
+                value = slider,
+                onValueChange = { slider = it },
+                onValueChangeFinished = { viewModel.setDisplayBrightness(slider) },
+                valueRange = min..max,
+                colors = SliderDefaults.colors(thumbColor = ActiveYellow, activeTrackColor = ActiveYellow),
+            )
+        }
+    }
+}
+
+@Composable
+private fun settingsFieldColors(overlay: OverlayColors) =
+    OutlinedTextFieldDefaults.colors(
+        focusedTextColor = overlay.text,
+        unfocusedTextColor = overlay.text,
+        focusedBorderColor = overlay.text,
+        unfocusedBorderColor = overlay.muted,
+        focusedLabelColor = overlay.text,
+        unfocusedLabelColor = overlay.muted,
+        cursorColor = overlay.text,
+    )
+
+@Composable
+private fun EntityPickerField(
+    label: String,
+    hint: String,
+    selected: String,
+    choices: List<Pair<String, String>>,
+    noneLabel: String,
+    fieldColors: androidx.compose.material3.TextFieldColors,
+    onSelect: (String) -> Result<Unit>,
+) {
+    val overlay = LocalOverlay.current
+    var filter by remember { mutableStateOf("") }
+    var custom by remember { mutableStateOf(selected) }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(selected) {
+        custom = selected
+    }
+    val filtered = remember(filter, choices) {
+        val q = filter.trim().lowercase()
+        if (q.isEmpty()) choices
+        else choices.filter { (id, name) ->
+            id.lowercase().contains(q) || name.lowercase().contains(q)
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label, color = overlay.text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+        Text(hint, color = overlay.muted, fontSize = 13.sp)
+        Text(
+            text = selected.takeIf { it.isNotBlank() } ?: noneLabel,
+            color = if (selected.isBlank()) overlay.muted else overlay.text,
+            fontSize = 14.sp,
+        )
+        OutlinedTextField(
+            value = filter,
+            onValueChange = {
+                filter = it
+                error = null
+            },
+            label = { Text("Search entities") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = fieldColors,
+        )
+        OutlinedTextField(
+            value = custom,
+            onValueChange = {
+                custom = it.lowercase()
+                error = null
+            },
+            label = { Text("Or type entity_id") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = fieldColors,
+        )
+        error?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 13.sp) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = {
+                val result = onSelect("")
+                error = result.exceptionOrNull()?.message
+                if (result.isSuccess) filter = ""
+            }) {
+                Text(noneLabel, color = overlay.text)
+            }
+            TextButton(
+                onClick = {
+                    val result = onSelect(custom)
+                    error = result.exceptionOrNull()?.message
+                    if (result.isSuccess) filter = ""
+                },
+                enabled = custom.isNotBlank(),
+            ) {
+                Text("Save entity", color = overlay.text)
+            }
+        }
+        if (filtered.isNotEmpty()) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 180.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(overlay.well),
+            ) {
+                items(filtered, key = { it.first }) { (id, name) ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                val result = onSelect(id)
+                                error = result.exceptionOrNull()?.message
+                                if (result.isSuccess) {
+                                    custom = id
+                                    filter = ""
+                                }
+                            }
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                    ) {
+                        Text(name, color = overlay.text, fontSize = 14.sp)
+                        Text(id, color = overlay.muted, fontSize = 12.sp)
+                    }
+                }
+            }
         }
     }
 }

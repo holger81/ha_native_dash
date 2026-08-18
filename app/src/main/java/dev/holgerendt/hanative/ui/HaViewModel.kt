@@ -56,6 +56,8 @@ data class UiState(
     val managementError: String? = null,
     val screenTimeoutSeconds: Int = 0,
     val screenAsleep: Boolean = false,
+    val displayOffEntity: String = "",
+    val displayBrightnessEntity: String = "",
 )
 
 class HaViewModel(
@@ -105,6 +107,8 @@ class HaViewModel(
             remotePin = currentPin,
             pinIsUserSet = credentials.managementPin.isNotBlank(),
             screenTimeoutSeconds = credentials.screenTimeoutSeconds,
+            displayOffEntity = credentials.displayOffEntity,
+            displayBrightnessEntity = credentials.displayBrightnessEntity,
         )
         startManagementServer()
         client.onKioskEvent = { params ->
@@ -334,15 +338,62 @@ class HaViewModel(
 
     fun sleepScreen() {
         if (_ui.value.screenAsleep || _ui.value.showSetup) return
+        _ui.value.displayOffEntity.takeIf { it.isNotBlank() }?.let { entityId ->
+            viewModelScope.launch { runCatching { client.setEntityPower(entityId, on = false) } }
+        }
         _ui.value = _ui.value.copy(screenAsleep = true, drawerOpen = false)
     }
 
     fun wakeScreen() {
         lastActivityMs = System.currentTimeMillis()
+        _ui.value.displayOffEntity.takeIf { it.isNotBlank() }?.let { entityId ->
+            viewModelScope.launch { runCatching { client.setEntityPower(entityId, on = true) } }
+        }
         if (_ui.value.screenAsleep) {
             _ui.value = _ui.value.copy(screenAsleep = false)
         }
     }
+
+    fun setDisplayOffEntity(entityId: String): Result<Unit> {
+        CredentialsStore.entityIdError(entityId)?.let {
+            return Result.failure(IllegalArgumentException(it))
+        }
+        val normalized = CredentialsStore.normalizeEntityId(entityId)
+        credentials.displayOffEntity = normalized
+        _ui.value = _ui.value.copy(displayOffEntity = normalized)
+        return Result.success(Unit)
+    }
+
+    fun setDisplayBrightnessEntity(entityId: String): Result<Unit> {
+        CredentialsStore.entityIdError(entityId)?.let {
+            return Result.failure(IllegalArgumentException(it))
+        }
+        val normalized = CredentialsStore.normalizeEntityId(entityId)
+        credentials.displayBrightnessEntity = normalized
+        _ui.value = _ui.value.copy(displayBrightnessEntity = normalized)
+        return Result.success(Unit)
+    }
+
+    fun setDisplayBrightness(value: Float) {
+        val entityId = _ui.value.displayBrightnessEntity.takeIf { it.isNotBlank() } ?: return
+        viewModelScope.launch {
+            runCatching { client.setNumericEntityValue(entityId, value.toDouble()) }
+        }
+    }
+
+    fun displayOffEntityChoices(): List<Pair<String, String>> =
+        entityChoices(setOf("switch", "input_boolean", "script", "button", "light"))
+
+    fun displayBrightnessEntityChoices(): List<Pair<String, String>> =
+        entityChoices(setOf("number", "light"))
+
+    private fun entityChoices(domains: Set<String>): List<Pair<String, String>> =
+        states.value.entries
+            .asSequence()
+            .filter { it.key.substringBefore('.') in domains }
+            .map { it.key to it.value.friendlyName }
+            .sortedBy { it.second.lowercase() }
+            .toList()
 
     private fun prefetchWallCameras() {
         viewModelScope.launch {
