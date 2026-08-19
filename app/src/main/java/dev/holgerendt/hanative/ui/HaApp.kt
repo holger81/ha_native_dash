@@ -89,6 +89,7 @@ import dev.holgerendt.hanative.ui.widgets.VisionTimeline
 import dev.holgerendt.hanative.ui.widgets.WeatherHeader
 import dev.holgerendt.hanative.ui.widgets.WeekPlanner
 import dev.holgerendt.hanative.ui.widgets.WidgetTree
+import dev.holgerendt.hanative.ui.widgets.overlayForPopup
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -160,13 +161,13 @@ fun HaApp(viewModel: HaViewModel) {
             }
         }
         ui.moreInfoId?.let { MoreInfoDialog(it, viewModel) }
-        ui.mediaPath?.let { path ->
+        ui.mediaPreview?.let { preview ->
             InWindowOverlay(
                 onDismiss = { viewModel.closeMedia() },
                 dismissOnScrim = true,
                 scrim = Color.Black.copy(alpha = 0.7f),
             ) {
-                MediaImageDialog(path, viewModel, onDismiss = { viewModel.closeMedia() })
+                MediaImageDialog(preview, viewModel, onDismiss = { viewModel.closeMedia() })
             }
         }
         var consumeWakeGesture by remember { mutableStateOf(false) }
@@ -355,7 +356,8 @@ private fun DockButton(item: DockItem, onClick: () -> Unit, modifier: Modifier =
 @Composable
 private fun PopupHost(popup: PopupNode, viewModel: HaViewModel) {
     val cameraPopup = popup.hash == "#camerafront_view"
-    PopupScaffold(popup, viewModel, scrollContent = !cameraPopup) {
+    val compact = !overlayForPopup(popup).dark && !cameraPopup
+    PopupScaffold(popup, viewModel, scrollContent = !cameraPopup, compact = compact) {
         when (popup.hash) {
             "#weather" -> WeatherPopup(viewModel)
             "#camerafront_view" -> CameraPopup(popup, viewModel)

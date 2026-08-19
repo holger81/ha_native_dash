@@ -66,9 +66,9 @@ val OverlayPopup = OverlayColors(
     dark = true,
 )
 
-/** Frosted light sheet for room / light popups (circular dark icon, light close). */
+/** Frosted light sheet for room / light popups (circular dark icon, light close). 80% opaque. */
 val OverlayLightPopup = OverlayColors(
-    sheet = Color(0xF2EBE9E4),
+    sheet = Color(0xCCEBE9E4),
     card = Color.White,
     text = TextDark,
     muted = TextMuted,

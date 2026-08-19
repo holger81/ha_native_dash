@@ -4,10 +4,16 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import dev.holgerendt.hanative.model.PopupNode
 import dev.holgerendt.hanative.model.WidgetNode
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -249,3 +255,70 @@ object CameraStreams {
 }
 
 fun WidgetNode.hasLiveCameraSource(): Boolean = CameraStreams.fromWidget(this).hasLiveSource()
+
+class LiveCameraHub(
+    private val client: HaClient,
+    private val scope: CoroutineScope,
+) {
+    private val frames = ConcurrentHashMap<String, MutableStateFlow<Bitmap?>>()
+    private val jobs = ConcurrentHashMap<String, Job>()
+    private val targets = ConcurrentHashMap<String, CameraTarget>()
+    @Volatile private var paused = false
+
+    fun frame(target: CameraTarget): StateFlow<Bitmap?> {
+        val key = key(target)
+        val flow = frames.getOrPut(key) { MutableStateFlow(null) }
+        if (target.hasLiveSource()) {
+            targets[key] = target
+            if (!paused) startOne(target)
+        }
+        return flow
+    }
+
+    fun ensureRunning(next: Collection<CameraTarget>) {
+        next.filter { it.hasLiveSource() }.forEach { target ->
+            val key = key(target)
+            targets[key] = target
+            frames.getOrPut(key) { MutableStateFlow(null) }
+            if (!paused) startOne(target)
+        }
+    }
+
+    fun pause() {
+        paused = true
+        jobs.values.forEach { it.cancel() }
+        jobs.clear()
+    }
+
+    fun resume() {
+        paused = false
+        targets.values.forEach { startOne(it) }
+    }
+
+    private fun startOne(target: CameraTarget) {
+        val key = key(target)
+        if (jobs[key]?.isActive == true) return
+        jobs[key] = scope.launch(Dispatchers.IO) {
+            while (isActive && !paused) {
+                val candidates = runCatching { CameraStreams.resolve(client, target) }.getOrDefault(emptyList())
+                val mjpeg = candidates.firstOrNull { it.kind == StreamKind.MJPEG }
+                if (mjpeg == null) {
+                    delay(5_000)
+                    continue
+                }
+                runCatching {
+                    CameraStreams.readMjpeg(mjpeg.url, mjpeg.headers) { bitmap ->
+                        frames[key]?.value = bitmap
+                    }
+                }
+                if (!isActive || paused) break
+                delay(2_000)
+            }
+        }
+    }
+
+    private fun key(target: CameraTarget): String =
+        target.entityId?.takeIf { it.isNotBlank() }
+            ?: target.streamName?.takeIf { it.isNotBlank() }
+            ?: target.name.orEmpty()
+}

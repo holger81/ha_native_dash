@@ -1,6 +1,7 @@
 package dev.holgerendt.hanative.ui
 
 import android.app.Application
+import android.graphics.Bitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -16,6 +17,7 @@ import dev.holgerendt.hanative.data.KioskCommand
 import dev.holgerendt.hanative.data.KioskCommands
 import dev.holgerendt.hanative.data.KioskSnapshot
 import dev.holgerendt.hanative.data.LanAddresses
+import dev.holgerendt.hanative.data.LiveCameraHub
 import dev.holgerendt.hanative.data.ManagementServer
 import dev.holgerendt.hanative.data.ManagementTls
 import dev.holgerendt.hanative.model.ActionNode
@@ -49,7 +51,7 @@ data class UiState(
     val drawerOpen: Boolean = false,
     val popupHash: String? = null,
     val moreInfoId: String? = null,
-    val mediaPath: String? = null,
+    val mediaPreview: MediaPreview? = null,
     val setupError: String? = null,
     val setupBusy: Boolean = false,
     val remotePin: String = "",
@@ -60,6 +62,13 @@ data class UiState(
     val screenAsleep: Boolean = false,
     val displayOffEntity: String = "",
     val displayBrightnessEntity: String = "",
+)
+
+data class MediaPreview(
+    val path: String,
+    val title: String? = null,
+    val subtitle: String? = null,
+    val description: String? = null,
 )
 
 class HaViewModel(
@@ -91,6 +100,7 @@ class HaViewModel(
 
     private var lastActivityMs = System.currentTimeMillis()
     private var sleptAtMs = 0L
+    private val liveCameras = LiveCameraHub(client, viewModelScope)
 
     private val extraCalendarColors = listOf(
         "var(--blue)",
@@ -128,6 +138,7 @@ class HaViewModel(
     }
 
     override fun onCleared() {
+        liveCameras.pause()
         managementServer?.stop()
         super.onCleared()
     }
@@ -294,14 +305,24 @@ class HaViewModel(
         _ui.value = _ui.value.copy(moreInfoId = null)
     }
 
-    fun openMedia(path: String?) {
+    fun openMedia(
+        path: String?,
+        title: String? = null,
+        subtitle: String? = null,
+        description: String? = null,
+    ) {
         if (path.isNullOrBlank()) return
-        _ui.value = _ui.value.copy(mediaPath = path)
+        _ui.value = _ui.value.copy(
+            mediaPreview = MediaPreview(path, title, subtitle, description),
+        )
     }
 
     fun closeMedia() {
-        _ui.value = _ui.value.copy(mediaPath = null)
+        _ui.value = _ui.value.copy(mediaPreview = null)
     }
+
+    fun liveCameraFrame(widget: WidgetNode): StateFlow<Bitmap?> =
+        liveCameras.frame(CameraStreams.fromWidget(widget))
 
     fun applyKioskCommand(command: KioskCommand) {
         when (command) {
@@ -363,6 +384,7 @@ class HaViewModel(
             }
         }
         _ui.value = _ui.value.copy(screenAsleep = true, drawerOpen = false)
+        liveCameras.pause()
     }
 
     fun wakeScreen(commandDisplay: Boolean = true) {
@@ -375,6 +397,7 @@ class HaViewModel(
         if (_ui.value.screenAsleep) {
             _ui.value = _ui.value.copy(screenAsleep = false)
         }
+        liveCameras.resume()
     }
 
     fun setDisplayOffEntity(entityId: String): Result<Unit> {
@@ -427,6 +450,7 @@ class HaViewModel(
                 ?: CameraStreams.wallPanelCameras
             runCatching { client.prefetchCameraSnapshots(widgets.mapNotNull { it.entity }) }
             runCatching { CameraStreams.prefetch(client, widgets.map { CameraStreams.fromWidget(it) }) }
+            liveCameras.ensureRunning(widgets.map { CameraStreams.fromWidget(it) })
         }
     }
 

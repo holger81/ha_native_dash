@@ -18,6 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -160,63 +161,26 @@ private fun LiveCameraSurface(
     viewModel: HaViewModel,
     modifier: Modifier,
 ) {
-    val target = remember(widget) { CameraStreams.fromWidget(widget) }
-    var candidates by remember(widget) { mutableStateOf<List<StreamCandidate>>(emptyList()) }
-    var index by remember(widget) { mutableIntStateOf(0) }
-    var error by remember(widget) { mutableStateOf<String?>(null) }
+    val hotFrame by viewModel.liveCameraFrame(widget).collectAsState()
     var poster by remember(widget) { mutableStateOf<ImageBitmap?>(null) }
-    val entityState = widget.entity?.let { viewModel.entity(it)?.state }
-
     LaunchedEffect(widget.entity) {
         widget.entity?.let { entity ->
             val bytes = runCatching { viewModel.client.cameraSnapshot(entity) }.getOrNull()
             poster = bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
         }
     }
-    LaunchedEffect(target) {
-        error = null
-        index = 0
-        candidates = CameraStreams.resolve(viewModel.client, target)
-        if (candidates.isEmpty()) {
-            error = when (entityState) {
-                "unavailable", "unknown" -> "Camera unavailable"
-                else -> "No live stream for ${target.entityId ?: target.name ?: "camera"}"
-            }
-        }
-    }
-
-    val current = candidates.getOrNull(index)
+    val liveImage = remember(hotFrame) { hotFrame?.asImageBitmap() }
+    val shown = liveImage ?: poster
     Box(modifier, contentAlignment = Alignment.Center) {
-        val still = poster
-        if (still != null && current == null) {
+        if (shown != null) {
             Image(
-                bitmap = still,
+                bitmap = shown,
                 contentDescription = widget.name,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
             )
-        }
-        when {
-            current?.kind == StreamKind.MJPEG -> MjpegPlayer(
-                candidate = current,
-                modifier = Modifier.fillMaxSize(),
-                onError = { message ->
-                    if (index + 1 < candidates.size) index += 1 else error = message
-                },
-            )
-            current != null -> HlsPlayer(
-                candidate = current,
-                muted = target.muted,
-                modifier = Modifier.fillMaxSize(),
-                onError = { message ->
-                    if (index + 1 < candidates.size) index += 1 else error = message
-                },
-            )
-            error != null -> CameraErrorText(error!!)
-            else -> LoadingSpinner(color = ChipOnDark)
-        }
-        if (error != null && current != null) {
-            CameraErrorText(error!!)
+        } else {
+            LoadingSpinner(color = ChipOnDark)
         }
         CameraTitle(widget.name)
     }

@@ -30,6 +30,8 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -61,6 +63,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
@@ -75,6 +78,7 @@ import dev.holgerendt.hanative.model.WidgetNode
 import dev.holgerendt.hanative.ui.HaViewModel
 import dev.holgerendt.hanative.ui.LoadingSpinner
 import dev.holgerendt.hanative.ui.MdiIcon
+import dev.holgerendt.hanative.ui.MediaPreview
 import dev.holgerendt.hanative.ui.brightnessPct
 import dev.holgerendt.hanative.ui.format
 import dev.holgerendt.hanative.ui.formatState
@@ -738,7 +742,12 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
                             .clickable {
                                 val frame = event.keyFrame
                                 if (!frame.isNullOrBlank()) {
-                                    viewModel.openMedia(frame)
+                                    viewModel.openMedia(
+                                        path = frame,
+                                        title = event.summary,
+                                        subtitle = subtitle.takeIf { it.isNotBlank() },
+                                        description = event.description,
+                                    )
                                 } else {
                                     val camera = event.cameraName?.takeIf { '.' in it }
                                     viewModel.openMoreInfo(camera ?: event.entityId)
@@ -820,18 +829,18 @@ private fun TimelineSnapshot(path: String?, viewModel: HaViewModel, modifier: Mo
 }
 
 @Composable
-fun MediaImageDialog(path: String, viewModel: HaViewModel, onDismiss: () -> Unit) {
-    var bytes by remember(path) { mutableStateOf<ByteArray?>(null) }
-    var loaded by remember(path) { mutableStateOf(false) }
-    LaunchedEffect(path, viewModel.client.currentBaseUrl) {
-        bytes = runCatching { viewModel.client.mediaBytes(path) }.getOrNull()
-            ?: runCatching { viewModel.client.cameraSnapshot(path) }.getOrNull()
+fun MediaImageDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: () -> Unit) {
+    var bytes by remember(preview.path) { mutableStateOf<ByteArray?>(null) }
+    var loaded by remember(preview.path) { mutableStateOf(false) }
+    LaunchedEffect(preview.path, viewModel.client.currentBaseUrl) {
+        bytes = runCatching { viewModel.client.mediaBytes(preview.path) }.getOrNull()
+            ?: runCatching { viewModel.client.cameraSnapshot(preview.path) }.getOrNull()
         loaded = true
     }
     val bitmap = remember(bytes) { bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
     Box(
         modifier = Modifier
-            .fillMaxWidth()
+            .fillMaxWidth(0.82f)
             .padding(16.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -843,9 +852,11 @@ fun MediaImageDialog(path: String, viewModel: HaViewModel, onDismiss: () -> Unit
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(24.dp))
-                .background(Color(0xFF1C1C1C))
-                .padding(16.dp),
+                .background(Color(0xCC1C1C1C))
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Box(Modifier.fillMaxWidth()) {
                 Box(
@@ -858,10 +869,27 @@ fun MediaImageDialog(path: String, viewModel: HaViewModel, onDismiss: () -> Unit
                     MdiIcon("mdi:close", tint = Color.White, size = 22.dp)
                 }
             }
+            if (!preview.title.isNullOrBlank()) {
+                Text(
+                    preview.title,
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            if (!preview.subtitle.isNullOrBlank()) {
+                Text(
+                    preview.subtitle,
+                    color = ChipOnDark,
+                    fontSize = 13.sp,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
             when {
                 bitmap != null -> Image(
                     bitmap = bitmap,
-                    contentDescription = null,
+                    contentDescription = preview.title,
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(16.dp)),
@@ -874,6 +902,14 @@ fun MediaImageDialog(path: String, viewModel: HaViewModel, onDismiss: () -> Unit
                     LoadingSpinner(color = ChipOnDark)
                 }
                 else -> Text("Can't load image", color = ChipOnDark, fontSize = 14.sp)
+            }
+            if (!preview.description.isNullOrBlank()) {
+                Text(
+                    text = preview.description,
+                    color = Color(0xFFDDDAD4),
+                    fontSize = 14.sp,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                )
             }
         }
     }
@@ -1475,6 +1511,7 @@ fun PopupScaffold(
     popup: PopupNode,
     viewModel: HaViewModel,
     scrollContent: Boolean = true,
+    compact: Boolean = false,
     overlay: OverlayColors = overlayForPopup(popup),
     content: @Composable () -> Unit,
 ) {
@@ -1483,12 +1520,26 @@ fun PopupScaffold(
         val iconTint = if (overlay.dark) overlay.onWell else Color.White
         val closeBg = if (overlay.dark) overlay.well else Color(0xFFDDDAD4)
         val closeTint = if (overlay.dark) overlay.onWell else TextDark
+        val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.78f).dp
+        val sheet = if (compact) {
+            Modifier
+                .fillMaxWidth(0.68f)
+                .widthIn(max = 600.dp)
+                .wrapContentHeight()
+                .heightIn(max = maxHeight)
+                .padding(horizontal = 8.dp, vertical = 12.dp)
+        } else {
+            Modifier.fillMaxSize().padding(4.dp)
+        }
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(4.dp)
+            modifier = sheet
                 .clip(RoundedCornerShape(20.dp))
                 .background(overlay.sheet)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                )
                 .padding(horizontal = 8.dp, vertical = 6.dp),
         ) {
             Box(Modifier.fillMaxWidth().height(40.dp)) {
@@ -1523,11 +1574,21 @@ fun PopupScaffold(
             }
             Spacer(Modifier.height(6.dp))
             if (scrollContent) {
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                Column(
+                    Modifier
+                        .then(
+                            if (compact) Modifier.heightIn(max = maxHeight - 52.dp)
+                            else Modifier.weight(1f),
+                        )
+                        .verticalScroll(rememberScrollState()),
+                ) {
                     content()
                 }
             } else {
-                Box(Modifier.weight(1f).fillMaxWidth()) {
+                Box(
+                    if (compact) Modifier.wrapContentHeight().fillMaxWidth()
+                    else Modifier.weight(1f).fillMaxWidth(),
+                ) {
                     content()
                 }
             }
