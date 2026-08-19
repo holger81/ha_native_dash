@@ -1020,12 +1020,13 @@ fun SetupScreen(viewModel: HaViewModel) {
 @Composable
 fun LoadingSpinner(
     modifier: Modifier = Modifier,
-    color: Color = TextMuted,
+    color: Color = TextDark,
     indicatorSize: Dp = 22.dp,
 ) {
     CircularProgressIndicator(
         modifier = modifier.size(indicatorSize),
         color = color,
-        strokeWidth = 2.dp,
+        trackColor = color.copy(alpha = 0.18f),
+        strokeWidth = 3.dp,
     )
 }

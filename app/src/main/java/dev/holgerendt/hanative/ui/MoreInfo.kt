@@ -59,6 +59,7 @@ import dev.holgerendt.hanative.ui.theme.LocalOverlay
 import dev.holgerendt.hanative.ui.theme.OverlayColors
 import dev.holgerendt.hanative.ui.theme.OverlayLightPopup
 import dev.holgerendt.hanative.ui.widgets.popupSheetModifier
+import dev.holgerendt.hanative.ui.widgets.PopupSheetKind
 import dev.holgerendt.hanative.ui.widgets.EntityPicture
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -138,7 +139,7 @@ fun MoreInfoDialog(entityId: String, viewModel: HaViewModel) {
             scrim = Color.Black.copy(alpha = 0.55f),
         ) {
             Column(
-                modifier = popupSheetModifier()
+                modifier = popupSheetModifier(PopupSheetKind.Detail)
                     .padding(horizontal = 8.dp, vertical = 12.dp)
                     .clip(RoundedCornerShape(20.dp))
                     .background(overlay.sheet)

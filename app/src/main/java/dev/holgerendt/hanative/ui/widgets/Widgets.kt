@@ -424,6 +424,10 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
     LaunchedEffect(sources, dayOffset, viewModel.client.currentBaseUrl) {
         loaded = false
         while (true) {
+            if (viewModel.client.currentBaseUrl.isBlank()) {
+                delay(400)
+                continue
+            }
             val startDay = LocalDate.now(zone).plusDays(dayOffset.toLong())
             val rangeStart = startDay.atStartOfDay(zone).toInstant()
             val rangeEnd = startDay.plusDays(dayCount.toLong()).atStartOfDay(zone).toInstant()
@@ -474,27 +478,36 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                 )
             }
         }
-        days.chunked(columns).forEach { row ->
-            Row(
-                modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+        if (!loaded) {
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 36.dp),
+                contentAlignment = Alignment.Center,
             ) {
-                row.forEach { day ->
-                    WeekPlannerDay(
-                        day = day,
-                        today = today,
-                        events = events.filter { eventOverlapsDay(it, day, zone) }
-                            .sortedWith(compareBy<HaCalendarEvent> { !it.allDay }.thenBy { it.start ?: Instant.EPOCH }),
-                        forecast = forecasts.firstOrNull { it["datetime"].orEmpty().startsWith(day.toString()) },
-                        showCondition = widget.showCondition != false,
-                        showTemperature = widget.showTemperature == true,
-                        showLowTemperature = widget.showLowTemperature == true,
-                        loading = !loaded,
-                        viewModel = viewModel,
-                        modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 280.dp),
-                    )
+                LoadingSpinner(color = TextDark, indicatorSize = 36.dp)
+            }
+        } else {
+            days.chunked(columns).forEach { row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    row.forEach { day ->
+                        WeekPlannerDay(
+                            day = day,
+                            today = today,
+                            events = events.filter { eventOverlapsDay(it, day, zone) }
+                                .sortedWith(compareBy<HaCalendarEvent> { !it.allDay }.thenBy { it.start ?: Instant.EPOCH }),
+                            forecast = forecasts.firstOrNull { it["datetime"].orEmpty().startsWith(day.toString()) },
+                            showCondition = widget.showCondition != false,
+                            showTemperature = widget.showTemperature == true,
+                            showLowTemperature = widget.showLowTemperature == true,
+                            loading = false,
+                            viewModel = viewModel,
+                            modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 280.dp),
+                        )
+                    }
+                    repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
                 }
-                repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }
@@ -685,6 +698,10 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
     LaunchedEffect(entityId, limit, hours, days, viewModel.client.currentBaseUrl) {
         loaded = false
         while (true) {
+            if (viewModel.client.currentBaseUrl.isBlank()) {
+                delay(400)
+                continue
+            }
             val fetched = runCatching {
                 viewModel.client.llmVisionEvents(entityId, limit, hours, days)
             }.getOrDefault(emptyList())
@@ -701,11 +718,21 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
             fontWeight = FontWeight.Medium,
         )
         when {
-            !loaded -> Box(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                LoadingSpinner()
+            !loaded -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                repeat(4) { index ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(75.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(CardLight),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (index == 1) {
+                            LoadingSpinner(color = TextDark, indicatorSize = 28.dp)
+                        }
+                    }
+                }
             }
             events.isEmpty() -> Text(
                 text = if (hours != null) "No events in the last $hours hours" else "No events",
@@ -837,7 +864,7 @@ fun MediaImageDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
     }
     val bitmap = remember(bytes) { bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
     Box(
-        modifier = popupSheetModifier()
+        modifier = popupSheetModifier(PopupSheetKind.Detail)
             .padding(horizontal = 8.dp, vertical = 12.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -1506,12 +1533,28 @@ fun EntityPicture(path: String?, viewModel: HaViewModel, modifier: Modifier) {
 }
 
 @Composable
-fun popupSheetModifier(): Modifier {
-    val height = LocalConfiguration.current.screenHeightDp.dp * 0.72f
+fun popupSheetModifier(kind: PopupSheetKind = PopupSheetKind.Room): Modifier {
+    val screenH = LocalConfiguration.current.screenHeightDp.dp
+    val (widthFraction, maxWidth, heightFraction) = when (kind) {
+        PopupSheetKind.Room -> Triple(0.68f, 600.dp, 0.62f)
+        PopupSheetKind.Camera -> Triple(0.86f, 920.dp, 0.78f)
+        PopupSheetKind.Utility -> Triple(0.74f, 720.dp, 0.70f)
+        PopupSheetKind.Settings -> Triple(0.72f, 640.dp, 0.78f)
+        PopupSheetKind.Detail -> Triple(0.68f, 600.dp, 0.70f)
+    }
     return Modifier
-        .fillMaxWidth(0.72f)
-        .widthIn(max = 640.dp)
-        .height(height)
+        .fillMaxWidth(widthFraction)
+        .widthIn(max = maxWidth)
+        .height(screenH * heightFraction)
+}
+
+enum class PopupSheetKind { Room, Camera, Utility, Settings, Detail }
+
+fun popupSheetKind(hash: String?): PopupSheetKind = when (hash) {
+    "#camerafront_view" -> PopupSheetKind.Camera
+    "#settings" -> PopupSheetKind.Settings
+    "#weather", "#power", "#bil", "#staubinator" -> PopupSheetKind.Utility
+    else -> PopupSheetKind.Room
 }
 
 @Composable
@@ -1528,7 +1571,7 @@ fun PopupScaffold(
         val closeBg = Color(0xFFDDDAD4)
         val closeTint = TextDark
         Column(
-            modifier = popupSheetModifier()
+            modifier = popupSheetModifier(popupSheetKind(popup.hash))
                 .padding(horizontal = 8.dp, vertical = 12.dp)
                 .clip(RoundedCornerShape(20.dp))
                 .background(overlay.sheet)
