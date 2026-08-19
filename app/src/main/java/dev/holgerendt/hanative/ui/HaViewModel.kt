@@ -16,6 +16,8 @@ import dev.holgerendt.hanative.data.KioskCommand
 import dev.holgerendt.hanative.data.KioskCommands
 import dev.holgerendt.hanative.data.KioskSnapshot
 import dev.holgerendt.hanative.data.LanAddresses
+import dev.holgerendt.hanative.data.LiveCameraHub
+import dev.holgerendt.hanative.data.LiveCameraView
 import dev.holgerendt.hanative.data.ManagementServer
 import dev.holgerendt.hanative.data.ManagementTls
 import dev.holgerendt.hanative.model.ActionNode
@@ -98,6 +100,7 @@ class HaViewModel(
 
     private var lastActivityMs = System.currentTimeMillis()
     private var sleptAtMs = 0L
+    private val liveCameras = LiveCameraHub(app, client, viewModelScope)
 
     private val extraCalendarColors = listOf(
         "var(--blue)",
@@ -135,8 +138,20 @@ class HaViewModel(
     }
 
     override fun onCleared() {
+        liveCameras.release()
         managementServer?.stop()
         super.onCleared()
+    }
+
+    fun liveCamera(widget: WidgetNode): StateFlow<LiveCameraView> =
+        liveCameras.view(CameraStreams.fromWidget(widget))
+
+    fun attachCameraSurface(widget: WidgetNode) {
+        liveCameras.markAttached(CameraStreams.fromWidget(widget))
+    }
+
+    fun restoreCameraSurface(widget: WidgetNode) {
+        liveCameras.restorePlaceholder(CameraStreams.fromWidget(widget))
     }
 
     private fun newPin(): String = "%06d".format(random.nextInt(1_000_000))
@@ -377,6 +392,7 @@ class HaViewModel(
             }
         }
         _ui.value = _ui.value.copy(screenAsleep = true, drawerOpen = false)
+        liveCameras.pause()
     }
 
     fun wakeScreen(commandDisplay: Boolean = true) {
@@ -388,6 +404,7 @@ class HaViewModel(
         }
         if (_ui.value.screenAsleep) {
             _ui.value = _ui.value.copy(screenAsleep = false)
+            liveCameras.resume()
         }
     }
 
@@ -440,7 +457,7 @@ class HaViewModel(
                 ?.let { popup -> CameraStreams.camerasForPopup(popup) }
                 ?: CameraStreams.wallPanelCameras
             runCatching { client.prefetchCameraSnapshots(widgets.mapNotNull { it.entity }) }
-            runCatching { CameraStreams.prefetch(client, widgets.map { CameraStreams.fromWidget(it) }) }
+            liveCameras.ensureRunning(widgets.map { CameraStreams.fromWidget(it) })
         }
     }
 
