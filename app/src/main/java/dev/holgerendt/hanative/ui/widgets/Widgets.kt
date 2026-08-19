@@ -49,6 +49,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -865,7 +866,7 @@ fun MediaImageDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
     val bitmap = remember(bytes) { bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
     Box(
         modifier = popupSheetModifier(PopupSheetKind.Detail)
-            .padding(horizontal = 8.dp, vertical = 12.dp)
+            .padding(horizontal = 10.dp, vertical = 8.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -875,50 +876,25 @@ fun MediaImageDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .clip(RoundedCornerShape(20.dp))
-                .background(OverlayLightPopup.sheet)
-                .padding(horizontal = 12.dp, vertical = 10.dp)
+                .popupSheetLook(OverlayLightPopup.sheet)
+                .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp)
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Box(Modifier.fillMaxWidth().height(40.dp)) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFFDDDAD4))
-                        .clickable(onClick = onDismiss),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    MdiIcon("mdi:close", tint = TextDark, size = 20.dp)
-                }
-            }
-            if (!preview.title.isNullOrBlank()) {
-                Text(
-                    preview.title,
-                    color = OverlayLightPopup.text,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            if (!preview.subtitle.isNullOrBlank()) {
-                Text(
-                    preview.subtitle,
-                    color = OverlayLightPopup.muted,
-                    fontSize = 13.sp,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
+            PopupSheetChrome(
+                title = preview.title.orEmpty().ifBlank { "Photo" },
+                onClose = onDismiss,
+                overlay = OverlayLightPopup,
+                subtitle = preview.subtitle,
+            )
             when {
                 bitmap != null -> Image(
                     bitmap = bitmap,
                     contentDescription = preview.title,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp)),
+                        .clip(RoundedCornerShape(22.dp)),
                     contentScale = ContentScale.Fit,
                 )
                 !loaded -> Box(
@@ -1532,6 +1508,26 @@ fun EntityPicture(path: String?, viewModel: HaViewModel, modifier: Modifier) {
     }
 }
 
+val PopupSheetShape = RoundedCornerShape(32.dp)
+
+fun Modifier.popupSheetLook(sheet: Color): Modifier =
+    shadow(
+        elevation = 28.dp,
+        shape = PopupSheetShape,
+        clip = false,
+        ambientColor = Color(0x4D000000),
+        spotColor = Color(0x33000000),
+    )
+        .clip(PopupSheetShape)
+        .background(sheet)
+        .background(
+            Brush.verticalGradient(
+                0f to Color.White.copy(alpha = 0.42f),
+                0.2f to Color.Transparent,
+            ),
+        )
+        .border(1.dp, Color.White.copy(alpha = 0.7f), PopupSheetShape)
+
 @Composable
 fun popupSheetModifier(kind: PopupSheetKind = PopupSheetKind.Room): Modifier {
     val screenH = LocalConfiguration.current.screenHeightDp.dp
@@ -1546,6 +1542,84 @@ fun popupSheetModifier(kind: PopupSheetKind = PopupSheetKind.Room): Modifier {
         .fillMaxWidth(widthFraction)
         .widthIn(max = maxWidth)
         .height(screenH * heightFraction)
+}
+
+@Composable
+fun PopupSheetChrome(
+    title: String,
+    onClose: () -> Unit,
+    overlay: OverlayColors,
+    icon: String? = null,
+    accent: String? = null,
+    subtitle: String? = null,
+) {
+    val accentTint = accentColor(accent)
+    Column(Modifier.fillMaxWidth()) {
+        Box(
+            modifier = Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 10.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(36.dp)
+                    .height(4.dp)
+                    .clip(CircleShape)
+                    .background(overlay.text.copy(alpha = 0.18f)),
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (!icon.isNullOrBlank()) {
+                val iconBg = if (accent.isNullOrBlank()) {
+                    overlay.text.copy(alpha = 0.08f)
+                } else {
+                    accentTint.copy(alpha = 0.22f)
+                }
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(iconBg),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MdiIcon(icon, tint = TextDark, size = 22.dp)
+                }
+                Spacer(Modifier.width(12.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    color = overlay.text,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        text = subtitle,
+                        color = overlay.muted,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(overlay.text.copy(alpha = 0.08f))
+                    .clickable(onClick = onClose),
+                contentAlignment = Alignment.Center,
+            ) {
+                MdiIcon("mdi:close", tint = overlay.text, size = 20.dp)
+            }
+        }
+    }
 }
 
 enum class PopupSheetKind { Room, Camera, Utility, Settings, Detail }
@@ -1566,53 +1640,25 @@ fun PopupScaffold(
     content: @Composable () -> Unit,
 ) {
     CompositionLocalProvider(LocalOverlay provides overlay) {
-        val iconBg = ChipDark
-        val iconTint = Color.White
-        val closeBg = Color(0xFFDDDAD4)
-        val closeTint = TextDark
         Column(
             modifier = popupSheetModifier(popupSheetKind(popup.hash))
-                .padding(horizontal = 8.dp, vertical = 12.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .background(overlay.sheet)
+                .padding(horizontal = 10.dp, vertical = 8.dp)
+                .popupSheetLook(overlay.sheet)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                     onClick = {},
                 )
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp),
         ) {
-            Box(Modifier.fillMaxWidth().height(40.dp)) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(iconBg),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    MdiIcon(popup.icon, tint = iconTint, size = 20.dp)
-                }
-                Text(
-                    popup.name.orEmpty(),
-                    color = overlay.text,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.align(Alignment.Center),
-                )
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(closeBg)
-                        .clickable { viewModel.closePopup() },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    MdiIcon("mdi:close", tint = closeTint, size = 20.dp)
-                }
-            }
-            Spacer(Modifier.height(6.dp))
+            PopupSheetChrome(
+                title = popup.name.orEmpty(),
+                onClose = { viewModel.closePopup() },
+                overlay = overlay,
+                icon = popup.icon,
+                accent = popup.accent,
+            )
+            Spacer(Modifier.height(12.dp))
             if (scrollContent) {
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                     content()

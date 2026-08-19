@@ -75,6 +75,7 @@ import dev.holgerendt.hanative.ui.theme.ChipOnDark
 import dev.holgerendt.hanative.ui.theme.DockBackground
 import dev.holgerendt.hanative.ui.theme.LocalOverlay
 import dev.holgerendt.hanative.ui.theme.OverlayColors
+import dev.holgerendt.hanative.ui.theme.PopupScrim
 import dev.holgerendt.hanative.ui.theme.ScreenBackground
 import dev.holgerendt.hanative.ui.theme.TextDark
 import dev.holgerendt.hanative.ui.theme.TextMuted
@@ -154,7 +155,7 @@ fun HaApp(viewModel: HaViewModel) {
         if (popup != null) {
             InWindowOverlay(
                 onDismiss = { viewModel.closePopup() },
-                scrim = Color.Black.copy(alpha = 0.55f),
+                scrim = PopupScrim,
             ) {
                 PopupHost(popup, viewModel)
             }
@@ -164,7 +165,7 @@ fun HaApp(viewModel: HaViewModel) {
             InWindowOverlay(
                 onDismiss = { viewModel.closeMedia() },
                 dismissOnScrim = true,
-                scrim = Color.Black.copy(alpha = 0.7f),
+                scrim = PopupScrim.copy(alpha = 0.72f),
             ) {
                 MediaImageDialog(preview, viewModel, onDismiss = { viewModel.closeMedia() })
             }

@@ -46,14 +46,14 @@ import dev.holgerendt.hanative.ui.theme.ChipDark
 import dev.holgerendt.hanative.ui.theme.ChipOnDark
 import kotlinx.coroutines.delay
 
-private val CameraShape = RoundedCornerShape(28.dp)
+private val CameraShape = RoundedCornerShape(24.dp)
 
 @Composable
 fun CameraPopup(popup: PopupNode, viewModel: HaViewModel) {
     val cameras = remember(popup) { CameraStreams.camerasForPopup(popup) }
     Column(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         cameras.forEachIndexed { index, widget ->
             CameraCard(

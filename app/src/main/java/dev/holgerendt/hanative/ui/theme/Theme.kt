@@ -66,18 +66,20 @@ val OverlayPopup = OverlayColors(
     dark = true,
 )
 
-/** Frosted light sheet for popups (circular dark icon, light close). 90% opaque. */
+/** Warm glass sheet for popups. */
 val OverlayLightPopup = OverlayColors(
-    sheet = Color(0xE6EBE9E4),
-    card = Color.White,
+    sheet = Color(0xF7FFFCFA),
+    card = Color(0xFFFFFFFF),
     text = TextDark,
     muted = TextMuted,
-    well = CardLight,
+    well = Color(0xFFF3F0EA),
     onWell = TextDark,
     grid = HistoryGrid,
     gridZero = HistoryGridZero,
     dark = false,
 )
+
+val PopupScrim = Color(0x8C161310)
 
 val OverlayMoreInfo = OverlayPopup.copy(sheet = Color(0xFF1C1C1C), card = Color(0xFF252525))
 

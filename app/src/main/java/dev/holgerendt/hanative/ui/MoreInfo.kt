@@ -46,7 +46,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -58,7 +57,10 @@ import dev.holgerendt.hanative.ui.theme.HistoryGraph
 import dev.holgerendt.hanative.ui.theme.LocalOverlay
 import dev.holgerendt.hanative.ui.theme.OverlayColors
 import dev.holgerendt.hanative.ui.theme.OverlayLightPopup
+import dev.holgerendt.hanative.ui.theme.PopupScrim
 import dev.holgerendt.hanative.ui.widgets.popupSheetModifier
+import dev.holgerendt.hanative.ui.widgets.popupSheetLook
+import dev.holgerendt.hanative.ui.widgets.PopupSheetChrome
 import dev.holgerendt.hanative.ui.widgets.PopupSheetKind
 import dev.holgerendt.hanative.ui.widgets.EntityPicture
 import kotlinx.coroutines.CancellationException
@@ -136,21 +138,20 @@ fun MoreInfoDialog(entityId: String, viewModel: HaViewModel) {
         InWindowOverlay(
             onDismiss = { viewModel.closeMoreInfo() },
             dismissOnScrim = true,
-            scrim = Color.Black.copy(alpha = 0.55f),
+            scrim = PopupScrim,
         ) {
             Column(
                 modifier = popupSheetModifier(PopupSheetKind.Detail)
-                    .padding(horizontal = 8.dp, vertical = 12.dp)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(overlay.sheet)
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                    .popupSheetLook(overlay.sheet)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
                         onClick = {},
                     )
-                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                    .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 MoreInfoChrome(entityId, entity, viewModel, overlay)
                 MoreInfoStateRow(entityId, entity, domain, viewModel, now)
@@ -171,32 +172,12 @@ private fun MoreInfoChrome(entityId: String, entity: EntityState?, viewModel: Ha
     LaunchedEffect(entityId, viewModel.client.currentBaseUrl) {
         deviceName = runCatching { viewModel.client.deviceNameFor(entityId) }.getOrNull()
     }
-    Box(Modifier.fillMaxWidth()) {
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .size(40.dp)
-                .clickable { viewModel.closeMoreInfo() },
-            contentAlignment = Alignment.Center,
-        ) {
-            MdiIcon("mdi:close", tint = overlay.text, size = 22.dp)
-        }
-        Column(
-            Modifier.align(Alignment.Center).padding(horizontal = 44.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            if (!deviceName.isNullOrBlank()) {
-                Text(deviceName!!, color = overlay.muted, fontSize = 13.sp)
-            }
-            Text(
-                entity?.friendlyName ?: entityId,
-                color = overlay.text,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-        Spacer(Modifier.align(Alignment.CenterEnd).size(40.dp))
-    }
+    PopupSheetChrome(
+        title = entity?.friendlyName ?: entityId,
+        onClose = { viewModel.closeMoreInfo() },
+        overlay = overlay,
+        subtitle = deviceName,
+    )
 }
 
 @Composable
@@ -347,16 +328,7 @@ private fun MoreInfoHistory(entityId: String, entity: EntityState?, viewModel: H
     }
     Spacer(Modifier.height(8.dp))
     val overlay = LocalOverlay.current
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text("History", color = overlay.text, fontSize = 20.sp, fontWeight = FontWeight.Medium)
-        Text(
-            "Show more",
-            color = HistoryGraph,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-            textDecoration = TextDecoration.Underline,
-        )
-    }
+    Text("History", color = overlay.text, fontSize = 20.sp, fontWeight = FontWeight.Medium)
     Text("5-minute aggregated", color = overlay.muted, fontSize = 12.sp)
     when {
         !loaded -> Box(
@@ -613,7 +585,7 @@ private fun CameraSnapshot(entityId: String, viewModel: HaViewModel) {
             modifier = Modifier
                 .fillMaxWidth()
                 .height(280.dp)
-                .clip(RoundedCornerShape(16.dp)),
+                .clip(RoundedCornerShape(22.dp)),
             contentScale = ContentScale.Fit,
         )
         !loaded -> Box(
