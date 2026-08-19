@@ -89,7 +89,6 @@ import dev.holgerendt.hanative.ui.widgets.VisionTimeline
 import dev.holgerendt.hanative.ui.widgets.WeatherHeader
 import dev.holgerendt.hanative.ui.widgets.WeekPlanner
 import dev.holgerendt.hanative.ui.widgets.WidgetTree
-import dev.holgerendt.hanative.ui.widgets.overlayForPopup
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -356,8 +355,7 @@ private fun DockButton(item: DockItem, onClick: () -> Unit, modifier: Modifier =
 @Composable
 private fun PopupHost(popup: PopupNode, viewModel: HaViewModel) {
     val cameraPopup = popup.hash == "#camerafront_view"
-    val compact = !overlayForPopup(popup).dark && !cameraPopup
-    PopupScaffold(popup, viewModel, scrollContent = !cameraPopup, compact = compact) {
+    PopupScaffold(popup, viewModel, scrollContent = !cameraPopup) {
         when (popup.hash) {
             "#weather" -> WeatherPopup(viewModel)
             "#camerafront_view" -> CameraPopup(popup, viewModel)

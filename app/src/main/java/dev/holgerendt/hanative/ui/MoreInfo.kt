@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -58,7 +57,8 @@ import dev.holgerendt.hanative.ui.theme.ActiveYellow
 import dev.holgerendt.hanative.ui.theme.HistoryGraph
 import dev.holgerendt.hanative.ui.theme.LocalOverlay
 import dev.holgerendt.hanative.ui.theme.OverlayColors
-import dev.holgerendt.hanative.ui.theme.OverlayMoreInfo
+import dev.holgerendt.hanative.ui.theme.OverlayLightPopup
+import dev.holgerendt.hanative.ui.widgets.popupSheetModifier
 import dev.holgerendt.hanative.ui.widgets.EntityPicture
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -126,7 +126,7 @@ private val ToggleDomains = setOf(
 
 @Composable
 fun MoreInfoDialog(entityId: String, viewModel: HaViewModel) {
-    val overlay = OverlayMoreInfo
+    val overlay = OverlayLightPopup
     val states by viewModel.states.collectAsState()
     val entity = states[entityId]
     val domain = entityId.substringBefore('.')
@@ -138,10 +138,8 @@ fun MoreInfoDialog(entityId: String, viewModel: HaViewModel) {
             scrim = Color.Black.copy(alpha = 0.55f),
         ) {
             Column(
-                modifier = Modifier
-                    .padding(horizontal = 4.dp, vertical = 8.dp)
-                    .fillMaxWidth()
-                    .fillMaxHeight(0.96f)
+                modifier = popupSheetModifier()
+                    .padding(horizontal = 8.dp, vertical = 12.dp)
                     .clip(RoundedCornerShape(20.dp))
                     .background(overlay.sheet)
                     .clickable(

@@ -31,7 +31,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -98,7 +97,6 @@ import dev.holgerendt.hanative.ui.theme.HistoryGraph
 import dev.holgerendt.hanative.ui.theme.LocalOverlay
 import dev.holgerendt.hanative.ui.theme.OverlayColors
 import dev.holgerendt.hanative.ui.theme.OverlayLightPopup
-import dev.holgerendt.hanative.ui.theme.OverlayPopup
 import dev.holgerendt.hanative.ui.theme.TabActiveEnd
 import dev.holgerendt.hanative.ui.theme.TabActiveStart
 import dev.holgerendt.hanative.ui.theme.TextDark
@@ -839,9 +837,8 @@ fun MediaImageDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
     }
     val bitmap = remember(bytes) { bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
     Box(
-        modifier = Modifier
-            .fillMaxWidth(0.82f)
-            .padding(16.dp)
+        modifier = popupSheetModifier()
+            .padding(horizontal = 8.dp, vertical = 12.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -850,29 +847,31 @@ fun MediaImageDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(24.dp))
-                .background(Color(0xCC1C1C1C))
-                .padding(16.dp)
+                .fillMaxSize()
+                .clip(RoundedCornerShape(20.dp))
+                .background(OverlayLightPopup.sheet)
+                .padding(horizontal = 12.dp, vertical = 10.dp)
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Box(Modifier.fillMaxWidth()) {
+            Box(Modifier.fillMaxWidth().height(40.dp)) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
-                        .size(40.dp)
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFDDDAD4))
                         .clickable(onClick = onDismiss),
                     contentAlignment = Alignment.Center,
                 ) {
-                    MdiIcon("mdi:close", tint = Color.White, size = 22.dp)
+                    MdiIcon("mdi:close", tint = TextDark, size = 20.dp)
                 }
             }
             if (!preview.title.isNullOrBlank()) {
                 Text(
                     preview.title,
-                    color = Color.White,
+                    color = OverlayLightPopup.text,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.fillMaxWidth(),
@@ -881,7 +880,7 @@ fun MediaImageDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
             if (!preview.subtitle.isNullOrBlank()) {
                 Text(
                     preview.subtitle,
-                    color = ChipOnDark,
+                    color = OverlayLightPopup.muted,
                     fontSize = 13.sp,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -899,14 +898,14 @@ fun MediaImageDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
                     modifier = Modifier.fillMaxWidth().height(220.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    LoadingSpinner(color = ChipOnDark)
+                    LoadingSpinner(color = TextMuted)
                 }
-                else -> Text("Can't load image", color = ChipOnDark, fontSize = 14.sp)
+                else -> Text("Can't load image", color = OverlayLightPopup.muted, fontSize = 14.sp)
             }
             if (!preview.description.isNullOrBlank()) {
                 Text(
                     text = preview.description,
-                    color = Color(0xFFDDDAD4),
+                    color = OverlayLightPopup.text,
                     fontSize = 14.sp,
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 )
@@ -1507,32 +1506,30 @@ fun EntityPicture(path: String?, viewModel: HaViewModel, modifier: Modifier) {
 }
 
 @Composable
+fun popupSheetModifier(): Modifier {
+    val height = LocalConfiguration.current.screenHeightDp.dp * 0.72f
+    return Modifier
+        .fillMaxWidth(0.72f)
+        .widthIn(max = 640.dp)
+        .height(height)
+}
+
+@Composable
 fun PopupScaffold(
     popup: PopupNode,
     viewModel: HaViewModel,
     scrollContent: Boolean = true,
-    compact: Boolean = false,
-    overlay: OverlayColors = overlayForPopup(popup),
+    overlay: OverlayColors = OverlayLightPopup,
     content: @Composable () -> Unit,
 ) {
     CompositionLocalProvider(LocalOverlay provides overlay) {
-        val iconBg = if (overlay.dark) overlay.well else ChipDark
-        val iconTint = if (overlay.dark) overlay.onWell else Color.White
-        val closeBg = if (overlay.dark) overlay.well else Color(0xFFDDDAD4)
-        val closeTint = if (overlay.dark) overlay.onWell else TextDark
-        val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.78f).dp
-        val sheet = if (compact) {
-            Modifier
-                .fillMaxWidth(0.68f)
-                .widthIn(max = 600.dp)
-                .wrapContentHeight()
-                .heightIn(max = maxHeight)
-                .padding(horizontal = 8.dp, vertical = 12.dp)
-        } else {
-            Modifier.fillMaxSize().padding(4.dp)
-        }
+        val iconBg = ChipDark
+        val iconTint = Color.White
+        val closeBg = Color(0xFFDDDAD4)
+        val closeTint = TextDark
         Column(
-            modifier = sheet
+            modifier = popupSheetModifier()
+                .padding(horizontal = 8.dp, vertical = 12.dp)
                 .clip(RoundedCornerShape(20.dp))
                 .background(overlay.sheet)
                 .clickable(
@@ -1574,44 +1571,16 @@ fun PopupScaffold(
             }
             Spacer(Modifier.height(6.dp))
             if (scrollContent) {
-                Column(
-                    Modifier
-                        .then(
-                            if (compact) Modifier.heightIn(max = maxHeight - 52.dp)
-                            else Modifier.weight(1f),
-                        )
-                        .verticalScroll(rememberScrollState()),
-                ) {
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                     content()
                 }
             } else {
-                Box(
-                    if (compact) Modifier.wrapContentHeight().fillMaxWidth()
-                    else Modifier.weight(1f).fillMaxWidth(),
-                ) {
+                Box(Modifier.weight(1f).fillMaxWidth()) {
                     content()
                 }
             }
         }
     }
-}
-
-private val LightPopupWidgets = setOf(
-    "light_slider",
-    "light_toggle",
-    "cover_toggle",
-    "vent_toggle",
-    "vents_group",
-    "climate",
-    "room_conditions",
-    "media_player",
-)
-
-fun overlayForPopup(popup: PopupNode): OverlayColors =
-    if (popupHasType(popup.cards, LightPopupWidgets)) OverlayLightPopup else OverlayPopup
-
-private fun popupHasType(cards: List<WidgetNode>, types: Set<String>): Boolean = cards.any { node ->
-    node.type in types || popupHasType(node.cards, types) || node.tabs.any { popupHasType(it.cards, types) }
 }
 
 private fun parseRadius(raw: String?): List<Dp> {

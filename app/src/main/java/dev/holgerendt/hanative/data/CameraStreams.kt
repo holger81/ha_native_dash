@@ -21,6 +21,7 @@ import java.io.ByteArrayOutputStream
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 enum class StreamKind { HLS, MP4, MJPEG }
 
@@ -256,16 +257,19 @@ object CameraStreams {
 
 fun WidgetNode.hasLiveCameraSource(): Boolean = CameraStreams.fromWidget(this).hasLiveSource()
 
+data class LiveCameraFrame(val seq: Long, val bitmap: Bitmap)
+
 class LiveCameraHub(
     private val client: HaClient,
     private val scope: CoroutineScope,
 ) {
-    private val frames = ConcurrentHashMap<String, MutableStateFlow<Bitmap?>>()
+    private val frames = ConcurrentHashMap<String, MutableStateFlow<LiveCameraFrame?>>()
     private val jobs = ConcurrentHashMap<String, Job>()
     private val targets = ConcurrentHashMap<String, CameraTarget>()
+    private val seqs = ConcurrentHashMap<String, AtomicLong>()
     @Volatile private var paused = false
 
-    fun frame(target: CameraTarget): StateFlow<Bitmap?> {
+    fun frame(target: CameraTarget): StateFlow<LiveCameraFrame?> {
         val key = key(target)
         val flow = frames.getOrPut(key) { MutableStateFlow(null) }
         if (target.hasLiveSource()) {
@@ -282,6 +286,16 @@ class LiveCameraHub(
             frames.getOrPut(key) { MutableStateFlow(null) }
             if (!paused) startOne(target)
         }
+    }
+
+    fun refresh(target: CameraTarget) {
+        if (!target.hasLiveSource()) return
+        val key = key(target)
+        targets[key] = target
+        frames.getOrPut(key) { MutableStateFlow(null) }
+        jobs[key]?.cancel()
+        jobs.remove(key)
+        if (!paused) startOne(target)
     }
 
     fun pause() {
@@ -308,7 +322,8 @@ class LiveCameraHub(
                 }
                 runCatching {
                     CameraStreams.readMjpeg(mjpeg.url, mjpeg.headers) { bitmap ->
-                        frames[key]?.value = bitmap
+                        val seq = seqs.getOrPut(key) { AtomicLong() }.incrementAndGet()
+                        frames[key]?.value = LiveCameraFrame(seq, bitmap)
                     }
                 }
                 if (!isActive || paused) break

@@ -2,6 +2,7 @@ package dev.holgerendt.hanative.ui.widgets
 
 import android.graphics.BitmapFactory
 import android.view.LayoutInflater
+import android.widget.ImageView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -65,6 +66,9 @@ private val CameraShape = RoundedCornerShape(28.dp)
 @Composable
 fun CameraPopup(popup: PopupNode, viewModel: HaViewModel) {
     val cameras = remember(popup) { CameraStreams.camerasForPopup(popup) }
+    LaunchedEffect(cameras) {
+        cameras.forEach { viewModel.refreshCamera(it) }
+    }
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -161,7 +165,7 @@ private fun LiveCameraSurface(
     viewModel: HaViewModel,
     modifier: Modifier,
 ) {
-    val hotFrame by viewModel.liveCameraFrame(widget).collectAsState()
+    val frame by viewModel.liveCameraFrame(widget).collectAsState()
     var poster by remember(widget) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(widget.entity) {
         widget.entity?.let { entity ->
@@ -169,12 +173,26 @@ private fun LiveCameraSurface(
             poster = bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
         }
     }
-    val liveImage = remember(hotFrame) { hotFrame?.asImageBitmap() }
-    val shown = liveImage ?: poster
     Box(modifier, contentAlignment = Alignment.Center) {
-        if (shown != null) {
+        val live = frame
+        if (live != null) {
+            AndroidView(
+                factory = { ctx ->
+                    ImageView(ctx).apply {
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                    }
+                },
+                update = { view ->
+                    if (view.tag != live.seq) {
+                        view.tag = live.seq
+                        view.setImageBitmap(live.bitmap)
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else if (poster != null) {
             Image(
-                bitmap = shown,
+                bitmap = poster!!,
                 contentDescription = widget.name,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,

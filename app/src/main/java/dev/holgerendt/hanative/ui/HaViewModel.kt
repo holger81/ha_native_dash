@@ -1,7 +1,6 @@
 package dev.holgerendt.hanative.ui
 
 import android.app.Application
-import android.graphics.Bitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -17,6 +16,7 @@ import dev.holgerendt.hanative.data.KioskCommand
 import dev.holgerendt.hanative.data.KioskCommands
 import dev.holgerendt.hanative.data.KioskSnapshot
 import dev.holgerendt.hanative.data.LanAddresses
+import dev.holgerendt.hanative.data.LiveCameraFrame
 import dev.holgerendt.hanative.data.LiveCameraHub
 import dev.holgerendt.hanative.data.ManagementServer
 import dev.holgerendt.hanative.data.ManagementTls
@@ -321,8 +321,12 @@ class HaViewModel(
         _ui.value = _ui.value.copy(mediaPreview = null)
     }
 
-    fun liveCameraFrame(widget: WidgetNode): StateFlow<Bitmap?> =
+    fun liveCameraFrame(widget: WidgetNode): StateFlow<LiveCameraFrame?> =
         liveCameras.frame(CameraStreams.fromWidget(widget))
+
+    fun refreshCamera(widget: WidgetNode) {
+        liveCameras.refresh(CameraStreams.fromWidget(widget))
+    }
 
     fun applyKioskCommand(command: KioskCommand) {
         when (command) {
