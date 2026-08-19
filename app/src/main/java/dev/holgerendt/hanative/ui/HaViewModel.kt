@@ -14,6 +14,7 @@ import dev.holgerendt.hanative.data.EntityState
 import dev.holgerendt.hanative.data.HaClient
 import dev.holgerendt.hanative.data.KioskCommand
 import dev.holgerendt.hanative.data.KioskCommands
+import dev.holgerendt.hanative.data.KioskSnapshot
 import dev.holgerendt.hanative.data.LanAddresses
 import dev.holgerendt.hanative.data.ManagementServer
 import dev.holgerendt.hanative.data.ManagementTls
@@ -28,6 +29,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -88,6 +90,7 @@ class HaViewModel(
     val availableCalendars: StateFlow<List<CalendarInfo>> = _availableCalendars
 
     private var lastActivityMs = System.currentTimeMillis()
+    private var sleptAtMs = 0L
 
     private val extraCalendarColors = listOf(
         "var(--blue)",
@@ -118,6 +121,7 @@ class HaViewModel(
         }
         watchCameraFlag()
         watchIdleTimeout()
+        watchDisplayPower()
         if (credentials.isConfigured) {
             viewModelScope.launch { connect(credentials.baseUrl, credentials.token) }
         }
@@ -180,7 +184,11 @@ class HaViewModel(
             },
             onCommand = { applyKioskCommand(it) },
             kioskStateProvider = {
-                _ui.value.popupHash to (client.connection.value is ConnectionState.Connected)
+                KioskSnapshot(
+                    popup = _ui.value.popupHash,
+                    connected = client.connection.value is ConnectionState.Connected,
+                    screenAsleep = _ui.value.screenAsleep,
+                )
             },
             sslSocketFactory = ssl.getOrThrow(),
         )
@@ -323,6 +331,17 @@ class HaViewModel(
         lastActivityMs = System.currentTimeMillis()
     }
 
+    fun onHostResumed() {
+        if (_ui.value.showSetup) return
+        if (!_ui.value.screenAsleep) {
+            noteUserActivity()
+            return
+        }
+        // Turning the UniFi panel off can pause/resume us; ignore that bounce.
+        if (System.currentTimeMillis() - sleptAtMs < 1_500L) return
+        wakeScreen()
+    }
+
     fun setScreenTimeoutSeconds(seconds: Int): Result<Unit> {
         if (seconds !in 0..CredentialsStore.MAX_SCREEN_TIMEOUT_SECONDS) {
             return Result.failure(
@@ -335,9 +354,10 @@ class HaViewModel(
         return Result.success(Unit)
     }
 
-    fun sleepScreen() {
+    fun sleepScreen(commandDisplay: Boolean = true) {
         if (_ui.value.screenAsleep || _ui.value.showSetup) return
-        if (connection.value is ConnectionState.Connected) {
+        sleptAtMs = System.currentTimeMillis()
+        if (commandDisplay && connection.value is ConnectionState.Connected) {
             _ui.value.displayOffEntity.takeIf { it.isNotBlank() }?.let { entityId ->
                 viewModelScope.launch { runCatching { client.setEntityPower(entityId, on = false) } }
             }
@@ -345,9 +365,9 @@ class HaViewModel(
         _ui.value = _ui.value.copy(screenAsleep = true, drawerOpen = false)
     }
 
-    fun wakeScreen() {
+    fun wakeScreen(commandDisplay: Boolean = true) {
         lastActivityMs = System.currentTimeMillis()
-        if (connection.value is ConnectionState.Connected) {
+        if (commandDisplay && connection.value is ConnectionState.Connected) {
             _ui.value.displayOffEntity.takeIf { it.isNotBlank() }?.let { entityId ->
                 viewModelScope.launch { runCatching { client.setEntityPower(entityId, on = true) } }
             }
@@ -423,6 +443,32 @@ class HaViewModel(
                     sleepScreen()
                 } else {
                     delay(wait.coerceAtMost(15_000L))
+                }
+            }
+        }
+    }
+
+    private fun watchDisplayPower() {
+        viewModelScope.launch {
+            var previousEntity = ""
+            var previousState: String? = null
+            combine(
+                _ui.map { it.displayOffEntity }.distinctUntilChanged(),
+                states,
+            ) { entityId, all ->
+                entityId to entityId.takeIf { it.isNotBlank() }?.let { all[it]?.state }
+            }.distinctUntilChanged().collect { (entityId, state) ->
+                if (entityId != previousEntity) {
+                    previousEntity = entityId
+                    previousState = state
+                    return@collect
+                }
+                val last = previousState
+                previousState = state
+                if (state.isNullOrBlank() || last.isNullOrBlank() || state == last) return@collect
+                when {
+                    state == "on" && last != "on" -> wakeScreen(commandDisplay = false)
+                    state == "off" && last == "on" -> sleepScreen(commandDisplay = false)
                 }
             }
         }

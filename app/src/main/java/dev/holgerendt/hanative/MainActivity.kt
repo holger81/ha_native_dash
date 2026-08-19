@@ -55,6 +55,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         (application as HaNativeApp).screenCapture.attach(this)
         viewModel.retryRestoreIfNeeded()
+        viewModel.onHostResumed()
     }
 
     override fun onDestroy() {

@@ -4,6 +4,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -87,6 +89,7 @@ import dev.holgerendt.hanative.ui.widgets.VisionTimeline
 import dev.holgerendt.hanative.ui.widgets.WeatherHeader
 import dev.holgerendt.hanative.ui.widgets.WeekPlanner
 import dev.holgerendt.hanative.ui.widgets.WidgetTree
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -166,13 +169,28 @@ fun HaApp(viewModel: HaViewModel) {
                 MediaImageDialog(path, viewModel, onDismiss = { viewModel.closeMedia() })
             }
         }
-        if (ui.screenAsleep) {
+        var consumeWakeGesture by remember { mutableStateOf(false) }
+        LaunchedEffect(ui.screenAsleep) {
+            if (ui.screenAsleep) return@LaunchedEffect
+            consumeWakeGesture = true
+            delay(400)
+            consumeWakeGesture = false
+        }
+        if (ui.screenAsleep || consumeWakeGesture) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black)
-                    .pointerInput(Unit) {
-                        detectTapGestures { viewModel.wakeScreen() }
+                    .then(if (ui.screenAsleep) Modifier.background(Color.Black) else Modifier)
+                    .pointerInput(ui.screenAsleep) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false)
+                            viewModel.wakeScreen()
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                event.changes.forEach { it.consume() }
+                                if (event.changes.none { it.pressed }) break
+                            }
+                        }
                     },
             )
         }

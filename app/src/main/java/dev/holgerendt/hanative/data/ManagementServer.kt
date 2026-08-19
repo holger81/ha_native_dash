@@ -15,7 +15,7 @@ class ManagementServer(
     private val screenshotProvider: () -> ScreenCapture.Jpeg,
     private val onSubmit: (pin: String, url: String, token: String) -> Result<Unit>,
     private val onCommand: (KioskCommand) -> Unit,
-    private val kioskStateProvider: () -> Pair<String?, Boolean>,
+    private val kioskStateProvider: () -> KioskSnapshot,
     sslSocketFactory: SSLServerSocketFactory,
 ) : NanoHTTPD(port) {
 
@@ -43,6 +43,7 @@ class ManagementServer(
             (session.method == Method.GET || session.method == Method.POST) && uri == "/api/command" ->
                 handleKioskCommand(session)
             session.method == Method.POST && uri == "/setup" -> handleSetup(session)
+            session.method == Method.POST && uri == "/wake" -> handleWake(session)
             else -> newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not found")
         }
     }
@@ -91,13 +92,8 @@ class ManagementServer(
     }
 
     private fun handleKioskState(session: IHTTPSession): Response {
-        apiPinError(session)?.let { return json(Response.Status.UNAUTHORIZED, """{"ok":false,"error":"${escape(it)}"}""") }
-        val (popup, connected) = kioskStateProvider()
-        val popupJson = popup?.let { "\"${escape(it)}\"" } ?: "null"
-        return json(
-            Response.Status.OK,
-            """{"ok":true,"popup":$popupJson,"connected":$connected,"panel":"${KioskCommands.PANEL_ID}"}""",
-        )
+        authorizeApi(session)?.let { return json(Response.Status.UNAUTHORIZED, """{"ok":false,"error":"${escape(it)}"}""") }
+        return json(Response.Status.OK, snapshotJson())
     }
 
     private fun handleKioskCommand(session: IHTTPSession): Response {
@@ -116,7 +112,7 @@ class ManagementServer(
         if (body.trimStart().startsWith("{")) {
             params.putAll(flattenBody(body))
         }
-        apiPinError(session, params["pin"])?.let {
+        authorizeApi(session, params["pin"])?.let {
             return json(Response.Status.UNAUTHORIZED, """{"ok":false,"error":"${escape(it)}"}""")
         }
         if (!KioskCommands.panelAllowed(params)) {
@@ -130,13 +126,31 @@ class ManagementServer(
         if (command == null) {
             return json(
                 Response.Status.BAD_REQUEST,
-                """{"ok":false,"error":"Unknown command. Use cmd=camera, cmd=navigate&path=#camerafront_view, or cmd=home."}""",
+                """{"ok":false,"error":"Unknown command. Use cmd=wake, cmd=sleep, cmd=camera, cmd=navigate&path=#camerafront_view, or cmd=home."}""",
             )
         }
         onCommand(command)
-        val (popup, connected) = kioskStateProvider()
-        val popupJson = popup?.let { "\"${escape(it)}\"" } ?: "null"
-        return json(Response.Status.OK, """{"ok":true,"popup":$popupJson,"connected":$connected}""")
+        return json(Response.Status.OK, snapshotJson())
+    }
+
+    private fun handleWake(session: IHTTPSession): Response {
+        if (!authenticated(session)) {
+            return html(loginPage("Log in with the PIN first."), Response.Status.FORBIDDEN)
+        }
+        runCatching { session.parseBody(HashMap()) }
+        onCommand(KioskCommand.Wake)
+        return html(adminPage(savedUrlProvider(), "Waking the wall display.", true))
+    }
+
+    private fun snapshotJson(): String {
+        val snap = kioskStateProvider()
+        val popupJson = snap.popup?.let { "\"${escape(it)}\"" } ?: "null"
+        return """{"ok":true,"popup":$popupJson,"connected":${snap.connected},"asleep":${snap.screenAsleep},"panel":"${KioskCommands.PANEL_ID}"}"""
+    }
+
+    private fun authorizeApi(session: IHTTPSession, bodyPin: String? = null): String? {
+        if (authenticated(session)) return null
+        return apiPinError(session, bodyPin)
     }
 
     private fun flattenBody(body: String): Map<String, String> {
@@ -356,7 +370,10 @@ class ManagementServer(
                   <h2>Live screen</h2>
                   <p id="live-status" class="meta">Loading live screen…</p>
                   <div class="live"><img id="live" alt="Wall panel screen" hidden /></div>
-                  <button class="inline" type="button" id="reload">Reload</button>
+                  <div class="actions">
+                    <button class="inline" type="button" id="reload">Reload</button>
+                    <button class="inline" type="button" id="wake">Wake display</button>
+                  </div>
                 </section>
                 <form method="post" action="/setup" autocomplete="off">
                   <label for="url">Home Assistant URL</label>
@@ -371,6 +388,7 @@ class ManagementServer(
                   var img = document.getElementById('live');
                   var status = document.getElementById('live-status');
                   var reload = document.getElementById('reload');
+                  var wake = document.getElementById('wake');
                   var timer = 0;
                   var blobUrl = '';
                   var INTERVAL = 1500;
@@ -409,6 +427,32 @@ class ManagementServer(
                   }
 
                   reload.addEventListener('click', function () { refresh(true); });
+                  wake.addEventListener('click', async function () {
+                    wake.disabled = true;
+                    setStatus('Waking display…', false);
+                    try {
+                      var res = await fetch('/api/command', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: 'cmd=wake'
+                      });
+                      if (res.status === 401 || res.status === 403) {
+                        window.location.href = '/logout';
+                        return;
+                      }
+                      var data = await res.json();
+                      if (!data.ok) {
+                        setStatus(data.error || 'Wake failed', true);
+                        return;
+                      }
+                      setTimeout(function () { refresh(true); }, 700);
+                    } catch (e) {
+                      setStatus('Could not reach the wall panel.', true);
+                    } finally {
+                      wake.disabled = false;
+                    }
+                  });
                   refresh(false);
                   timer = setInterval(function () { refresh(false); }, INTERVAL);
                 })();
@@ -448,6 +492,7 @@ class ManagementServer(
                 button.ghost { width:auto; margin:0; padding:10px 14px; font-size:14px;
                   background:#3a3a3a; color:#f3f1ec; }
                 button.inline { width:auto; margin-top:10px; padding:10px 16px; font-size:14px; }
+                .actions { display:flex; gap:10px; flex-wrap:wrap; }
                 .top { display:flex; align-items:center; justify-content:space-between; gap:12px; }
                 .top h1 { margin:0; }
                 .ok { background:#1b5e20; color:#dcfcdc; padding:12px 14px; border-radius:12px; }
@@ -465,3 +510,9 @@ class ManagementServer(
             "$COOKIE_NAME=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict"
     }
 }
+
+data class KioskSnapshot(
+    val popup: String?,
+    val connected: Boolean,
+    val screenAsleep: Boolean,
+)
