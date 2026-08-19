@@ -4,16 +4,11 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import dev.holgerendt.hanative.model.PopupNode
 import dev.holgerendt.hanative.model.WidgetNode
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -21,9 +16,8 @@ import java.io.ByteArrayOutputStream
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicLong
 
-enum class StreamKind { HLS, MP4, MJPEG }
+enum class StreamKind { HLS, MP4, MJPEG, JPEG }
 
 data class StreamCandidate(
     val kind: StreamKind,
@@ -111,6 +105,7 @@ object CameraStreams {
 
     suspend fun resolve(client: HaClient, target: CameraTarget): List<StreamCandidate> {
         val key = listOf(
+            "hls-jpeg-v1",
             target.streamServer.orEmpty(),
             target.streamName.orEmpty(),
             target.entityId.orEmpty(),
@@ -139,37 +134,53 @@ object CameraStreams {
             val src = target.streamName?.trim()?.takeIf { it.isNotEmpty() }
             if (!server.isNullOrBlank() && src != null) {
                 val encoded = URLEncoder.encode(src, Charsets.UTF_8.name())
-                // MJPEG first: fastest first frame on a wall panel; skip go2rtc probe (saves ~3–5s).
-                out += StreamCandidate(
-                    StreamKind.MJPEG,
-                    "$server/api/stream.mjpeg?src=$encoded",
-                    emptyMap(),
-                    "go2rtc MJPEG",
-                )
-                out += StreamCandidate(
-                    StreamKind.MP4,
-                    "$server/api/stream.mp4?src=$encoded",
-                    emptyMap(),
-                    "go2rtc MP4",
-                )
+                // HLS first: this go2rtc build serves H264, and /api/stream.mjpeg returns an empty 200.
+                // Skip live MP4 — ExoPlayer often buffers forever on infinite fMP4 without erroring.
                 out += StreamCandidate(
                     StreamKind.HLS,
                     "$server/api/stream.m3u8?src=$encoded",
                     emptyMap(),
                     "go2rtc HLS",
                 )
-                return@withContext out.distinctBy { it.url }
+                out += StreamCandidate(
+                    StreamKind.JPEG,
+                    "$server/api/frame.jpeg?src=$encoded",
+                    emptyMap(),
+                    "go2rtc JPEG",
+                )
             }
             val entity = target.entityId
             if (entity?.startsWith("camera.") == true) {
                 val mjpeg = "${client.currentBaseUrl}/api/camera_proxy_stream/$entity"
                 out += StreamCandidate(StreamKind.MJPEG, mjpeg, headers, "Home Assistant MJPEG")
-                client.cameraHlsUrl(entity)?.let { url ->
-                    out += StreamCandidate(StreamKind.HLS, url, headers, "Home Assistant HLS")
+                if (out.none { it.kind == StreamKind.HLS }) {
+                    client.cameraHlsUrl(entity)?.let { url ->
+                        out += StreamCandidate(StreamKind.HLS, url, headers, "Home Assistant HLS")
+                    }
                 }
             }
             out.distinctBy { it.url }
         }
+
+    suspend fun readJpeg(url: String, headers: Map<String, String>): Bitmap? = withContext(Dispatchers.IO) {
+        val request = Request.Builder().url(url).apply {
+            headers.forEach { (key, value) -> addHeader(key, value) }
+        }.build()
+        val call = streamClient.newCall(request)
+        call.timeout().timeout(10, TimeUnit.SECONDS)
+        coroutineContext.job.invokeOnCompletion { call.cancel() }
+        try {
+            val response = call.execute()
+            if (!response.isSuccessful) {
+                throw CameraStreamException(httpErrorMessage(response.code, null))
+            }
+            val bytes = response.body?.bytes() ?: return@withContext null
+            if (bytes.isEmpty() || looksLikeHtmlOrJson(bytes)) return@withContext null
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        } finally {
+            call.cancel()
+        }
+    }
 
     suspend fun readMjpeg(
         url: String,
@@ -188,10 +199,11 @@ object CameraStreams {
                 }
                 val body = response.body ?: throw CameraStreamException("Empty camera stream")
                 val source = body.source()
-                source.timeout().timeout(15, TimeUnit.SECONDS)
+                source.timeout().timeout(12, TimeUnit.SECONDS)
                 val chunk = ByteArray(16 * 1024)
                 val acc = ByteArrayOutputStream()
                 var frames = 0
+                coroutineContext.job.invokeOnCompletion { call.cancel() }
                 while (currentCoroutineContext().isActive) {
                     val n = source.read(chunk)
                     if (n < 0) break
@@ -209,7 +221,6 @@ object CameraStreams {
                         val jpeg = data.copyOfRange(soi, eoi + 2)
                         val bitmap = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)
                         if (bitmap != null) {
-                            if (frames == 0) source.timeout().clearTimeout()
                             frames++
                             onFrame(bitmap)
                         }
@@ -256,84 +267,3 @@ object CameraStreams {
 }
 
 fun WidgetNode.hasLiveCameraSource(): Boolean = CameraStreams.fromWidget(this).hasLiveSource()
-
-data class LiveCameraFrame(val seq: Long, val bitmap: Bitmap)
-
-class LiveCameraHub(
-    private val client: HaClient,
-    private val scope: CoroutineScope,
-) {
-    private val frames = ConcurrentHashMap<String, MutableStateFlow<LiveCameraFrame?>>()
-    private val jobs = ConcurrentHashMap<String, Job>()
-    private val targets = ConcurrentHashMap<String, CameraTarget>()
-    private val seqs = ConcurrentHashMap<String, AtomicLong>()
-    @Volatile private var paused = false
-
-    fun frame(target: CameraTarget): StateFlow<LiveCameraFrame?> {
-        val key = key(target)
-        val flow = frames.getOrPut(key) { MutableStateFlow(null) }
-        if (target.hasLiveSource()) {
-            targets[key] = target
-            if (!paused) startOne(target)
-        }
-        return flow
-    }
-
-    fun ensureRunning(next: Collection<CameraTarget>) {
-        next.filter { it.hasLiveSource() }.forEach { target ->
-            val key = key(target)
-            targets[key] = target
-            frames.getOrPut(key) { MutableStateFlow(null) }
-            if (!paused) startOne(target)
-        }
-    }
-
-    fun refresh(target: CameraTarget) {
-        if (!target.hasLiveSource()) return
-        val key = key(target)
-        targets[key] = target
-        frames.getOrPut(key) { MutableStateFlow(null) }
-        jobs[key]?.cancel()
-        jobs.remove(key)
-        if (!paused) startOne(target)
-    }
-
-    fun pause() {
-        paused = true
-        jobs.values.forEach { it.cancel() }
-        jobs.clear()
-    }
-
-    fun resume() {
-        paused = false
-        targets.values.forEach { startOne(it) }
-    }
-
-    private fun startOne(target: CameraTarget) {
-        val key = key(target)
-        if (jobs[key]?.isActive == true) return
-        jobs[key] = scope.launch(Dispatchers.IO) {
-            while (isActive && !paused) {
-                val candidates = runCatching { CameraStreams.resolve(client, target) }.getOrDefault(emptyList())
-                val mjpeg = candidates.firstOrNull { it.kind == StreamKind.MJPEG }
-                if (mjpeg == null) {
-                    delay(5_000)
-                    continue
-                }
-                runCatching {
-                    CameraStreams.readMjpeg(mjpeg.url, mjpeg.headers) { bitmap ->
-                        val seq = seqs.getOrPut(key) { AtomicLong() }.incrementAndGet()
-                        frames[key]?.value = LiveCameraFrame(seq, bitmap)
-                    }
-                }
-                if (!isActive || paused) break
-                delay(2_000)
-            }
-        }
-    }
-
-    private fun key(target: CameraTarget): String =
-        target.entityId?.takeIf { it.isNotBlank() }
-            ?: target.streamName?.takeIf { it.isNotBlank() }
-            ?: target.name.orEmpty()
-}

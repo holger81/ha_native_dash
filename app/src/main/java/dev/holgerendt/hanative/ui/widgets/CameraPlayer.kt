@@ -19,7 +19,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -36,7 +35,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -59,16 +60,15 @@ import dev.holgerendt.hanative.ui.theme.ChipOnDark
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicReference
 
 private val CameraShape = RoundedCornerShape(28.dp)
 
 @Composable
 fun CameraPopup(popup: PopupNode, viewModel: HaViewModel) {
     val cameras = remember(popup) { CameraStreams.camerasForPopup(popup) }
-    LaunchedEffect(cameras) {
-        cameras.forEach { viewModel.refreshCamera(it) }
-    }
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -97,7 +97,11 @@ fun CameraCard(
         .then(if (fill) Modifier.fillMaxSize() else Modifier.aspectRatio(16f / 9f))
         .clip(CameraShape)
         .background(ChipDark)
-        .clickable { widget.entity?.let { viewModel.openMoreInfo(it) } }
+        .then(
+            if (fill) Modifier else Modifier.clickable {
+                widget.entity?.let { viewModel.openMoreInfo(it) }
+            },
+        )
     if (widget.hasLiveCameraSource()) {
         LiveCameraSurface(widget, viewModel, boxModifier)
     } else {
@@ -165,40 +169,72 @@ private fun LiveCameraSurface(
     viewModel: HaViewModel,
     modifier: Modifier,
 ) {
-    val frame by viewModel.liveCameraFrame(widget).collectAsState()
+    val target = remember(widget) { CameraStreams.fromWidget(widget) }
+    var candidates by remember(widget) { mutableStateOf<List<StreamCandidate>>(emptyList()) }
+    var index by remember(widget) { mutableIntStateOf(0) }
+    var error by remember(widget) { mutableStateOf<String?>(null) }
     var poster by remember(widget) { mutableStateOf<ImageBitmap?>(null) }
+    val entityState = widget.entity?.let { viewModel.entity(it)?.state }
+
     LaunchedEffect(widget.entity) {
         widget.entity?.let { entity ->
             val bytes = runCatching { viewModel.client.cameraSnapshot(entity) }.getOrNull()
             poster = bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
         }
     }
+    LaunchedEffect(target) {
+        error = null
+        index = 0
+        candidates = CameraStreams.resolve(viewModel.client, target)
+        if (candidates.isEmpty()) {
+            error = when (entityState) {
+                "unavailable", "unknown" -> "Camera unavailable"
+                else -> "No live stream for ${target.entityId ?: target.name ?: "camera"}"
+            }
+        }
+    }
+
+    val current = candidates.getOrNull(index)
     Box(modifier, contentAlignment = Alignment.Center) {
-        val live = frame
-        if (live != null) {
-            AndroidView(
-                factory = { ctx ->
-                    ImageView(ctx).apply {
-                        scaleType = ImageView.ScaleType.CENTER_CROP
-                    }
-                },
-                update = { view ->
-                    if (view.tag != live.seq) {
-                        view.tag = live.seq
-                        view.setImageBitmap(live.bitmap)
-                    }
-                },
-                modifier = Modifier.fillMaxSize(),
-            )
-        } else if (poster != null) {
+        val still = poster
+        if (still != null && current == null && error == null) {
             Image(
-                bitmap = poster!!,
+                bitmap = still,
                 contentDescription = widget.name,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
             )
-        } else {
-            LoadingSpinner(color = ChipOnDark)
+        }
+        when {
+            current?.kind == StreamKind.JPEG -> JpegPollPlayer(
+                candidate = current,
+                poster = still,
+                modifier = Modifier.fillMaxSize(),
+                onError = { message ->
+                    if (index + 1 < candidates.size) index += 1 else error = message
+                },
+            )
+            current?.kind == StreamKind.MJPEG -> MjpegPlayer(
+                candidate = current,
+                poster = still,
+                modifier = Modifier.fillMaxSize(),
+                onError = { message ->
+                    if (index + 1 < candidates.size) index += 1 else error = message
+                },
+            )
+            current != null -> HlsPlayer(
+                candidate = current,
+                muted = target.muted,
+                modifier = Modifier.fillMaxSize(),
+                onError = { message ->
+                    if (index + 1 < candidates.size) index += 1 else error = message
+                },
+            )
+            error != null -> CameraErrorText(error!!)
+            still == null -> LoadingSpinner(color = ChipOnDark)
+        }
+        if (error != null && current != null) {
+            CameraErrorText(error!!)
         }
         CameraTitle(widget.name)
     }
@@ -221,7 +257,7 @@ private fun HlsPlayer(
     }
     val loadControl = remember {
         DefaultLoadControl.Builder()
-            .setBufferDurationsMs(500, 2_000, 500, 500)
+            .setBufferDurationsMs(1_000, 8_000, 1_000, 1_000)
             .build()
     }
     val player = remember {
@@ -230,16 +266,32 @@ private fun HlsPlayer(
             .setLoadControl(loadControl)
             .build()
     }
+    val handled = remember(candidate.url) { java.util.concurrent.atomic.AtomicBoolean(false) }
+    val started = remember(candidate.url) { java.util.concurrent.atomic.AtomicBoolean(false) }
     DisposableEffect(player) {
         onDispose { player.release() }
     }
+    LaunchedEffect(candidate.url) {
+        delay(10_000)
+        if (!started.get() && handled.compareAndSet(false, true)) {
+            onError("Live stream timed out (${candidate.label})")
+        }
+    }
     DisposableEffect(candidate.url) {
         dataSourceFactory.setDefaultRequestProperties(candidate.headers)
-        var handled = false
+        handled.set(false)
+        started.set(false)
         val listener = object : Player.Listener {
+            override fun onRenderedFirstFrame() {
+                started.set(true)
+            }
             override fun onPlayerError(error: PlaybackException) {
-                if (handled) return
-                handled = true
+                if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
+                    player.seekToDefaultPosition()
+                    player.prepare()
+                    return
+                }
+                if (!handled.compareAndSet(false, true)) return
                 val unauthorized = error.message?.contains("401") == true ||
                     error.message?.contains("403") == true
                 onError(
@@ -253,8 +305,24 @@ private fun HlsPlayer(
         }
         player.addListener(listener)
         player.volume = if (muted) 0f else 1f
+        if (muted) {
+            player.trackSelectionParameters = player.trackSelectionParameters
+                .buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
+                .build()
+        }
         player.playWhenReady = true
-        player.setMediaItem(MediaItem.fromUri(candidate.url))
+        val mime = when (candidate.kind) {
+            StreamKind.HLS -> MimeTypes.APPLICATION_M3U8
+            StreamKind.MP4 -> MimeTypes.VIDEO_MP4
+            else -> null
+        }
+        player.setMediaItem(
+            MediaItem.Builder()
+                .setUri(candidate.url)
+                .setMimeType(mime)
+                .build(),
+        )
         player.prepare()
         onDispose {
             player.removeListener(listener)
@@ -278,38 +346,122 @@ private fun HlsPlayer(
 }
 
 @Composable
-private fun MjpegPlayer(
+private fun JpegPollPlayer(
     candidate: StreamCandidate,
+    poster: ImageBitmap?,
     modifier: Modifier,
     onError: (String) -> Unit,
 ) {
-    var bitmap by remember(candidate.url) { mutableStateOf<ImageBitmap?>(null) }
+    val viewRef = remember { AtomicReference<ImageView?>(null) }
+    var showing by remember(candidate.url) { mutableStateOf(false) }
     LaunchedEffect(candidate.url) {
-        try {
-            CameraStreams.readMjpeg(candidate.url, candidate.headers) { frame ->
-                withContext(Dispatchers.Main.immediate) {
-                    bitmap = frame.asImageBitmap()
+        showing = false
+        var failures = 0
+        while (isActive) {
+            try {
+                val frame = CameraStreams.readJpeg(candidate.url, candidate.headers)
+                if (frame != null) {
+                    failures = 0
+                    withContext(Dispatchers.Main.immediate) {
+                        viewRef.get()?.setImageBitmap(frame)
+                        showing = true
+                    }
+                } else {
+                    failures++
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                failures++
+                if (!showing && failures >= 2) {
+                    onError(error.message ?: "Camera snapshots failed")
+                    return@LaunchedEffect
+                }
+                delay(400)
             }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (stream: CameraStreamException) {
-            onError(stream.message ?: "MJPEG stream failed")
-        } catch (error: Exception) {
-            onError(error.message ?: "MJPEG stream failed")
         }
     }
+    StillCameraBox(viewRef, poster, showing, modifier)
+}
+
+@Composable
+private fun MjpegPlayer(
+    candidate: StreamCandidate,
+    poster: ImageBitmap?,
+    modifier: Modifier,
+    onError: (String) -> Unit,
+) {
+    val viewRef = remember { AtomicReference<ImageView?>(null) }
+    var showing by remember(candidate.url) { mutableStateOf(false) }
+    LaunchedEffect(candidate.url) {
+        showing = false
+        var failures = 0
+        while (isActive) {
+            try {
+                CameraStreams.readMjpeg(candidate.url, candidate.headers) { next ->
+                    withContext(Dispatchers.Main.immediate) {
+                        viewRef.get()?.setImageBitmap(next)
+                        showing = true
+                    }
+                }
+                if (!showing) {
+                    failures++
+                    if (failures >= 2) {
+                        onError("MJPEG stream ended")
+                        return@LaunchedEffect
+                    }
+                }
+                delay(400)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (stream: CameraStreamException) {
+                failures++
+                if (!showing && failures >= 2) {
+                    onError(stream.message ?: "MJPEG stream failed")
+                    return@LaunchedEffect
+                }
+                delay(400)
+            } catch (error: Exception) {
+                failures++
+                if (!showing && failures >= 2) {
+                    onError(error.message ?: "MJPEG stream failed")
+                    return@LaunchedEffect
+                }
+                delay(400)
+            }
+        }
+    }
+    StillCameraBox(viewRef, poster, showing, modifier)
+}
+
+@Composable
+private fun StillCameraBox(
+    viewRef: AtomicReference<ImageView?>,
+    poster: ImageBitmap?,
+    showing: Boolean,
+    modifier: Modifier,
+) {
     Box(modifier, contentAlignment = Alignment.Center) {
-        val frame = bitmap
-        if (frame != null) {
-            Image(
-                bitmap = frame,
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
-            )
-        } else {
-            LoadingSpinner(color = ChipOnDark)
+        AndroidView(
+            factory = { ctx ->
+                ImageView(ctx).apply {
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    viewRef.set(this)
+                }
+            },
+            modifier = Modifier.fillMaxSize(),
+        )
+        if (!showing) {
+            if (poster != null) {
+                Image(
+                    bitmap = poster,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                LoadingSpinner(color = ChipOnDark)
+            }
         }
     }
 }
