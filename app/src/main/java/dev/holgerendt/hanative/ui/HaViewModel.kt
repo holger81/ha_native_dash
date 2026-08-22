@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -43,6 +44,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import java.security.SecureRandom
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 data class UiState(
@@ -62,6 +64,7 @@ data class UiState(
     val screenAsleep: Boolean = false,
     val displayOffEntity: String = "",
     val displayBrightnessEntity: String = "",
+    val displayIlluminanceEntity: String = "",
 )
 
 data class MediaPreview(
@@ -122,6 +125,7 @@ class HaViewModel(
             screenTimeoutSeconds = credentials.screenTimeoutSeconds,
             displayOffEntity = credentials.displayOffEntity,
             displayBrightnessEntity = credentials.displayBrightnessEntity,
+            displayIlluminanceEntity = credentials.displayIlluminanceEntity,
         )
         startManagementServer()
         client.onKioskEvent = { params ->
@@ -132,6 +136,8 @@ class HaViewModel(
         watchCameraFlag()
         watchIdleTimeout()
         watchDisplayPower()
+        watchAutoDisplayBrightness()
+        watchProximityWake()
         if (credentials.isConfigured) {
             viewModelScope.launch { connect(credentials.baseUrl, credentials.token) }
         }
@@ -441,6 +447,19 @@ class HaViewModel(
     fun displayBrightnessEntityChoices(): List<Pair<String, String>> =
         entityChoices(setOf("number", "light"))
 
+    fun setDisplayIlluminanceEntity(entityId: String): Result<Unit> {
+        CredentialsStore.entityIdError(entityId)?.let {
+            return Result.failure(IllegalArgumentException(it))
+        }
+        val normalized = CredentialsStore.normalizeEntityId(entityId)
+        credentials.displayIlluminanceEntity = normalized
+        _ui.value = _ui.value.copy(displayIlluminanceEntity = normalized)
+        return Result.success(Unit)
+    }
+
+    fun displayIlluminanceEntityChoices(): List<Pair<String, String>> =
+        entityChoices(setOf("sensor"))
+
     private fun entityChoices(domains: Set<String>): List<Pair<String, String>> =
         states.value.entries
             .asSequence()
@@ -466,6 +485,11 @@ class HaViewModel(
             while (true) {
                 val seconds = _ui.value.screenTimeoutSeconds
                 if (seconds <= 0 || _ui.value.screenAsleep || _ui.value.showSetup) {
+                    delay(1_000)
+                    continue
+                }
+                if (proximityWakeActive(states.value, _ui.value.displayIlluminanceEntity)) {
+                    lastActivityMs = System.currentTimeMillis()
                     delay(1_000)
                     continue
                 }
@@ -504,6 +528,103 @@ class HaViewModel(
             }
         }
     }
+
+    private fun watchAutoDisplayBrightness() {
+        viewModelScope.launch {
+            combine(
+                _ui.map { Triple(it.displayIlluminanceEntity, it.displayBrightnessEntity, it.screenAsleep) }
+                    .distinctUntilChanged(),
+                states,
+            ) { (illumEntity, brightEntity, asleep), allStates ->
+                AutoBrightnessSnapshot(
+                    illuminanceEntity = illumEntity,
+                    brightnessEntity = brightEntity,
+                    asleep = asleep,
+                    luxState = illumEntity.takeIf { it.isNotBlank() }?.let { allStates[it]?.state },
+                    currentBrightness = brightEntity.takeIf { it.isNotBlank() }
+                        ?.let { allStates[it]?.state?.toFloatOrNull() },
+                )
+            }
+                .distinctUntilChanged { a, b ->
+                    a.asleep == b.asleep &&
+                        a.illuminanceEntity == b.illuminanceEntity &&
+                        a.brightnessEntity == b.brightnessEntity &&
+                        a.luxState == b.luxState
+                }
+                .debounce(400)
+                .collect { snap ->
+                    if (snap.asleep ||
+                        snap.illuminanceEntity.isBlank() ||
+                        snap.brightnessEntity.isBlank()
+                    ) {
+                        return@collect
+                    }
+                    val lux = snap.luxState?.toDoubleOrNull() ?: return@collect
+                    if (lux <= 0) return@collect
+                    val target = luxToDisplayBrightness(lux)
+                    val current = snap.currentBrightness?.roundToInt()
+                    if (current != null && abs(target - current) < 2) return@collect
+                    setDisplayBrightness(target.toFloat())
+                }
+        }
+    }
+
+    private fun luxToDisplayBrightness(lux: Double): Int {
+        val clampedLux = lux.coerceIn(1.0, 400.0)
+        val scaled = 30 + (clampedLux - 1) * (255 - 30) / (400 - 1)
+        return scaled.roundToInt().coerceIn(30, 255)
+    }
+
+    private fun watchProximityWake() {
+        viewModelScope.launch {
+            combine(
+                _ui.map { it.displayIlluminanceEntity to it.showSetup }.distinctUntilChanged(),
+                states,
+            ) { (illumEntity, showSetup), allStates ->
+                !showSetup && proximityWakeActive(allStates, illumEntity)
+            }
+                .distinctUntilChanged()
+                .collect { active ->
+                    if (!active) return@collect
+                    lastActivityMs = System.currentTimeMillis()
+                    if (_ui.value.screenAsleep) {
+                        wakeScreen()
+                    }
+                }
+        }
+    }
+
+    private fun proximityWakeActive(
+        allStates: Map<String, EntityState>,
+        illuminanceEntity: String,
+    ): Boolean {
+        if (illuminanceEntity.isBlank()) return false
+        val lux = allStates[illuminanceEntity]?.state?.toDoubleOrNull() ?: return false
+        if (lux > PROXIMITY_WAKE_MAX_LUX) return false
+        return allStates.hasNearbyMmWaveTarget()
+    }
+
+    private fun Map<String, EntityState>.hasNearbyMmWaveTarget(): Boolean {
+        val count = this[MMWAVE_TARGET_COUNT_ENTITY]?.state?.toDoubleOrNull()?.roundToInt()?.coerceIn(0, 4) ?: 0
+        val occupied = isOn(this[MMWAVE_OCCUPANCY_ENTITY]?.state)
+        val effectiveCount = if (occupied) count.coerceAtLeast(1) else count
+        return (1..effectiveCount).any { index ->
+            val y = mmWaveTargetY(index)
+            y in 1..PROXIMITY_WAKE_MAX_Y_CM
+        }
+    }
+
+    private fun Map<String, EntityState>.mmWaveTargetY(index: Int): Int =
+        this["input_number.secondary_living_room_mmwave_target_${index}_y"]
+            ?.state?.toDoubleOrNull()?.roundToInt() ?: 0
+
+    private data class AutoBrightnessSnapshot(
+        val illuminanceEntity: String,
+        val brightnessEntity: String,
+        val asleep: Boolean,
+        val luxState: String?,
+        val currentBrightness: Float?,
+    )
 
     private fun watchCameraFlag() {
         viewModelScope.launch {
@@ -653,6 +774,11 @@ class HaViewModel(
     }
 
     companion object {
+        private const val PROXIMITY_WAKE_MAX_Y_CM = 150
+        private const val PROXIMITY_WAKE_MAX_LUX = 50.0
+        private const val MMWAVE_OCCUPANCY_ENTITY = "binary_sensor.secondary_living_room_switch_occupancy"
+        private const val MMWAVE_TARGET_COUNT_ENTITY = "input_number.secondary_living_room_mmwave_target_count"
+
         fun factory(app: Application): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")

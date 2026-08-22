@@ -56,6 +56,15 @@ class CredentialsStore(context: Context) {
             persist()
         }
 
+    /** HA illuminance sensor that drives automatic panel brightness when awake. */
+    private var displayIlluminanceEntityBacking = readPref(KEY_DISPLAY_ILLUMINANCE)
+    var displayIlluminanceEntity: String
+        get() = displayIlluminanceEntityBacking
+        set(value) {
+            displayIlluminanceEntityBacking = normalizeEntityId(value)
+            persist()
+        }
+
     private var pinValue: String = readPref(KEY_PIN)
 
     var managementPin: String
@@ -82,6 +91,9 @@ class CredentialsStore(context: Context) {
         }
         if (!prefs.contains(KEY_DISPLAY_BRIGHTNESS) && displayBrightnessEntityBacking.isBlank()) {
             displayBrightnessEntityBacking = DEFAULT_DISPLAY_BRIGHTNESS_ENTITY
+        }
+        if (!prefs.contains(KEY_DISPLAY_ILLUMINANCE) && displayIlluminanceEntityBacking.isBlank()) {
+            displayIlluminanceEntityBacking = DEFAULT_DISPLAY_ILLUMINANCE_ENTITY
         }
         persistEnabled = true
         if (isConfigured || managementPin.isNotBlank()) persist()
@@ -139,6 +151,7 @@ class CredentialsStore(context: Context) {
             .putInt(KEY_TIMEOUT_SECONDS, screenTimeoutSeconds)
             .putString(KEY_DISPLAY_OFF, displayOffEntity)
             .putString(KEY_DISPLAY_BRIGHTNESS, displayBrightnessEntity)
+            .putString(KEY_DISPLAY_ILLUMINANCE, displayIlluminanceEntity)
             .apply()
         persistRecoverable()
     }
@@ -172,6 +185,7 @@ class CredentialsStore(context: Context) {
             put("screen_timeout_seconds", screenTimeoutSeconds)
             if (displayOffEntity.isNotBlank()) put("display_off_entity", displayOffEntity)
             if (displayBrightnessEntity.isNotBlank()) put("display_brightness_entity", displayBrightnessEntity)
+            if (displayIlluminanceEntity.isNotBlank()) put("display_illuminance_entity", displayIlluminanceEntity)
             val calendars = subscribedCalendars ?: readCalendarList(existing)
             if (calendars != null) {
                 put("subscribed_calendars", JSONArray(calendars))
@@ -231,6 +245,9 @@ class CredentialsStore(context: Context) {
         if (!prefs.contains(KEY_DISPLAY_BRIGHTNESS) && obj.has("display_brightness_entity")) {
             displayBrightnessEntity = normalizeEntityId(obj.optString("display_brightness_entity"))
         }
+        if (!prefs.contains(KEY_DISPLAY_ILLUMINANCE) && obj.has("display_illuminance_entity")) {
+            displayIlluminanceEntity = normalizeEntityId(obj.optString("display_illuminance_entity"))
+        }
         val pin = obj.optString("management_pin").trim()
         val takeRestoredPin = PIN_PATTERN.matches(pin) &&
             (managementPin.isBlank() || (overwriteGeneratedPin && generatedThisProcess))
@@ -278,9 +295,11 @@ class CredentialsStore(context: Context) {
         private const val KEY_TIMEOUT_MINUTES_LEGACY = "screen_timeout_minutes"
         private const val KEY_DISPLAY_OFF = "display_off_entity"
         private const val KEY_DISPLAY_BRIGHTNESS = "display_brightness_entity"
+        private const val KEY_DISPLAY_ILLUMINANCE = "display_illuminance_entity"
         const val MAX_SCREEN_TIMEOUT_SECONDS = 86_400
         const val DEFAULT_DISPLAY_OFF_ENTITY = "switch.uc_display"
         const val DEFAULT_DISPLAY_BRIGHTNESS_ENTITY = "number.uc_display_brightness"
+        const val DEFAULT_DISPLAY_ILLUMINANCE_ENTITY = "sensor.secondary_living_room_switch_illuminance"
         private val ENTITY_ID = Regex("^[a-z_]+\\.[a-z0-9_]+$")
 
         fun normalizeEntityId(raw: String): String = raw.trim().lowercase()

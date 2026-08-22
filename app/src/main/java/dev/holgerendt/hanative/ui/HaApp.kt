@@ -461,6 +461,15 @@ private fun ScreenTimeoutCard(viewModel: HaViewModel) {
             fieldColors = fieldColors,
             onSelect = viewModel::setDisplayBrightnessEntity,
         )
+        EntityPickerField(
+            label = "Auto-brightness sensor",
+            hint = "Room illuminance (lx) maps to backlight while the panel is awake; also wakes the panel when dark and someone is within 150 cm",
+            selected = ui.displayIlluminanceEntity,
+            choices = viewModel.displayIlluminanceEntityChoices(),
+            noneLabel = "None (manual only)",
+            fieldColors = fieldColors,
+            onSelect = viewModel::setDisplayIlluminanceEntity,
+        )
         val brightnessEntity = ui.displayBrightnessEntity.takeIf { it.isNotBlank() }
         if (brightnessEntity != null) {
             val entity = states[brightnessEntity]
