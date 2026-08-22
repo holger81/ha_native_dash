@@ -17,6 +17,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -88,6 +90,7 @@ import dev.holgerendt.hanative.ui.isVisible
 import dev.holgerendt.hanative.ui.number
 import dev.holgerendt.hanative.ui.stateOf
 import dev.holgerendt.hanative.ui.tempHum
+import dev.holgerendt.hanative.ui.toDoubleOrNullSafe
 import dev.holgerendt.hanative.ui.theme.AccentBlue
 import dev.holgerendt.hanative.ui.theme.AccentRed
 import dev.holgerendt.hanative.ui.theme.ActiveLight
@@ -117,6 +120,8 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.math.abs
 import kotlin.math.hypot
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 private val CardShape = RoundedCornerShape(28.dp)
@@ -1416,18 +1421,142 @@ private fun RuntimeStatTile(label: String, value: String, modifier: Modifier = M
 
 private data class MmWaveTarget(val index: Int, val x: Int, val y: Int, val z: Int)
 
+private data class MmWaveBounds(val xMin: Int, val xMax: Int, val yMin: Int, val yMax: Int) {
+    val aspectRatio: Float
+        get() {
+            val w = (xMax - xMin).toFloat().coerceAtLeast(1f)
+            val h = (yMax - yMin).toFloat().coerceAtLeast(1f)
+            return (w / h).coerceIn(0.75f, 2.5f)
+        }
+}
+
+private val MmWaveTargetColors = listOf(AccentBlue, AccentRed, ActiveYellow, Color(0xFF43A047))
+
+private fun Map<String, EntityState>.mmWaveInt(entityId: String): Int =
+    this[entityId]?.state?.toDoubleOrNullSafe()?.roundToInt() ?: 0
+
+private fun Map<String, EntityState>.mmWaveBounds(): MmWaveBounds {
+    val xMin = mmWaveInt("number.secondary_living_room_switch_mmwave_width_minimum_left").takeIf { it != 0 } ?: -600
+    val xMax = mmWaveInt("number.secondary_living_room_switch_mmwave_width_maximum_right").takeIf { it != 0 } ?: 600
+    val yMin = mmWaveInt("number.secondary_living_room_switch_mmwave_depth_minimum_near")
+    val yMax = mmWaveInt("number.secondary_living_room_switch_mmwave_depth_maximum_far").takeIf { it > 0 } ?: 600
+    return MmWaveBounds(
+        xMin = minOf(xMin, xMax),
+        xMax = maxOf(xMin, xMax),
+        yMin = minOf(yMin, yMax),
+        yMax = maxOf(yMin, yMax),
+    )
+}
+
+private fun MmWaveBounds.toFraction(x: Int, y: Int): Pair<Float, Float> {
+    val xSpan = (xMax - xMin).toFloat().coerceAtLeast(1f)
+    val ySpan = (yMax - yMin).toFloat().coerceAtLeast(1f)
+    val fx = ((x - xMin) / xSpan).coerceIn(0f, 1f)
+    val fy = (1f - (y - yMin) / ySpan).coerceIn(0f, 1f)
+    return fx to fy
+}
+
+@Composable
+private fun MmWaveZoneMap(
+    bounds: MmWaveBounds,
+    targets: List<MmWaveTarget>,
+    overlay: OverlayColors,
+    modifier: Modifier = Modifier,
+) {
+    val plotted = targets.filter { it.x != 0 || it.y != 0 }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(bounds.aspectRatio)
+                .clip(RoundedCornerShape(20.dp))
+                .background(overlay.well)
+                .border(1.dp, overlay.muted.copy(alpha = 0.25f), RoundedCornerShape(20.dp)),
+        ) {
+            val pad = 14.dp
+            val mapWidth = maxWidth - pad * 2
+            val mapHeight = maxHeight - pad * 2
+            Canvas(
+                Modifier
+                    .fillMaxSize()
+                    .padding(pad),
+            ) {
+                drawRoundRect(
+                    color = overlay.card.copy(alpha = 0.65f),
+                    size = size,
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(12.dp.toPx()),
+                    style = Fill,
+                )
+                drawRoundRect(
+                    color = overlay.muted.copy(alpha = 0.35f),
+                    size = size,
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(12.dp.toPx()),
+                    style = Stroke(width = 1.5.dp.toPx()),
+                )
+                val (sensorX, sensorY) = bounds.toFraction(0, bounds.yMin)
+                drawCircle(
+                    color = overlay.muted.copy(alpha = 0.8f),
+                    radius = 5.dp.toPx(),
+                    center = Offset(sensorX * size.width, sensorY * size.height),
+                )
+                plotted.forEach { target ->
+                    val (fx, fy) = bounds.toFraction(target.x, target.y)
+                    val color = MmWaveTargetColors[(target.index - 1) % MmWaveTargetColors.size]
+                    val center = Offset(fx * size.width, fy * size.height)
+                    drawCircle(color = color.copy(alpha = 0.25f), radius = 14.dp.toPx(), center = center)
+                    drawCircle(color = color, radius = 7.dp.toPx(), center = center)
+                    drawCircle(
+                        color = Color.White.copy(alpha = 0.9f),
+                        radius = 7.dp.toPx(),
+                        center = center,
+                        style = Stroke(width = 1.5.dp.toPx()),
+                    )
+                }
+            }
+            plotted.forEach { target ->
+                val (fx, fy) = bounds.toFraction(target.x, target.y)
+                Text(
+                    text = target.index.toString(),
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .offset(
+                            x = pad + mapWidth * fx - 5.dp,
+                            y = pad + mapHeight * fy - 7.dp,
+                        ),
+                )
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("← Left", color = overlay.muted, fontSize = 11.sp)
+            Text("Right →", color = overlay.muted, fontSize = 11.sp)
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("Near (sensor)", color = overlay.muted, fontSize = 11.sp)
+            Text("Far", color = overlay.muted, fontSize = 11.sp)
+        }
+        if (plotted.isEmpty() && targets.isNotEmpty()) {
+            Text("Positions will appear on the map when target reports arrive.", color = overlay.muted, fontSize = 12.sp)
+        }
+    }
+}
+
 @Composable
 fun MmWaveTargetsPanel(viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
     val states by viewModel.states.collectAsState()
     val occupancyEntity = "binary_sensor.secondary_living_room_switch_occupancy"
     val countEntity = "input_number.secondary_living_room_mmwave_target_count"
-    val occupied = states[occupancyEntity]?.state == "on"
-    val count = states[countEntity]?.state?.toIntOrNull()?.coerceIn(0, 4) ?: 0
+    val bounds = states.mmWaveBounds()
+    val occupied = isOn(states[occupancyEntity]?.state)
+    val helperCount = states.mmWaveInt(countEntity).coerceIn(0, 4)
+    val count = if (occupied) max(helperCount, 1) else 0
     val targets = (1..4).mapNotNull { index ->
-        val x = states["input_number.secondary_living_room_mmwave_target_${index}_x"]?.state?.toIntOrNull() ?: 0
-        val y = states["input_number.secondary_living_room_mmwave_target_${index}_y"]?.state?.toIntOrNull() ?: 0
-        val z = states["input_number.secondary_living_room_mmwave_target_${index}_z"]?.state?.toIntOrNull() ?: 0
+        val x = states.mmWaveInt("input_number.secondary_living_room_mmwave_target_${index}_x")
+        val y = states.mmWaveInt("input_number.secondary_living_room_mmwave_target_${index}_y")
+        val z = states.mmWaveInt("input_number.secondary_living_room_mmwave_target_${index}_z")
         if (index <= count) MmWaveTarget(index, x, y, z) else null
     }
     Column(
@@ -1460,6 +1589,7 @@ fun MmWaveTargetsPanel(viewModel: HaViewModel, modifier: Modifier = Modifier) {
                 fontWeight = FontWeight.Light,
             )
         }
+        MmWaveZoneMap(bounds = bounds, targets = targets, overlay = overlay)
         Text("Tracked objects", color = overlay.muted, fontSize = 13.sp)
         if (targets.isEmpty()) {
             Text("No tracked objects right now.", color = overlay.muted, fontSize = 14.sp)
