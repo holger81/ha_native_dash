@@ -41,6 +41,7 @@ fun Map<String, EntityState>.formatState(format: StateFormat?, fallback: String?
     return when (format.kind) {
         "attribute" -> entity?.attrString(format.attribute ?: "") ?: fallback.orEmpty()
         "number" -> number(entityId, format.decimals ?: 1, format.suffix.orEmpty(), format.scale ?: 1.0)
+        "text" -> entity?.state?.takeIf { it.isNotBlank() && it !in setOf("unknown", "unavailable") } ?: fallback.orEmpty()
         "minutes_from_hours" -> {
             val hours = entity?.state?.toDoubleOrNull()
             if (hours == null) "—" else "${(hours * 60).roundToInt()}min"

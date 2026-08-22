@@ -74,6 +74,7 @@ import dev.holgerendt.hanative.data.EntityState
 import dev.holgerendt.hanative.data.HaCalendarEvent
 import dev.holgerendt.hanative.data.hasLiveCameraSource
 import dev.holgerendt.hanative.model.PopupNode
+import dev.holgerendt.hanative.model.StateFormat
 import dev.holgerendt.hanative.model.WidgetNode
 import dev.holgerendt.hanative.ui.HaViewModel
 import dev.holgerendt.hanative.ui.LoadingSpinner
@@ -203,6 +204,7 @@ fun WidgetItem(
         "energy_date_selection" -> EnergyDateBar(modifier)
         "energy_sources_table", "energy_solar_consumed_gauge", "energy_self_sufficiency_gauge" ->
             EnergyStats(viewModel, modifier)
+        "battery_runtime" -> BatteryRuntimePanel(viewModel, modifier)
         "markdown" -> {
             val overlay = LocalOverlay.current
             Text(
@@ -1351,6 +1353,63 @@ fun HistoryChart(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier 
     ) {
         Text(widget.name ?: widget.series.firstOrNull()?.name ?: "kWh", color = overlay.muted, fontSize = 14.sp)
         Sparkline(points, Modifier.fillMaxSize(), HistoryGraph)
+    }
+}
+
+@Composable
+fun BatteryRuntimePanel(viewModel: HaViewModel, modifier: Modifier = Modifier) {
+    val overlay = LocalOverlay.current
+    val states by viewModel.states.collectAsState()
+    val discharging = states["binary_sensor.envoy_battery_discharging"]?.state == "on"
+    val runtime = states.formatState(
+        StateFormat(kind = "text", entity = "sensor.battery_runtime_remaining"),
+    )
+    val load = states.number("sensor.housepanel_total_consumption_house_consumption_1h_mean", 0, " W")
+    val stored = states.number("input_number.battery_energy_helper", 2, " kWh", 0.001)
+    val reserve = states.number("sensor.envoy_202234122877_reserve_battery_energy", 0, " Wh")
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(CardShape)
+            .background(overlay.card)
+            .clickable { viewModel.openMoreInfo("sensor.battery_runtime_remaining") }
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            MdiIcon("mdi:battery-charging", tint = overlay.muted, size = 24.dp)
+            Text("Battery", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        }
+        if (!discharging) {
+            Text("Not discharging right now.", color = overlay.muted, fontSize = 14.sp)
+            return@Column
+        }
+        Text(
+            text = runtime.ifBlank { "—" },
+            color = overlay.text,
+            fontSize = 40.sp,
+            fontWeight = FontWeight.Light,
+        )
+        Text("Estimated runtime at current load", color = overlay.muted, fontSize = 13.sp)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            RuntimeStatTile("Load (1h avg)", load, Modifier.weight(1f))
+            RuntimeStatTile("Stored", stored, Modifier.weight(1f))
+            RuntimeStatTile("Reserve", reserve, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun RuntimeStatTile(label: String, value: String, modifier: Modifier = Modifier) {
+    val overlay = LocalOverlay.current
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(overlay.well)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Text(value, color = overlay.text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        Text(label, color = overlay.muted, fontSize = 11.sp)
     }
 }
 

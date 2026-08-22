@@ -291,11 +291,12 @@
         {
           "type": "status_chip",
           "name": null,
-          "icon": "mdi:home-battery-outline",
-          "entity": "input_number.battery_energy_helper",
+          "icon": "mdi:battery-charging",
+          "entity": "sensor.battery_runtime_remaining",
           "layout": "icon|state",
           "tap": {
-            "type": "more_info"
+            "type": "navigate",
+            "hash": "#power"
           },
           "visibility": {
             "kind": "state_in",
@@ -305,11 +306,8 @@
             ]
           },
           "state": {
-            "kind": "number",
-            "entity": "input_number.battery_energy_helper",
-            "scale": 0.001,
-            "decimals": 2,
-            "suffix": "kW"
+            "kind": "text",
+            "entity": "sensor.battery_runtime_remaining"
           },
           "emphasize_unlocked": false,
           "accent": "dark"
@@ -1141,6 +1139,61 @@
                   {
                     "type": "gap",
                     "height": 30
+                  }
+                ]
+              },
+              {
+                "title": "Battery",
+                "icon": "mdi:battery-charging",
+                "cards": [
+                  {
+                    "type": "battery_runtime",
+                    "title": "battery-runtime"
+                  },
+                  {
+                    "type": "gap",
+                    "height": 12
+                  },
+                  {
+                    "type": "grid",
+                    "columns": 2,
+                    "cards": [
+                      {
+                        "name": "Load (1h avg)",
+                        "icon": "mdi:home-lightning-bolt",
+                        "entity": "sensor.housepanel_total_consumption_house_consumption_1h_mean",
+                        "background": "var(--popupBG)",
+                        "type": "sensor_big",
+                        "label": null,
+                        "state": {
+                          "kind": "number",
+                          "entity": "sensor.housepanel_total_consumption_house_consumption_1h_mean",
+                          "decimals": 0,
+                          "suffix": " W"
+                        },
+                        "tap": {
+                          "type": "more_info"
+                        }
+                      },
+                      {
+                        "name": "Stored",
+                        "icon": "mdi:home-battery-outline",
+                        "entity": "input_number.battery_energy_helper",
+                        "background": "var(--popupBG)",
+                        "type": "sensor_big",
+                        "label": null,
+                        "state": {
+                          "kind": "number",
+                          "entity": "input_number.battery_energy_helper",
+                          "scale": 0.001,
+                          "decimals": 2,
+                          "suffix": " kWh"
+                        },
+                        "tap": {
+                          "type": "more_info"
+                        }
+                      }
+                    ]
                   }
                 ]
               },
@@ -3046,6 +3099,7 @@
     "select.main_bedroom_activity_status",
     "select.office_activity_status",
     "select.second_bathroom_activity_status",
+    "sensor.battery_runtime_remaining",
     "sensor.bosch_dishwasher_operation_state",
     "sensor.bosch_dishwasher_remaining_program_time",
     "sensor.current_electrical_energy_import_cost",
@@ -3055,10 +3109,13 @@
     "sensor.emporia_vue_3_total_power_return",
     "sensor.envoy_202234122877_current_net_power_consumption",
     "sensor.envoy_202234122877_current_power_production",
+    "sensor.envoy_202234122877_available_battery_energy",
+    "sensor.envoy_202234122877_reserve_battery_energy",
     "sensor.front_load_washer",
     "sensor.great_room_4afa_temperature",
     "sensor.guestroom_f628_temperature",
     "sensor.hallway_temperature",
+    "sensor.housepanel_total_consumption_house_consumption_1h_mean",
     "sensor.home_bettina_distance",
     "sensor.home_holger_distance",
     "sensor.home_outdoor_aqi_5min_mean",
