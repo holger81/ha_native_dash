@@ -1547,17 +1547,26 @@ private fun MmWaveZoneMap(
 fun MmWaveTargetsPanel(viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
     val states by viewModel.states.collectAsState()
+    val live by viewModel.mmWaveLive.collectAsState()
     val occupancyEntity = "binary_sensor.secondary_living_room_switch_occupancy"
     val countEntity = "input_number.secondary_living_room_mmwave_target_count"
     val bounds = states.mmWaveBounds()
     val occupied = isOn(states[occupancyEntity]?.state)
     val helperCount = states.mmWaveInt(countEntity).coerceIn(0, 4)
-    val count = if (occupied) max(helperCount, 1) else 0
+    val liveCount = live.count.coerceIn(0, 4)
+    val count = when {
+        !occupied -> 0
+        liveCount > 0 -> max(max(liveCount, helperCount), 1)
+        helperCount > 0 -> helperCount
+        else -> 1
+    }
     val targets = (1..4).mapNotNull { index ->
-        val x = states.mmWaveInt("input_number.secondary_living_room_mmwave_target_${index}_x")
-        val y = states.mmWaveInt("input_number.secondary_living_room_mmwave_target_${index}_y")
-        val z = states.mmWaveInt("input_number.secondary_living_room_mmwave_target_${index}_z")
-        if (index <= count) MmWaveTarget(index, x, y, z) else null
+        if (index > count) return@mapNotNull null
+        val liveSlot = live.slots[index]
+        val x = liveSlot?.x ?: states.mmWaveInt("input_number.secondary_living_room_mmwave_target_${index}_x")
+        val y = liveSlot?.y ?: states.mmWaveInt("input_number.secondary_living_room_mmwave_target_${index}_y")
+        val z = liveSlot?.z ?: states.mmWaveInt("input_number.secondary_living_room_mmwave_target_${index}_z")
+        MmWaveTarget(index, x, y, z)
     }
     Column(
         modifier = modifier

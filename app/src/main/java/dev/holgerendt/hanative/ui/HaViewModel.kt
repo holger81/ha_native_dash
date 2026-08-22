@@ -20,6 +20,8 @@ import dev.holgerendt.hanative.data.LiveCameraHub
 import dev.holgerendt.hanative.data.LiveCameraView
 import dev.holgerendt.hanative.data.ManagementServer
 import dev.holgerendt.hanative.data.ManagementTls
+import dev.holgerendt.hanative.data.MmWaveLiveTargets
+import dev.holgerendt.hanative.data.MmWaveLiveTracker
 import dev.holgerendt.hanative.model.ActionNode
 import dev.holgerendt.hanative.model.CalendarSourceNode
 import dev.holgerendt.hanative.model.DashboardFile
@@ -98,6 +100,9 @@ class HaViewModel(
     private val _subscribedCalendars = MutableStateFlow(credentials.subscribedCalendars)
     val subscribedCalendars: StateFlow<List<String>?> = _subscribedCalendars
 
+    private val _mmWaveLive = MutableStateFlow(MmWaveLiveTargets())
+    val mmWaveLive: StateFlow<MmWaveLiveTargets> = _mmWaveLive
+
     private val _availableCalendars = MutableStateFlow(listOf<CalendarInfo>())
     val availableCalendars: StateFlow<List<CalendarInfo>> = _availableCalendars
 
@@ -133,7 +138,11 @@ class HaViewModel(
                 KioskCommands.fromParams(params)?.let { applyKioskCommand(it) }
             }
         }
+        client.onMmWaveTargetEvent = { event ->
+            _mmWaveLive.value = MmWaveLiveTracker.merge(_mmWaveLive.value, event)
+        }
         watchCameraFlag()
+        watchMmWaveClear()
         watchIdleTimeout()
         watchDisplayPower()
         watchAutoDisplayBrightness()
@@ -625,6 +634,18 @@ class HaViewModel(
         val luxState: String?,
         val currentBrightness: Float?,
     )
+
+    private fun watchMmWaveClear() {
+        viewModelScope.launch {
+            states.map { it[MMWAVE_OCCUPANCY_ENTITY]?.state }
+                .distinctUntilChanged()
+                .collect { state ->
+                    if (!isOn(state)) {
+                        _mmWaveLive.value = MmWaveLiveTargets()
+                    }
+                }
+        }
+    }
 
     private fun watchCameraFlag() {
         viewModelScope.launch {

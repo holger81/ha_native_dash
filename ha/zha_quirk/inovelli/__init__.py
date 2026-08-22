@@ -1555,22 +1555,18 @@ class InovelliVZM32SNMMWaveCluster(CustomCluster):
     @staticmethod
     def _target_event_args(parsed: dict) -> dict:
         """Flatten parsed targets for zha_event consumers."""
-        event_args = {
+        event_args: dict[str, Any] = {
             "target_num": parsed["target_num"],
             "targets": parsed["targets"],
         }
-        for i in range(1, 5):
-            if i <= len(parsed["targets"]):
-                target = parsed["targets"][i - 1]
-                event_args[f"target_{i}_x"] = target["x"]
-                event_args[f"target_{i}_y"] = target["y"]
-                event_args[f"target_{i}_z"] = target["z"]
-                event_args[f"target_{i}_id"] = target["id"]
-            else:
-                event_args[f"target_{i}_x"] = 0
-                event_args[f"target_{i}_y"] = 0
-                event_args[f"target_{i}_z"] = 0
-                event_args[f"target_{i}_id"] = 0
+        for target in parsed["targets"]:
+            slot = target["id"]
+            if not 1 <= slot <= 4:
+                slot = target["index"]
+            event_args[f"target_{slot}_x"] = target["x"]
+            event_args[f"target_{slot}_y"] = target["y"]
+            event_args[f"target_{slot}_z"] = target["z"]
+            event_args[f"target_{slot}_id"] = target["id"]
         if parsed["targets"]:
             first = parsed["targets"][0]
             event_args.update(

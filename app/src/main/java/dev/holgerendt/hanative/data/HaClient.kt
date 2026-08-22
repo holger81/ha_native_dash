@@ -110,6 +110,7 @@ sealed interface ConnectionState {
 
 class HaClient {
     @Volatile var onKioskEvent: ((Map<String, String>) -> Unit)? = null
+    @Volatile var onMmWaveTargetEvent: ((MmWaveTargetEvent) -> Unit)? = null
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val mediaType = "application/json; charset=utf-8".toMediaType()
     private val http = OkHttpClient.Builder()
@@ -214,6 +215,11 @@ class HaClient {
                 })
                 send(buildJsonObject {
                     put("id", nextId.getAndIncrement())
+                    put("type", "subscribe_events")
+                    put("event_type", "zha_event")
+                })
+                send(buildJsonObject {
+                    put("id", nextId.getAndIncrement())
                     put("type", "get_states")
                 })
             }
@@ -251,6 +257,10 @@ class HaClient {
                     KioskCommands.EVENT -> {
                         val data = event["data"]?.jsonObject ?: return
                         onKioskEvent?.invoke(jsonMap(data))
+                    }
+                    "zha_event" -> {
+                        val data = event["data"]?.jsonObject ?: return
+                        MmWaveLiveTracker.parseZhaEvent(data)?.let { onMmWaveTargetEvent?.invoke(it) }
                     }
                 }
             }
