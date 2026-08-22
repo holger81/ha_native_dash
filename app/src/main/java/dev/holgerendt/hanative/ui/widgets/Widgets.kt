@@ -205,6 +205,7 @@ fun WidgetItem(
         "energy_sources_table", "energy_solar_consumed_gauge", "energy_self_sufficiency_gauge" ->
             EnergyStats(viewModel, modifier)
         "battery_runtime" -> BatteryRuntimePanel(viewModel, modifier)
+        "mmwave_targets" -> MmWaveTargetsPanel(viewModel, modifier)
         "markdown" -> {
             val overlay = LocalOverlay.current
             Text(
@@ -1410,6 +1411,87 @@ private fun RuntimeStatTile(label: String, value: String, modifier: Modifier = M
     ) {
         Text(value, color = overlay.text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
         Text(label, color = overlay.muted, fontSize = 11.sp)
+    }
+}
+
+private data class MmWaveTarget(val index: Int, val x: Int, val y: Int, val z: Int)
+
+@Composable
+fun MmWaveTargetsPanel(viewModel: HaViewModel, modifier: Modifier = Modifier) {
+    val overlay = LocalOverlay.current
+    val states by viewModel.states.collectAsState()
+    val occupancyEntity = "binary_sensor.secondary_living_room_switch_occupancy"
+    val countEntity = "input_number.secondary_living_room_mmwave_target_count"
+    val occupied = states[occupancyEntity]?.state == "on"
+    val count = states[countEntity]?.state?.toIntOrNull()?.coerceIn(0, 4) ?: 0
+    val targets = (1..4).mapNotNull { index ->
+        val x = states["input_number.secondary_living_room_mmwave_target_${index}_x"]?.state?.toIntOrNull() ?: 0
+        val y = states["input_number.secondary_living_room_mmwave_target_${index}_y"]?.state?.toIntOrNull() ?: 0
+        val z = states["input_number.secondary_living_room_mmwave_target_${index}_z"]?.state?.toIntOrNull() ?: 0
+        if (index <= count) MmWaveTarget(index, x, y, z) else null
+    }
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(CardShape)
+            .background(overlay.card)
+            .clickable { viewModel.openMoreInfo(countEntity) }
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            MdiIcon("mdi:motion-sensor", tint = overlay.muted, size = 24.dp)
+            Column(Modifier.weight(1f)) {
+                Text("Secondary Living Room", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    if (occupied) "Occupied" else "Clear",
+                    color = if (occupied) overlay.text else overlay.muted,
+                    fontSize = 13.sp,
+                )
+            }
+            Text(
+                text = count.toString(),
+                color = overlay.text,
+                fontSize = 34.sp,
+                fontWeight = FontWeight.Light,
+            )
+        }
+        Text("Tracked objects", color = overlay.muted, fontSize = 13.sp)
+        if (targets.isEmpty()) {
+            Text("No tracked objects right now.", color = overlay.muted, fontSize = 14.sp)
+        } else {
+            targets.forEach { target ->
+                TargetRow(target, overlay)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TargetRow(target: MmWaveTarget, overlay: OverlayColors) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(overlay.well)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text("Object ${target.index}", color = overlay.text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+        val hasPosition = target.x != 0 || target.y != 0 || target.z != 0
+        Text(
+            text = if (hasPosition) {
+                "X ${target.x} cm  ·  Y ${target.y} cm  ·  Z ${target.z} cm"
+            } else {
+                "Position pending"
+            },
+            color = overlay.muted,
+            fontSize = 13.sp,
+        )
     }
 }
 

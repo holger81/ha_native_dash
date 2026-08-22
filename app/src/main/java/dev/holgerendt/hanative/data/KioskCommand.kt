@@ -34,6 +34,9 @@ object KioskCommands {
         "car" to "#bil",
         "bil" to "#bil",
         "settings" to "#settings",
+        "presence" to "#presence",
+        "radar" to "#presence",
+        "mmwave" to "#presence",
     )
 
     fun fromParams(params: Map<String, String>): KioskCommand? {

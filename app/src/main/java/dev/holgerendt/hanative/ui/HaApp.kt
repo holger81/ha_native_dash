@@ -203,6 +203,7 @@ private fun DrawerMenu(viewModel: HaViewModel) {
     val items = listOf(
         "Weather" to "#weather",
         "Power" to "#power",
+        "Presence" to "#presence",
         "Cars" to "#bil",
         "Staubinator" to "#staubinator",
         "Camera" to "#camerafront_view",
