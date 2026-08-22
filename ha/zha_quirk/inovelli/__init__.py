@@ -1280,6 +1280,17 @@ class InovelliVZM32SNCluster(InovelliCluster):
         )
 
 
+class MmWaveTargetPayload(bytes):
+    """Variable-length tail of report_target_info (9 bytes per target after count)."""
+
+    @classmethod
+    def deserialize(cls, data):
+        return cls(data), b""
+
+    def serialize(self):
+        return bytes(self)
+
+
 class InovelliVZM32SNMMWaveCluster(CustomCluster):
     """Inovelli VZM32-SN MMWave custom cluster."""
 
@@ -1417,11 +1428,7 @@ class InovelliVZM32SNMMWaveCluster(CustomCluster):
             id=0x01,
             schema={
                 "target_num": t.uint8_t,
-                "x": t.int16s,
-                "y": t.int16s,
-                "z": t.int16s,
-                "dop": t.int16s,
-                "id": t.uint8_t,
+                "targets": MmWaveTargetPayload,
             },
             is_manufacturer_specific=True,
         )
@@ -1521,6 +1528,62 @@ class InovelliVZM32SNMMWaveCluster(CustomCluster):
             }
         return {"count": count, **areas}
 
+    @staticmethod
+    def _parse_target_report_raw(data: bytes) -> dict:
+        """Parse report_target_info payload (count + up to 4 targets x 9 bytes)."""
+        if len(data) < 1:
+            return {"target_num": 0, "targets": []}
+        count = min(int(data[0]), 4)
+        targets = []
+        for i in range(count):
+            offset = 1 + i * 9
+            if offset + 9 > len(data):
+                break
+            x, y, z, dop, tid = struct.unpack_from("<hhhh b", data, offset)
+            targets.append(
+                {
+                    "index": i + 1,
+                    "id": tid,
+                    "x": x,
+                    "y": y,
+                    "z": z,
+                    "dop": dop,
+                }
+            )
+        return {"target_num": count, "targets": targets}
+
+    @staticmethod
+    def _target_event_args(parsed: dict) -> dict:
+        """Flatten parsed targets for zha_event consumers."""
+        event_args = {
+            "target_num": parsed["target_num"],
+            "targets": parsed["targets"],
+        }
+        for i in range(1, 5):
+            if i <= len(parsed["targets"]):
+                target = parsed["targets"][i - 1]
+                event_args[f"target_{i}_x"] = target["x"]
+                event_args[f"target_{i}_y"] = target["y"]
+                event_args[f"target_{i}_z"] = target["z"]
+                event_args[f"target_{i}_id"] = target["id"]
+            else:
+                event_args[f"target_{i}_x"] = 0
+                event_args[f"target_{i}_y"] = 0
+                event_args[f"target_{i}_z"] = 0
+                event_args[f"target_{i}_id"] = 0
+        if parsed["targets"]:
+            first = parsed["targets"][0]
+            event_args.update(
+                {
+                    "x": first["x"],
+                    "y": first["y"],
+                    "z": first["z"],
+                    "dop": first["dop"],
+                    "id": first["id"],
+                }
+            )
+        return event_args
+
     def handle_cluster_request(
         self,
         hdr: ZCLHeader,
@@ -1540,14 +1603,9 @@ class InovelliVZM32SNMMWaveCluster(CustomCluster):
             }
             self.listener_event(ZHA_SEND_EVENT, "mmwave_anyone_in_area", event_args)
         elif hdr.command_id == 0x01:  # report_target_info
-            event_args = {
-                "target_num": args.target_num,
-                "x": args.x,
-                "y": args.y,
-                "z": args.z,
-                "dop": args.dop,
-                "id": args.id,
-            }
+            payload = bytes([args.target_num]) + bytes(args.targets)
+            parsed = self._parse_target_report_raw(payload)
+            event_args = self._target_event_args(parsed)
             self.listener_event(ZHA_SEND_EVENT, "mmwave_target_info", event_args)
         elif hdr.command_id in (0x02, 0x03, 0x04):  # area reports
             event_name = {

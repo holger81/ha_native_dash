@@ -15,3 +15,5 @@ page for Secondary Living Room Switch -> Reconfigure.
 
 Verify: a switch entity "mmWave target info report" appears on the device.
 Turn it on. Target reports arrive as zha_event command mmwave_target_info.
+Each report can include up to 4 targets (target_num + 9-byte records); the quirk
+emits target_1_x … target_4_z flat fields for automations.
