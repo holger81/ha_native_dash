@@ -91,16 +91,6 @@ import dev.holgerendt.hanative.ui.widgets.WeatherHeader
 import dev.holgerendt.hanative.ui.widgets.WeekPlanner
 import dev.holgerendt.hanative.ui.widgets.WidgetTree
 import kotlinx.coroutines.delay
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.jsonPrimitive
-import java.time.Instant
-import java.time.LocalDate
-import java.time.OffsetDateTime
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 @Composable
 fun HaApp(viewModel: HaViewModel) {
@@ -359,7 +349,7 @@ private fun PopupHost(popup: PopupNode, viewModel: HaViewModel) {
     val cameraPopup = popup.hash == "#camerafront_view"
     PopupScaffold(popup, viewModel, scrollContent = !cameraPopup) {
         when (popup.hash) {
-            "#weather" -> WeatherPopup(viewModel)
+            "#weather" -> WeatherPopup(popup, viewModel)
             "#camerafront_view" -> CameraPopup(popup, viewModel)
             "#settings" -> SettingsPopup(popup, viewModel)
             else -> WidgetTree(popup.cards, viewModel)
@@ -755,121 +745,6 @@ private fun ManagementPinCard(viewModel: HaViewModel) {
             Text(if (ui.pinIsUserSet) "Change PIN" else "Save PIN", color = Color.Black)
         }
     }
-}
-
-@Composable
-private fun WeatherPopup(viewModel: HaViewModel) {
-    val overlay = LocalOverlay.current
-    val states by viewModel.states.collectAsState()
-    val weather = states["weather.forecast_tankerland_ct"]
-    val temp = states["sensor.st_00063154_temperature"]?.state?.toDoubleOrNull()
-    val feels = states["sensor.st_00063154_feels_like"]?.state?.toDoubleOrNull()
-    val wind = states["sensor.st_00063154_wind_speed_average"]?.state?.toDoubleOrNull()
-    val rain = states["sensor.rain_sum_today"]?.state
-    val day = states["sun.sun"]?.state == "above_horizon"
-    var forecasts by remember { mutableStateOf(listOf<JsonObject>()) }
-    var forecastLoaded by remember { mutableStateOf(false) }
-    LaunchedEffect(viewModel.client.currentBaseUrl, weather?.state) {
-        forecasts = runCatching {
-            viewModel.client.weatherForecast("weather.forecast_tankerland_ct")
-        }.getOrDefault(emptyList())
-        forecastLoaded = true
-    }
-    val upcoming = if (forecasts.size > 1) forecasts.drop(1) else forecasts
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(28.dp))
-                .background(overlay.card)
-                .padding(24.dp),
-        ) {
-            Text("Now", color = overlay.muted, fontSize = 14.sp)
-            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                MdiIcon(weatherIcon(weather?.state, day), tint = overlay.text, size = 120.dp)
-            }
-            Text(
-                "${temp.format(1, "°")}  ${feels.format(1, "°")}",
-                color = overlay.text,
-                fontSize = 42.sp,
-                fontWeight = FontWeight.Light,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(weather?.state?.replace('_', ' ')?.replaceFirstChar { it.uppercase() }.orEmpty(), color = overlay.text)
-                Text("${wind.format(1)} km/h", color = overlay.text)
-                Text("${rain ?: "—"} mm", color = overlay.text)
-            }
-        }
-        if (!forecastLoaded) {
-            Box(
-                modifier = Modifier.fillMaxWidth().padding(24.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                LoadingSpinner(color = overlay.muted)
-            }
-        }
-        upcoming.forEach { dayForecast ->
-            val condition = jsonText(dayForecast["condition"])
-            val high = jsonNumber(dayForecast["temperature"])
-            val low = jsonNumber(dayForecast["templow"])
-            val pop = jsonNumber(dayForecast["precipitation_probability"])
-            val precip = jsonNumber(dayForecast["precipitation"])
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(28.dp))
-                    .background(overlay.card)
-                    .padding(24.dp)
-                    .height(150.dp),
-            ) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.SpaceBetween) {
-                        Text(forecastWeekday(jsonText(dayForecast["datetime"])), color = overlay.text, fontSize = 16.sp)
-                        Text(
-                            listOfNotNull(high?.let { "${it.format(0)}°" }, low?.let { "${it.format(0)}°" }).joinToString("  "),
-                            color = overlay.text,
-                            fontSize = 36.sp,
-                            fontWeight = FontWeight.Light,
-                        )
-                        Text(
-                            buildString {
-                                append(condition.replaceFirstChar { it.uppercase() })
-                                pop?.let { append("   ${it.format(0)}%") }
-                                precip?.let { append("   ${it.format(1)}mm") }
-                            },
-                            color = overlay.text,
-                            fontSize = 16.sp,
-                        )
-                    }
-                    MdiIcon(weatherIcon(condition, day), tint = overlay.text, size = 72.dp)
-                }
-            }
-        }
-    }
-}
-
-private fun jsonText(element: kotlinx.serialization.json.JsonElement?): String {
-    val primitive = element as? JsonPrimitive ?: return ""
-    return primitive.contentOrNull ?: primitive.toString().trim('"')
-}
-
-private fun jsonNumber(element: kotlinx.serialization.json.JsonElement?): Double? {
-    val primitive = element as? JsonPrimitive ?: return null
-    return primitive.doubleOrNull ?: primitive.contentOrNull?.toDoubleOrNull()
-}
-
-private fun forecastWeekday(raw: String): String {
-    if (raw.isBlank()) return ""
-    val instant = runCatching { Instant.parse(raw) }.getOrNull()
-        ?: runCatching { OffsetDateTime.parse(raw).toInstant() }.getOrNull()
-        ?: return raw.take(10)
-    val date = instant.atZone(ZoneId.systemDefault()).toLocalDate()
-    val today = LocalDate.now()
-    return when (date) {
-        today -> "Today"
-        today.plusDays(1) -> "Tomorrow"
-        else -> date.format(DateTimeFormatter.ofPattern("EEEE"))
-    }.replaceFirstChar { it.uppercase() }
 }
 
 @Composable

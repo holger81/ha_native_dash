@@ -14,6 +14,8 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.holgerendt.hanative.data.DashboardLoader
+import dev.holgerendt.hanative.ui.theme.AccentBlue
+import dev.holgerendt.hanative.ui.theme.TextMuted
 
 private var cachedFont: FontFamily? = null
 private var cachedCodes: Map<String, String>? = null
@@ -63,5 +65,17 @@ fun weatherIcon(condition: String?, day: Boolean): String {
         normalized.contains("clear") || normalized.contains("sunny") ->
             if (day) "mdi:weather-sunny" else "mdi:weather-night"
         else -> if (day) "mdi:weather-sunny" else "mdi:weather-night"
+    }
+}
+
+/** Lovelace weather-header tint: amber sun, blue rain/snow, gray overcast. */
+fun weatherTint(condition: String?, day: Boolean = true): Color {
+    val value = condition.orEmpty().lowercase().replace('_', '-')
+    return when {
+        "rain" in value || "pour" in value || "snow" in value -> AccentBlue
+        "fog" in value || "hail" in value || "wind" in value -> TextMuted
+        "cloud" in value && "partly" !in value && "sun" !in value && "clear" !in value -> TextMuted
+        !day && ("clear" in value || "sunny" in value) -> AccentBlue
+        else -> Color(0xFFFFB300)
     }
 }

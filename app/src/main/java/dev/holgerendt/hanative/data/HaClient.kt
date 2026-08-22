@@ -878,20 +878,23 @@ class HaClient {
         return null
     }
 
-    suspend fun weatherForecast(entityId: String): List<JsonObject> {
+    suspend fun weatherForecast(entityId: String, forecastType: String = "daily"): List<JsonObject> {
         val fromWs = runCatching {
             val result = command {
                 put("type", "weather/get_forecasts")
                 put("entity_id", JsonArray(listOf(JsonPrimitive(entityId))))
-                put("forecast_type", "daily")
+                put("forecast_type", forecastType)
             }
             result.jsonObject[entityId]?.jsonObject?.get("forecast") as? JsonArray
         }.getOrNull()
         if (fromWs != null && fromWs.isNotEmpty()) {
             return fromWs.mapNotNull { it as? JsonObject }
         }
-        forecastFromAttributes(entityId).takeIf { it.isNotEmpty() }?.let { return it }
-        return forecastFromAttributes("sensor.weather_forecast_daily")
+        if (forecastType == "daily") {
+            forecastFromAttributes(entityId).takeIf { it.isNotEmpty() }?.let { return it }
+            return forecastFromAttributes("sensor.weather_forecast_daily")
+        }
+        return emptyList()
     }
 
     private fun forecastFromAttributes(entityId: String): List<JsonObject> {

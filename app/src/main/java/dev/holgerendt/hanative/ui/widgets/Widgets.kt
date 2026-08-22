@@ -110,6 +110,7 @@ import dev.holgerendt.hanative.ui.theme.VacuumStart
 import dev.holgerendt.hanative.ui.theme.VacuumStop
 import dev.holgerendt.hanative.ui.theme.accentColor
 import dev.holgerendt.hanative.ui.weatherIcon
+import dev.holgerendt.hanative.ui.weatherTint
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -322,7 +323,7 @@ fun WeatherHeader(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        MdiIcon(weatherIcon(weather?.state, day), tint = TextDark, size = 48.dp)
+        MdiIcon(weatherIcon(weather?.state, day), tint = weatherTint(weather?.state, day), size = 48.dp)
         Column(horizontalAlignment = Alignment.End) {
             Text(condition.replaceFirstChar { it.uppercase() }, color = TextMuted, fontSize = 14.sp)
             Text(temp.format(1, "°C"), color = TextDark, fontSize = 26.sp, fontWeight = FontWeight.Light)
@@ -682,15 +683,6 @@ private fun WeekPlannerDay(
                 }
             }
         }
-    }
-}
-
-private fun weatherTint(condition: String?): Color {
-    val value = condition.orEmpty().lowercase()
-    return when {
-        "rain" in value || "pour" in value || "snow" in value -> AccentBlue
-        "cloud" in value && "partly" !in value && "sun" !in value -> TextMuted
-        else -> Color(0xFFFFB300)
     }
 }
 
@@ -1917,6 +1909,8 @@ fun PopupScaffold(
     viewModel: HaViewModel,
     scrollContent: Boolean = true,
     overlay: OverlayColors = OverlayLightPopup,
+    titleOverride: String? = null,
+    subtitleOverride: String? = null,
     content: @Composable () -> Unit,
 ) {
     CompositionLocalProvider(LocalOverlay provides overlay) {
@@ -1932,11 +1926,12 @@ fun PopupScaffold(
                 .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp),
         ) {
             PopupSheetChrome(
-                title = popup.name.orEmpty(),
+                title = titleOverride ?: popup.name.orEmpty(),
                 onClose = { viewModel.closePopup() },
                 overlay = overlay,
                 icon = popup.icon,
                 accent = popup.accent,
+                subtitle = subtitleOverride,
             )
             Spacer(Modifier.height(12.dp))
             if (scrollContent) {
