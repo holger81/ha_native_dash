@@ -484,48 +484,57 @@ class HaViewModel(
     }
 
     private suspend fun refreshMusicWall(forcePlayers: Boolean) {
-        val players = if (forcePlayers || _musicWall.value.players.isEmpty()) {
-            runCatching { client.musicAssistantPlayers() }
-                .getOrElse { error ->
-                    _musicWall.value = _musicWall.value.copy(
-                        loading = false,
-                        error = error.message ?: "Could not load Music Assistant players",
-                    )
-                    return
-                }
-        } else {
-            _musicWall.value.players
-        }
-        val preferred = _musicWall.value.selectedEntityId
-            ?: credentials.musicPlayerEntity.takeIf { it.isNotBlank() }
-        val selected = when {
-            preferred != null && players.any { it.entityId == preferred } -> preferred
-            players.isEmpty() -> null
-            else -> {
-                players.firstOrNull { client.state(it.entityId)?.state == "playing" }?.entityId
-                    ?: players.firstOrNull { client.state(it.entityId)?.state == "paused" }?.entityId
-                    ?: players.first().entityId
+        try {
+            val players = if (forcePlayers || _musicWall.value.players.isEmpty()) {
+                runCatching { client.musicAssistantPlayers() }
+                    .getOrElse { error ->
+                        _musicWall.value = _musicWall.value.copy(
+                            loading = false,
+                            error = error.message ?: "Could not load media players",
+                        )
+                        return
+                    }
+            } else {
+                _musicWall.value.players
             }
+            val preferred = _musicWall.value.selectedEntityId
+                ?: credentials.musicPlayerEntity.takeIf { it.isNotBlank() }
+            val selected = when {
+                preferred != null && players.any { it.entityId == preferred } -> preferred
+                players.isEmpty() -> null
+                else -> {
+                    players.firstOrNull { client.state(it.entityId)?.state == "playing" }?.entityId
+                        ?: players.firstOrNull { client.state(it.entityId)?.state == "paused" }?.entityId
+                        ?: players.first().entityId
+                }
+            }
+            if (selected != null && selected != credentials.musicPlayerEntity) {
+                credentials.musicPlayerEntity = selected
+            }
+            val queue = if (selected != null) {
+                runCatching { client.musicAssistantQueue(selected) }.getOrNull()
+            } else {
+                null
+            }
+            _musicWall.value = MusicWallState(
+                loading = false,
+                players = players,
+                selectedEntityId = selected,
+                queue = queue,
+                error = when {
+                    players.isEmpty() ->
+                        "No media players found. Add the Music Assistant integration in Home Assistant for the full wall player."
+                    else -> null
+                },
+            )
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            _musicWall.value = _musicWall.value.copy(
+                loading = false,
+                error = error.message ?: "Music player failed to load",
+            )
         }
-        if (selected != null && selected != credentials.musicPlayerEntity) {
-            credentials.musicPlayerEntity = selected
-        }
-        val queue = if (selected != null) {
-            runCatching { client.musicAssistantQueue(selected) }.getOrNull()
-        } else {
-            null
-        }
-        _musicWall.value = MusicWallState(
-            loading = false,
-            players = players,
-            selectedEntityId = selected,
-            queue = queue,
-            error = when {
-                players.isEmpty() ->
-                    "No Music Assistant players found. Install the Music Assistant integration in Home Assistant."
-                else -> null
-            },
-        )
     }
 
     fun openSetup() {
@@ -543,16 +552,16 @@ class HaViewModel(
     }
 
     fun openPopup(hash: String?) {
-        if (hash == "#music") {
-            openMusicWall()
-        } else {
-            closeMusicWall()
-        }
+        val previous = _ui.value.popupHash
         _ui.value = _ui.value.copy(
             popupHash = hash,
             drawerOpen = false,
             weatherPopupContext = null,
         )
+        when {
+            hash == "#music" -> openMusicWall()
+            previous == "#music" -> closeMusicWall()
+        }
     }
 
     fun openWeatherPopup(

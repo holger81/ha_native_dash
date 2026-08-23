@@ -416,7 +416,8 @@ class HaClient {
     }
 
     suspend fun musicAssistantPlayers(): List<MusicAssistantPlayer> {
-        val fromStates = _states.value.values
+        val states = _states.value.values
+        val fromMass = states
             .asSequence()
             .filter { it.isMusicAssistantPlayer() }
             .map {
@@ -427,40 +428,43 @@ class HaClient {
                 )
             }
             .toList()
-        if (fromStates.isNotEmpty()) {
-            return fromStates.sortedWith(
-                compareByDescending<MusicAssistantPlayer> { player ->
-                    val state = state(player.entityId)?.state
-                    state == "playing" || state == "paused"
-                }.thenBy { it.name.lowercase() },
-            )
-        }
-        val registry = runCatching {
-            command { put("type", "config/entity_registry/list") }.jsonArray
-        }.getOrNull() ?: return emptyList()
-        return registry.mapNotNull { element ->
-            val obj = element as? JsonObject ?: return@mapNotNull null
-            val entityId = obj["entity_id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-            if (!entityId.startsWith("media_player.")) return@mapNotNull null
-            val platform = obj["platform"]?.jsonPrimitive?.contentOrNull
-            if (!platform.equals("music_assistant", ignoreCase = true)) return@mapNotNull null
-            if (obj["disabled_by"]?.jsonPrimitive?.contentOrNull != null) return@mapNotNull null
-            val name = obj["name"]?.jsonPrimitive?.contentOrNull
-                ?: obj["original_name"]?.jsonPrimitive?.contentOrNull
-                ?: state(entityId)?.friendlyName
-                ?: entityId.substringAfter('.')
-            MusicAssistantPlayer(entityId = entityId, name = name)
-        }.sortedBy { it.name.lowercase() }
+        if (fromMass.isNotEmpty()) return sortMusicPlayers(fromMass)
+
+        // Ordinary media players until the Music Assistant integration exposes MA entities.
+        val fallback = states
+            .asSequence()
+            .filter { it.entityId.startsWith("media_player.") }
+            .filter { it.state !in setOf("unavailable", "unknown") }
+            .map {
+                MusicAssistantPlayer(
+                    entityId = it.entityId,
+                    name = it.friendlyName,
+                )
+            }
+            .toList()
+        return sortMusicPlayers(fallback)
     }
 
-    suspend fun musicAssistantQueue(entityId: String): MusicAssistantQueue? {
-        val result = callService(
-            domain = "music_assistant",
-            service = "get_queue",
-            entityId = listOf(entityId),
-            returnResponse = true,
+    private fun sortMusicPlayers(players: List<MusicAssistantPlayer>): List<MusicAssistantPlayer> =
+        players.sortedWith(
+            compareByDescending<MusicAssistantPlayer> { player ->
+                val state = state(player.entityId)?.state
+                state == "playing" || state == "paused"
+            }.thenBy { it.name.lowercase() },
         )
-        return parseMusicAssistantQueue(result, entityId)
+
+    suspend fun musicAssistantQueue(entityId: String): MusicAssistantQueue? {
+        return runCatching {
+            withTimeout(4_000) {
+                val result = callService(
+                    domain = "music_assistant",
+                    service = "get_queue",
+                    entityId = listOf(entityId),
+                    returnResponse = true,
+                )
+                parseMusicAssistantQueue(result, entityId)
+            }
+        }.getOrNull()
     }
 
     suspend fun mediaPlayerCommand(entityId: String, service: String, data: Map<String, JsonElement> = emptyMap()) {
