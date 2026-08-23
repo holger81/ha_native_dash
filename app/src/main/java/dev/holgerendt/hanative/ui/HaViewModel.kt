@@ -49,6 +49,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -164,9 +165,12 @@ class HaViewModel(
     private var lastActivityMs = System.currentTimeMillis()
     private var sleptAtMs = 0L
     private val liveCameras = LiveCameraHub(app, client, viewModelScope)
-    /** Lux-mapped brightness the ramp is easing toward; null while auto-brightness is idle. */
-    private val autoBrightnessDesired = MutableStateFlow<Int?>(null)
-    private var autoBrightnessApplied: Int? = null
+    /** Active auto-brightness tier; null until first lux sample while awake. */
+    private var autoBrightnessLevel: BrightnessLevel? = null
+    private var autoBrightnessPendingLevel: BrightnessLevel? = null
+    private var autoBrightnessPendingSamples = 0
+    private var lastAutoBrightnessChangeMs = 0L
+    private var manualBrightnessSuppressedUntilMs = 0L
 
     private val extraCalendarColors = listOf(
         "var(--blue)",
@@ -1025,8 +1029,15 @@ class HaViewModel(
         return Result.success(Unit)
     }
 
-    fun setDisplayBrightness(value: Float) {
+    fun setDisplayBrightness(value: Float, fromAuto: Boolean = false) {
         val entityId = _ui.value.displayBrightnessEntity.takeIf { it.isNotBlank() } ?: return
+        if (!fromAuto) {
+            manualBrightnessSuppressedUntilMs =
+                System.currentTimeMillis() + MANUAL_BRIGHTNESS_SUPPRESS_MS
+            autoBrightnessLevel = brightnessToLevel(value.roundToInt())
+            autoBrightnessPendingLevel = null
+            autoBrightnessPendingSamples = 0
+        }
         viewModelScope.launch {
             runCatching { client.setNumericEntityValue(entityId, value.toDouble()) }
         }
@@ -1123,11 +1134,14 @@ class HaViewModel(
     @OptIn(FlowPreview::class)
     private fun watchAutoDisplayBrightness() {
         viewModelScope.launch {
+            var previousIlluminanceEntity = ""
             combine(
                 _ui.map { Triple(it.displayIlluminanceEntity, it.displayBrightnessEntity, it.screenAsleep) }
                     .distinctUntilChanged(),
                 states,
-            ) { (illumEntity, brightEntity, asleep), allStates ->
+                mmWaveLive,
+                autoBrightnessEvaluationTicker(),
+            ) { (illumEntity, brightEntity, asleep), allStates, live, _ ->
                 AutoBrightnessSnapshot(
                     illuminanceEntity = illumEntity,
                     brightnessEntity = brightEntity,
@@ -1135,77 +1149,104 @@ class HaViewModel(
                     luxState = illumEntity.takeIf { it.isNotBlank() }?.let { allStates[it]?.state },
                     currentBrightness = brightEntity.takeIf { it.isNotBlank() }
                         ?.let { allStates[it]?.state?.toFloatOrNull() },
+                    peoplePresent = peoplePresent(allStates, live),
                 )
             }
-                .distinctUntilChanged { a, b ->
-                    a.asleep == b.asleep &&
-                        a.illuminanceEntity == b.illuminanceEntity &&
-                        a.brightnessEntity == b.brightnessEntity &&
-                        a.luxState == b.luxState
-                }
                 .debounce(400)
                 .collect { snap ->
+                    if (snap.illuminanceEntity != previousIlluminanceEntity) {
+                        previousIlluminanceEntity = snap.illuminanceEntity
+                        autoBrightnessLevel = null
+                        autoBrightnessPendingLevel = null
+                        autoBrightnessPendingSamples = 0
+                    }
                     if (snap.asleep ||
                         snap.illuminanceEntity.isBlank() ||
                         snap.brightnessEntity.isBlank()
                     ) {
-                        autoBrightnessDesired.value = null
-                        autoBrightnessApplied = null
+                        return@collect
+                    }
+                    if (snap.peoplePresent ||
+                        System.currentTimeMillis() < manualBrightnessSuppressedUntilMs
+                    ) {
+                        autoBrightnessPendingLevel = null
+                        autoBrightnessPendingSamples = 0
                         return@collect
                     }
                     val lux = snap.luxState?.toDoubleOrNull()
-                    if (lux == null || lux <= 0) {
-                        autoBrightnessDesired.value = null
+                    if (lux == null || lux <= 0) return@collect
+
+                    val active = autoBrightnessLevel ?: initialBrightnessLevel(lux).also {
+                        autoBrightnessLevel = it
+                    }
+                    val proposed = luxToBrightnessLevel(lux, active)
+                    if (proposed == active) {
+                        autoBrightnessPendingLevel = null
+                        autoBrightnessPendingSamples = 0
                         return@collect
                     }
-                    autoBrightnessDesired.value = luxToDisplayBrightness(lux)
+                    if (proposed == autoBrightnessPendingLevel) {
+                        autoBrightnessPendingSamples++
+                    } else {
+                        autoBrightnessPendingLevel = proposed
+                        autoBrightnessPendingSamples = 1
+                    }
+                    if (autoBrightnessPendingSamples < AUTO_BRIGHTNESS_SAMPLES_REQUIRED) return@collect
+
+                    val now = System.currentTimeMillis()
+                    if (now - lastAutoBrightnessChangeMs < AUTO_BRIGHTNESS_COOLDOWN_MS) return@collect
+
+                    val liveBrightness = snap.currentBrightness?.roundToInt()
+                    if (liveBrightness != null && abs(liveBrightness - proposed.brightness) < 2) {
+                        autoBrightnessLevel = proposed
+                        autoBrightnessPendingLevel = null
+                        autoBrightnessPendingSamples = 0
+                        return@collect
+                    }
+
+                    setDisplayBrightness(proposed.brightness.toFloat(), fromAuto = true)
+                    autoBrightnessLevel = proposed
+                    autoBrightnessPendingLevel = null
+                    autoBrightnessPendingSamples = 0
+                    lastAutoBrightnessChangeMs = now
                 }
         }
-        viewModelScope.launch { rampAutoDisplayBrightness() }
     }
 
-    private suspend fun rampAutoDisplayBrightness() {
+    private fun autoBrightnessEvaluationTicker() = flow {
         while (true) {
-            val desired = autoBrightnessDesired.value
-            if (desired == null || _ui.value.screenAsleep) {
-                delay(AUTO_BRIGHTNESS_RAMP_MS)
-                continue
-            }
-            val entityId = _ui.value.displayBrightnessEntity.takeIf { it.isNotBlank() }
-            if (entityId == null) {
-                delay(AUTO_BRIGHTNESS_RAMP_MS)
-                continue
-            }
-            val live = states.value[entityId]?.state?.toFloatOrNull()?.roundToInt()
-            val current = autoBrightnessApplied ?: live ?: desired
-            val delta = desired - current
-            if (abs(delta) < 2) {
-                if (live == null || abs(desired - live) >= 2) {
-                    setDisplayBrightness(desired.toFloat())
-                    autoBrightnessApplied = desired
-                }
-                delay(AUTO_BRIGHTNESS_RAMP_MS)
-                continue
-            }
-            val step = brightnessRampStep(abs(delta)).coerceAtMost(abs(delta))
-            val next = (current + if (delta > 0) step else -step).coerceIn(30, 255)
-            setDisplayBrightness(next.toFloat())
-            autoBrightnessApplied = next
-            delay(AUTO_BRIGHTNESS_RAMP_MS)
+            emit(Unit)
+            delay(AUTO_BRIGHTNESS_EVALUATION_MS)
         }
     }
 
-    private fun brightnessRampStep(distance: Int): Int = when {
-        distance > 60 -> 10
-        distance > 25 -> 6
-        distance > 10 -> 3
-        else -> 2
+    private fun initialBrightnessLevel(lux: Double): BrightnessLevel = when {
+        lux <= AUTO_LUX_INIT_MEDIUM -> BrightnessLevel.Dark
+        lux <= AUTO_LUX_INIT_BRIGHT -> BrightnessLevel.Medium
+        else -> BrightnessLevel.Bright
     }
 
-    private fun luxToDisplayBrightness(lux: Double): Int {
-        val clampedLux = lux.coerceIn(1.0, 400.0)
-        val scaled = 30 + (clampedLux - 1) * (255 - 30) / (400 - 1)
-        return scaled.roundToInt().coerceIn(30, 255)
+    /** Hysteresis: separate lux thresholds when moving up vs down between the three tiers. */
+    private fun luxToBrightnessLevel(lux: Double, current: BrightnessLevel): BrightnessLevel =
+        when (current) {
+            BrightnessLevel.Dark ->
+                if (lux >= AUTO_LUX_DARK_TO_MEDIUM) BrightnessLevel.Medium else BrightnessLevel.Dark
+            BrightnessLevel.Medium -> when {
+                lux <= AUTO_LUX_MEDIUM_TO_DARK -> BrightnessLevel.Dark
+                lux >= AUTO_LUX_MEDIUM_TO_BRIGHT -> BrightnessLevel.Bright
+                else -> BrightnessLevel.Medium
+            }
+            BrightnessLevel.Bright ->
+                if (lux <= AUTO_LUX_BRIGHT_TO_MEDIUM) BrightnessLevel.Medium else BrightnessLevel.Bright
+        }
+
+    private fun brightnessToLevel(value: Int): BrightnessLevel =
+        BrightnessLevel.entries.minByOrNull { abs(it.brightness - value) } ?: BrightnessLevel.Medium
+
+    private enum class BrightnessLevel(val brightness: Int) {
+        Dark(AUTO_BRIGHTNESS_DARK),
+        Medium(AUTO_BRIGHTNESS_MEDIUM),
+        Bright(AUTO_BRIGHTNESS_BRIGHT),
     }
 
     private fun watchPresenceScreen() {
@@ -1244,6 +1285,7 @@ class HaViewModel(
         val asleep: Boolean,
         val luxState: String?,
         val currentBrightness: Float?,
+        val peoplePresent: Boolean,
     )
 
     private fun watchMmWaveClear() {
@@ -1613,7 +1655,26 @@ class HaViewModel(
     }
 
     companion object {
-        private const val AUTO_BRIGHTNESS_RAMP_MS = 90L
+        // Three discrete backlight tiers (panel entity range 30–255).
+        private const val AUTO_BRIGHTNESS_DARK = 70
+        private const val AUTO_BRIGHTNESS_MEDIUM = 150
+        private const val AUTO_BRIGHTNESS_BRIGHT = 255
+
+        // Lux bands for initial tier: dark ≤18, medium 18–75, bright >75.
+        private const val AUTO_LUX_INIT_MEDIUM = 18.0
+        private const val AUTO_LUX_INIT_BRIGHT = 75.0
+
+        // Hysteresis boundaries (lx): dark↔medium at 10/22, medium↔bright at 65/95.
+        private const val AUTO_LUX_DARK_TO_MEDIUM = 22.0
+        private const val AUTO_LUX_MEDIUM_TO_DARK = 10.0
+        private const val AUTO_LUX_MEDIUM_TO_BRIGHT = 95.0
+        private const val AUTO_LUX_BRIGHT_TO_MEDIUM = 65.0
+
+        private const val AUTO_BRIGHTNESS_COOLDOWN_MS = 45_000L
+        private const val AUTO_BRIGHTNESS_SAMPLES_REQUIRED = 3
+        private const val AUTO_BRIGHTNESS_EVALUATION_MS = 15_000L
+        private const val MANUAL_BRIGHTNESS_SUPPRESS_MS = 30 * 60_000L
+
         private const val MMWAVE_OCCUPANCY_ENTITY = "binary_sensor.secondary_living_room_switch_occupancy"
         private const val MMWAVE_TARGET_COUNT_ENTITY = "input_number.secondary_living_room_mmwave_target_count"
 

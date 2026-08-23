@@ -489,7 +489,7 @@ private fun ScreenTimeoutCard(viewModel: HaViewModel) {
         )
         EntityPickerField(
             label = "Auto-brightness sensor",
-            hint = "Room illuminance (lx) maps to backlight while the panel is awake",
+            hint = "Room lux picks dark/medium/bright tiers; paused while mmWave sees you or after manual slider",
             selected = ui.displayIlluminanceEntity,
             choices = viewModel.displayIlluminanceEntityChoices(),
             noneLabel = "None (manual only)",
