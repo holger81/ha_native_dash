@@ -871,7 +871,12 @@ private fun WeekPlannerDay(
 }
 
 @Composable
-fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
+fun VisionTimeline(
+    widget: WidgetNode,
+    viewModel: HaViewModel,
+    modifier: Modifier = Modifier,
+    showTitle: Boolean = true,
+) {
     val states by viewModel.states.collectAsState()
     val limit = widget.numberOfEvents ?: 5
     val hours = widget.numberOfHours ?: widget.hours
@@ -895,12 +900,14 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
         }
     }
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = widget.name.takeUnless { it.isNullOrBlank() } ?: "This happened around the house",
-            color = TextDark,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Medium,
-        )
+        if (showTitle) {
+            Text(
+                text = widget.name.takeUnless { it.isNullOrBlank() } ?: "This happened around the house",
+                color = TextDark,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+            )
+        }
         when {
             !loaded -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 repeat(4) { index ->
