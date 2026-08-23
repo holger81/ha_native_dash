@@ -381,6 +381,8 @@ class HaViewModel(
     private var musicWallJob: Job? = null
     private var musicDiscoveryJob: Job? = null
     private var musicSearchJob: Job? = null
+    private var musicVolumeJob: Job? = null
+    private var musicGroupJob: Job? = null
 
     fun selectMusicPlayer(entityId: String) {
         val normalized = CredentialsStore.normalizeEntityId(entityId)
@@ -388,6 +390,83 @@ class HaViewModel(
         credentials.musicPlayerEntity = normalized
         _musicWall.value = _musicWall.value.copy(selectedEntityId = normalized, error = null)
         refreshMusicQueue()
+    }
+
+    fun setPlayerGrouped(massPlayerId: String, grouped: Boolean) {
+        val wall = _musicWall.value
+        val selected = wall.players.firstOrNull { it.entityId == wall.selectedEntityId } ?: return
+        val rootId = selected.groupRootId ?: selected.massPlayerId ?: return
+        if (massPlayerId == rootId) return
+        musicGroupJob?.cancel()
+        musicGroupJob = viewModelScope.launch {
+            runCatching {
+                if (grouped) {
+                    client.setMassGroupMembers(targetPlayerId = rootId, addIds = listOf(massPlayerId))
+                } else {
+                    client.ungroupMassPlayer(massPlayerId)
+                }
+            }.onFailure { error ->
+                _musicWall.value = _musicWall.value.copy(
+                    error = error.message ?: "Could not update player group",
+                )
+            }
+            delay(250)
+            refreshMusicWall(forcePlayers = true)
+        }
+    }
+
+    fun setMusicVolume(level: Float, mode: String = "auto") {
+        val wall = _musicWall.value
+        val selected = wall.players.firstOrNull { it.entityId == wall.selectedEntityId } ?: return
+        val clamped = level.coerceIn(0f, 1f)
+        musicVolumeJob?.cancel()
+        musicVolumeJob = viewModelScope.launch {
+            runCatching {
+                when (mode) {
+                    "group" -> {
+                        val root = selected.groupRootId ?: selected.massPlayerId
+                            ?: error("No Music Assistant group player")
+                        client.setMassGroupVolume(root, (clamped * 100).toInt())
+                    }
+                    "player" -> {
+                        val massId = selected.massPlayerId
+                        if (massId != null) {
+                            client.setMassPlayerVolume(massId, (clamped * 100).toInt())
+                        } else {
+                            client.setMediaVolume(selected.entityId, clamped)
+                        }
+                    }
+                    else -> {
+                        val root = selected.groupRootId
+                        if (selected.isGrouped && root != null) {
+                            client.setMassGroupVolume(root, (clamped * 100).toInt())
+                        } else if (selected.massPlayerId != null) {
+                            client.setMassPlayerVolume(selected.massPlayerId, (clamped * 100).toInt())
+                        } else {
+                            client.setMediaVolume(selected.entityId, clamped)
+                        }
+                    }
+                }
+            }.onFailure { error ->
+                _musicWall.value = _musicWall.value.copy(
+                    error = error.message ?: "Volume change failed",
+                )
+            }
+        }
+    }
+
+    fun setMemberVolume(massPlayerId: String, level: Float) {
+        val clamped = level.coerceIn(0f, 1f)
+        musicVolumeJob?.cancel()
+        musicVolumeJob = viewModelScope.launch {
+            runCatching {
+                client.setMassPlayerVolume(massPlayerId, (clamped * 100).toInt())
+            }.onFailure { error ->
+                _musicWall.value = _musicWall.value.copy(
+                    error = error.message ?: "Volume change failed",
+                )
+            }
+        }
     }
 
     fun setMusicWallTab(tab: String) {
@@ -509,13 +588,6 @@ class HaViewModel(
         }
     }
 
-    fun setMusicVolume(level: Float) {
-        val entityId = _musicWall.value.selectedEntityId ?: return
-        viewModelScope.launch {
-            runCatching { client.setMediaVolume(entityId, level) }
-        }
-    }
-
     fun toggleMusicShuffle() {
         val entityId = _musicWall.value.selectedEntityId ?: return
         val current = client.state(entityId)?.isShuffleOn()
@@ -580,6 +652,10 @@ class HaViewModel(
         musicDiscoveryJob = null
         musicSearchJob?.cancel()
         musicSearchJob = null
+        musicVolumeJob?.cancel()
+        musicVolumeJob = null
+        musicGroupJob?.cancel()
+        musicGroupJob = null
     }
 
     private fun loadMusicDiscovery() {

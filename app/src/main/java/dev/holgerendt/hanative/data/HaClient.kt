@@ -175,7 +175,7 @@ class HaClient {
     private val snapshotCache = ConcurrentHashMap<String, ByteArray>()
     @Volatile private var massIngress: MassIngressSession? = null
     @Volatile private var massAddonSlug: String? = null
-    @Volatile private var massPlayersCache: Pair<Long, List<Pair<String, String>>>? = null
+    @Volatile private var massPlayersCache: Pair<Long, List<MassPlayerInfo>>? = null
 
     val currentBaseUrl: String get() = baseUrl
     val currentToken: String get() = token
@@ -473,7 +473,7 @@ class HaClient {
         )
 
     suspend fun musicAssistantQueue(entityId: String): MusicAssistantQueue? {
-        return runCatching {
+        val fromHa = runCatching {
             withTimeout(4_000) {
                 val result = callService(
                     domain = "music_assistant",
@@ -484,6 +484,34 @@ class HaClient {
                 parseMusicAssistantQueue(result, entityId)
             }
         }.getOrNull()
+        if (fromHa?.current != null && (fromHa.elapsedSec ?: 0.0) > 0.5) return fromHa
+
+        val massPlayers = runCatching { musicAssistantMassPlayers() }.getOrElse { emptyList() }
+        val name = state(entityId)?.friendlyName
+        val massId = name?.let { matchMassPlayerInfo(it, massPlayers)?.playerId }
+        if (massId.isNullOrBlank()) return fromHa
+        val fromMass = runCatching { musicAssistantMassQueue(massId) }.getOrNull()
+        return when {
+            fromMass == null -> fromHa
+            fromHa == null -> fromMass
+            else -> fromMass.copy(
+                // Prefer HA shuffle/repeat if present, Mass elapsed/current for playback progress.
+                shuffle = fromHa.shuffle,
+                repeatMode = fromHa.repeatMode ?: fromMass.repeatMode,
+            )
+        }
+    }
+
+    suspend fun musicAssistantMassQueue(queueId: String): MusicAssistantQueue? {
+        val result = massCommand(
+            "player_queues/get",
+            buildJsonObject { put("queue_id", queueId) },
+        )
+        return parseMusicAssistantQueue(result, queueId)
+            ?: parseMusicAssistantQueue(
+                buildJsonObject { put(queueId, result) },
+                queueId,
+            )
     }
 
     suspend fun mediaPlayerCommand(entityId: String, service: String, data: Map<String, JsonElement> = emptyMap()) {
@@ -496,6 +524,56 @@ class HaClient {
             "volume_set",
             mapOf("volume_level" to JsonPrimitive(level.coerceIn(0f, 1f).toDouble())),
         )
+    }
+
+    suspend fun setMassPlayerVolume(playerId: String, levelPercent: Int) {
+        massCommand(
+            "players/cmd/volume_set",
+            buildJsonObject {
+                put("player_id", playerId)
+                put("volume_level", levelPercent.coerceIn(0, 100))
+            },
+        )
+        massPlayersCache = null
+    }
+
+    suspend fun setMassGroupVolume(playerId: String, levelPercent: Int) {
+        massCommand(
+            "players/cmd/group_volume",
+            buildJsonObject {
+                put("player_id", playerId)
+                put("volume_level", levelPercent.coerceIn(0, 100))
+            },
+        )
+        massPlayersCache = null
+    }
+
+    suspend fun setMassGroupMembers(
+        targetPlayerId: String,
+        addIds: List<String> = emptyList(),
+        removeIds: List<String> = emptyList(),
+    ) {
+        massCommand(
+            "players/cmd/set_members",
+            buildJsonObject {
+                put("target_player", targetPlayerId)
+                if (addIds.isNotEmpty()) {
+                    put("player_ids_to_add", JsonArray(addIds.map { JsonPrimitive(it) }))
+                }
+                if (removeIds.isNotEmpty()) {
+                    put("player_ids_to_remove", JsonArray(removeIds.map { JsonPrimitive(it) }))
+                }
+            },
+        )
+        massPlayersCache = null
+    }
+
+    suspend fun ungroupMassPlayer(playerId: String) {
+        massCommand(
+            "players/cmd/ungroup",
+            buildJsonObject { put("player_id", playerId) },
+        )
+        massPlayersCache = null
     }
 
     suspend fun setMediaShuffle(entityId: String, shuffle: Boolean) {
@@ -529,32 +607,34 @@ class HaClient {
         )
     }
 
-    suspend fun musicAssistantMassPlayers(): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+    suspend fun musicAssistantMassPlayers(force: Boolean = false): List<MassPlayerInfo> = withContext(Dispatchers.IO) {
         val cached = massPlayersCache
-        if (cached != null && System.currentTimeMillis() - cached.first < 60_000L) {
+        if (!force && cached != null && System.currentTimeMillis() - cached.first < 2_500L) {
             return@withContext cached.second
         }
         val result = massCommand("players/all")
         val rows = result as? JsonArray ?: return@withContext emptyList()
-        val players = rows.mapNotNull { element ->
-            val obj = element as? JsonObject ?: return@mapNotNull null
-            val id = obj["player_id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-            val name = obj["display_name"]?.jsonPrimitive?.contentOrNull
-                ?: obj["name"]?.jsonPrimitive?.contentOrNull
-                ?: id
-            id to name
-        }
+        val players = rows.mapNotNull(::parseMassPlayerInfo)
         massPlayersCache = System.currentTimeMillis() to players
         players
     }
 
     suspend fun enrichMusicPlayersWithMassIds(players: List<MusicAssistantPlayer>): List<MusicAssistantPlayer> {
-        val massPlayers = runCatching { musicAssistantMassPlayers() }.getOrElse { emptyList() }
+        val massPlayers = runCatching { musicAssistantMassPlayers(force = true) }.getOrElse { emptyList() }
         if (massPlayers.isEmpty()) return players
         return players.map { player ->
-            val matched = matchMassPlayerId(player.name, massPlayers)
-            if (matched == null || matched == player.massPlayerId) player
-            else player.copy(massPlayerId = matched)
+            val matched = matchMassPlayerInfo(player.name, massPlayers) ?: return@map player
+            player.copy(
+                massPlayerId = matched.playerId,
+                massVolume = matched.volume,
+                massGroupVolume = matched.groupVolume,
+                groupMemberIds = matched.groupMemberIds,
+                syncedToId = matched.syncedToId,
+                canGroupWithIds = matched.canGroupWithIds,
+                elapsedSec = matched.elapsedSec,
+                elapsedUpdatedAtMs = matched.elapsedUpdatedAtMs,
+                massPlaybackState = matched.playbackState,
+            )
         }
     }
 

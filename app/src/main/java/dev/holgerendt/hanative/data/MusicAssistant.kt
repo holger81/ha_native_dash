@@ -17,6 +17,37 @@ data class MusicAssistantPlayer(
     val massPlayerType: String? = null,
     /** Music Assistant player/queue id when matched via the MA API. */
     val massPlayerId: String? = null,
+    /** Mass volume 0–100. */
+    val massVolume: Int? = null,
+    /** Mass group/sync volume 0–100. */
+    val massGroupVolume: Int? = null,
+    val groupMemberIds: List<String> = emptyList(),
+    val syncedToId: String? = null,
+    val canGroupWithIds: List<String> = emptyList(),
+    val elapsedSec: Double? = null,
+    val elapsedUpdatedAtMs: Long? = null,
+    val massPlaybackState: String? = null,
+) {
+    val groupRootId: String?
+        get() = syncedToId?.takeIf { it.isNotBlank() }
+            ?: massPlayerId?.takeIf { groupMemberIds.size > 1 }
+            ?: massPlayerId
+
+    val isGrouped: Boolean
+        get() = !syncedToId.isNullOrBlank() || groupMemberIds.size > 1
+}
+
+data class MassPlayerInfo(
+    val playerId: String,
+    val name: String,
+    val volume: Int? = null,
+    val groupVolume: Int? = null,
+    val groupMemberIds: List<String> = emptyList(),
+    val syncedToId: String? = null,
+    val canGroupWithIds: List<String> = emptyList(),
+    val elapsedSec: Double? = null,
+    val elapsedUpdatedAtMs: Long? = null,
+    val playbackState: String? = null,
 )
 
 data class MassMediaItem(
@@ -62,6 +93,7 @@ data class MusicAssistantQueue(
     val itemCount: Int = 0,
     val currentIndex: Int? = null,
     val elapsedSec: Double? = null,
+    val elapsedUpdatedAtMs: Long? = null,
     val shuffle: Boolean = false,
     val repeatMode: String? = null,
     val current: MusicAssistantQueueItem? = null,
@@ -135,7 +167,8 @@ fun parseMusicAssistantQueue(response: JsonElement?, entityId: String): MusicAss
     payload ?: return null
     return MusicAssistantQueue(
         queueId = payload["queue_id"]?.jsonPrimitive?.contentOrNull,
-        name = payload["name"]?.jsonPrimitive?.contentOrNull,
+        name = payload["name"]?.jsonPrimitive?.contentOrNull
+            ?: payload["display_name"]?.jsonPrimitive?.contentOrNull,
         itemCount = payload["items"]?.jsonPrimitive?.intOrNull
             ?: payload["items"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
             ?: 0,
@@ -143,11 +176,68 @@ fun parseMusicAssistantQueue(response: JsonElement?, entityId: String): MusicAss
             ?: payload["current_index"]?.jsonPrimitive?.contentOrNull?.toIntOrNull(),
         elapsedSec = payload["elapsed_time"]?.jsonPrimitive?.doubleOrNull
             ?: payload["elapsed_time"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull(),
+        elapsedUpdatedAtMs = payload["elapsed_time_last_updated"]?.jsonPrimitive?.doubleOrNull
+            ?.let { (it * 1000.0).toLong() }
+            ?: payload["elapsed_time_last_updated"]?.jsonPrimitive?.longOrNull,
         shuffle = payload["shuffle_enabled"].toBooleanOrNull() == true,
         repeatMode = payload["repeat_mode"]?.jsonPrimitive?.contentOrNull,
         current = parseQueueItem(payload["current_item"]),
         next = parseQueueItem(payload["next_item"]),
     )
+}
+
+fun parseMassPlayerInfo(element: JsonElement?): MassPlayerInfo? {
+    val obj = element as? JsonObject ?: return null
+    val id = obj["player_id"]?.jsonPrimitive?.contentOrNull ?: return null
+    val name = obj["display_name"]?.jsonPrimitive?.contentOrNull
+        ?: obj["name"]?.jsonPrimitive?.contentOrNull
+        ?: id
+    fun stringList(key: String): List<String> =
+        (obj[key] as? JsonArray)
+            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf { v -> v.isNotBlank() } }
+            .orEmpty()
+    val elapsed = obj["elapsed_time"]?.jsonPrimitive?.doubleOrNull
+        ?: obj["elapsed_time"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()
+    val elapsedUpdated = obj["elapsed_time_last_updated"]?.jsonPrimitive?.doubleOrNull
+        ?.let { (it * 1000.0).toLong() }
+    return MassPlayerInfo(
+        playerId = id,
+        name = name,
+        volume = obj["volume_level"]?.jsonPrimitive?.intOrNull
+            ?: obj["volume_level"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+            ?: obj["volume_level"]?.jsonPrimitive?.doubleOrNull?.toInt(),
+        groupVolume = obj["group_volume"]?.jsonPrimitive?.intOrNull
+            ?: obj["group_volume"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+            ?: obj["group_volume"]?.jsonPrimitive?.doubleOrNull?.toInt(),
+        groupMemberIds = stringList("group_members"),
+        syncedToId = obj["synced_to"]?.jsonPrimitive?.contentOrNull,
+        canGroupWithIds = stringList("can_group_with"),
+        elapsedSec = elapsed,
+        elapsedUpdatedAtMs = elapsedUpdated,
+        playbackState = obj["playback_state"]?.jsonPrimitive?.contentOrNull
+            ?: obj["state"]?.jsonPrimitive?.contentOrNull,
+    )
+}
+
+fun matchMassPlayerId(haName: String, massPlayers: List<Pair<String, String>>): String? {
+    val target = normalizeMusicPlayerName(haName)
+    if (target.isBlank()) return null
+    massPlayers.firstOrNull { normalizeMusicPlayerName(it.second) == target }?.first?.let { return it }
+    massPlayers.firstOrNull {
+        val other = normalizeMusicPlayerName(it.second)
+        other.contains(target) || target.contains(other)
+    }?.first?.let { return it }
+    return null
+}
+
+fun matchMassPlayerInfo(haName: String, massPlayers: List<MassPlayerInfo>): MassPlayerInfo? {
+    val target = normalizeMusicPlayerName(haName)
+    if (target.isBlank()) return null
+    massPlayers.firstOrNull { normalizeMusicPlayerName(it.name) == target }?.let { return it }
+    return massPlayers.firstOrNull {
+        val other = normalizeMusicPlayerName(it.name)
+        other.contains(target) || target.contains(other)
+    }
 }
 
 private fun parseQueueItem(element: JsonElement?): MusicAssistantQueueItem? {
@@ -168,9 +258,10 @@ private fun parseQueueItem(element: JsonElement?): MusicAssistantQueueItem? {
         queueItemId = obj["queue_item_id"]?.jsonPrimitive?.contentOrNull,
         name = name,
         durationSec = obj["duration"]?.jsonPrimitive?.intOrNull
-            ?: obj["duration"]?.jsonPrimitive?.contentOrNull?.toIntOrNull(),
-        imageUrl = media?.get("image")?.jsonPrimitive?.contentOrNull
-            ?: media?.get("image_url")?.jsonPrimitive?.contentOrNull,
+            ?: obj["duration"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+            ?: obj["duration"]?.jsonPrimitive?.doubleOrNull?.toInt(),
+        imageUrl = extractMassImageUrl(obj)
+            ?: media?.let(::extractMassImageUrl),
         artists = artists,
         album = album,
         mediaUri = media?.get("uri")?.jsonPrimitive?.contentOrNull,
@@ -266,14 +357,3 @@ fun normalizeMusicPlayerName(name: String): String =
     name.lowercase()
         .replace(Regex("['’]"), "")
         .replace(Regex("[^a-z0-9]+"), "")
-
-fun matchMassPlayerId(haName: String, massPlayers: List<Pair<String, String>>): String? {
-    val target = normalizeMusicPlayerName(haName)
-    if (target.isBlank()) return null
-    massPlayers.firstOrNull { normalizeMusicPlayerName(it.second) == target }?.first?.let { return it }
-    massPlayers.firstOrNull {
-        val other = normalizeMusicPlayerName(it.second)
-        other.contains(target) || target.contains(other)
-    }?.first?.let { return it }
-    return null
-}
