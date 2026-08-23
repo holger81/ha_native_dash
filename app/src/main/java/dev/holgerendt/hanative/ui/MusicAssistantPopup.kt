@@ -140,41 +140,65 @@ private fun PlayersSidebar(
     val groupableIds = remember(selected, wall.players) {
         resolveGroupableMassIds(selected, wall.players)
     }
+    val (groupSections, standalonePlayers) = remember(wall.players) {
+        organizePlayerSections(wall.players)
+    }
 
     Column(
         modifier = Modifier
-            .width(240.dp)
+            .width(268.dp)
             .fillMaxHeight()
             .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text("Players", color = overlay.muted, fontSize = 13.sp, fontWeight = FontWeight.Medium)
         Text(
-            "Check to sync into the selected player’s group.",
+            "Tap a player to select it. Check others to sync into its group.",
             color = overlay.muted,
             fontSize = 11.sp,
         )
-        wall.players.forEach { player ->
-            val state = states[player.entityId]
-            val massId = player.massPlayerId
-            val inGroup = massId != null && massId in groupedIds
-            val canToggle = massId != null && (
-                massId == rootId ||
-                    massId in groupableIds ||
-                    inGroup
-                )
-            PlayerChip(
-                name = player.name,
-                state = state?.state ?: player.massPlaybackState ?: "idle",
-                selected = player.entityId == wall.selectedEntityId,
-                massLinked = massId != null,
-                grouped = inGroup,
-                groupEnabled = canToggle && massId != rootId,
-                onSelect = { viewModel.selectMusicPlayer(player.entityId) },
-                onGroupChange = { checked ->
-                    if (massId != null) viewModel.setPlayerGrouped(massId, checked)
-                },
+        if (groupSections.isNotEmpty()) {
+            Text(
+                "Grouped",
+                color = overlay.muted,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
             )
+            groupSections.forEach { section ->
+                PlayerGroupBlock(
+                    section = section,
+                    selectedEntityId = wall.selectedEntityId,
+                    selectedRootId = rootId,
+                    groupedIds = groupedIds,
+                    groupableIds = groupableIds,
+                    states = states,
+                    onSelect = viewModel::selectMusicPlayer,
+                    onGroupChange = { massId, checked -> viewModel.setPlayerGrouped(massId, checked) },
+                )
+            }
+        }
+        if (standalonePlayers.isNotEmpty()) {
+            if (groupSections.isNotEmpty()) {
+                Text(
+                    "Standalone",
+                    color = overlay.muted,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            standalonePlayers.forEach { player ->
+                SidebarPlayerChip(
+                    player = player,
+                    state = states[player.entityId],
+                    selectedEntityId = wall.selectedEntityId,
+                    selectedRootId = rootId,
+                    groupedIds = groupedIds,
+                    groupableIds = groupableIds,
+                    role = PlayerGroupRole.Standalone,
+                    onSelect = { viewModel.selectMusicPlayer(player.entityId) },
+                    onGroupChange = { massId, checked -> viewModel.setPlayerGrouped(massId, checked) },
+                )
+            }
         }
         val playingElsewhere = wall.players.firstOrNull {
             it.entityId != wall.selectedEntityId && states[it.entityId]?.state == "playing"
@@ -324,6 +348,7 @@ private fun NowPlayingPane(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            SyncedSpeakersRow(selected = selected, players = wall.players)
             ProgressRow(
                 position = position,
                 duration = duration,
@@ -775,6 +800,220 @@ private fun DiscoveryListRow(
     }
 }
 
+private enum class PlayerGroupRole { Leader, Member, Standalone }
+
+private data class PlayerGroupSection(
+    val rootMassId: String,
+    val players: List<MusicAssistantPlayer>,
+)
+
+private fun organizePlayerSections(
+    players: List<MusicAssistantPlayer>,
+): Pair<List<PlayerGroupSection>, List<MusicAssistantPlayer>> {
+    val assigned = mutableSetOf<String>()
+    val groups = mutableListOf<PlayerGroupSection>()
+
+    players.forEach { candidate ->
+        val massId = candidate.massPlayerId ?: return@forEach
+        if (massId in assigned) return@forEach
+        val rootId = candidate.groupRootId ?: massId
+        val rootPlayer = players.firstOrNull { it.massPlayerId == rootId } ?: candidate
+        val memberIds = resolveGroupedMassIds(rootPlayer, players)
+        if (memberIds.size <= 1) return@forEach
+        val ordered = players
+            .filter { it.massPlayerId in memberIds }
+            .sortedWith(compareBy({ if (it.massPlayerId == rootId) 0 else 1 }, { it.name.lowercase() }))
+        groups += PlayerGroupSection(rootMassId = rootId, players = ordered)
+        assigned.addAll(memberIds)
+    }
+
+    val standalone = players.filter { player ->
+        val id = player.massPlayerId
+        id == null || id !in assigned
+    }
+    return groups.sortedBy { it.players.firstOrNull()?.name?.lowercase().orEmpty() } to standalone
+}
+
+private fun resolveGroupMembers(
+    selected: MusicAssistantPlayer?,
+    players: List<MusicAssistantPlayer>,
+): List<MusicAssistantPlayer> {
+    if (selected == null || !selected.isGrouped) return emptyList()
+    val groupedIds = resolveGroupedMassIds(selected, players)
+    return players
+        .filter { player -> player.massPlayerId in groupedIds }
+        .sortedWith(compareBy({ if (it.massPlayerId == selected.groupRootId) 0 else 1 }, { it.name.lowercase() }))
+}
+
+@Composable
+private fun PlayerGroupBlock(
+    section: PlayerGroupSection,
+    selectedEntityId: String?,
+    selectedRootId: String?,
+    groupedIds: Set<String>,
+    groupableIds: Set<String>,
+    states: Map<String, EntityState>,
+    onSelect: (String) -> Unit,
+    onGroupChange: (String, Boolean) -> Unit,
+) {
+    val overlay = LocalOverlay.current
+    val containsSelected = section.players.any { it.entityId == selectedEntityId }
+    val groupTint = if (containsSelected) {
+        ActiveYellow.copy(alpha = 0.18f)
+    } else {
+        ActiveYellow.copy(alpha = 0.08f)
+    }
+    val borderTint = if (containsSelected) ActiveYellow.copy(alpha = 0.65f) else ActiveYellow.copy(alpha = 0.28f)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .border(1.dp, borderTint, RoundedCornerShape(20.dp))
+            .background(groupTint)
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            MdiIcon("mdi:speaker-multiple", tint = ActiveYellow, size = 18.dp)
+            Text(
+                "${section.players.size} speakers",
+                color = overlay.text,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (containsSelected) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(ActiveYellow.copy(alpha = 0.35f))
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                ) {
+                    Text("Selected group", color = overlay.text, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+        section.players.forEach { player ->
+            val role = if (player.massPlayerId == section.rootMassId) {
+                PlayerGroupRole.Leader
+            } else {
+                PlayerGroupRole.Member
+            }
+            SidebarPlayerChip(
+                player = player,
+                state = states[player.entityId],
+                selectedEntityId = selectedEntityId,
+                selectedRootId = selectedRootId,
+                groupedIds = groupedIds,
+                groupableIds = groupableIds,
+                role = role,
+                onSelect = { onSelect(player.entityId) },
+                onGroupChange = onGroupChange,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SidebarPlayerChip(
+    player: MusicAssistantPlayer,
+    state: EntityState?,
+    selectedEntityId: String?,
+    selectedRootId: String?,
+    groupedIds: Set<String>,
+    groupableIds: Set<String>,
+    role: PlayerGroupRole,
+    onSelect: () -> Unit,
+    onGroupChange: (String, Boolean) -> Unit,
+) {
+    val massId = player.massPlayerId
+    val inGroup = massId != null && massId in groupedIds
+    val canToggle = massId != null && (
+        massId == selectedRootId ||
+            massId in groupableIds ||
+            inGroup
+        )
+    PlayerChip(
+        name = player.name,
+        state = state?.state ?: player.massPlaybackState ?: "idle",
+        selected = player.entityId == selectedEntityId,
+        massLinked = massId != null,
+        grouped = inGroup,
+        groupEnabled = canToggle && massId != selectedRootId,
+        role = role,
+        onSelect = onSelect,
+        onGroupChange = { checked ->
+            if (massId != null) onGroupChange(massId, checked)
+        },
+    )
+}
+
+@Composable
+private fun SyncedSpeakersRow(
+    selected: MusicAssistantPlayer?,
+    players: List<MusicAssistantPlayer>,
+) {
+    val overlay = LocalOverlay.current
+    val members = remember(selected, players) { resolveGroupMembers(selected, players) }
+    if (members.size <= 1) return
+
+    Column(
+        modifier = Modifier.fillMaxWidth(0.92f),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            MdiIcon("mdi:speaker-multiple", tint = ActiveYellow, size = 18.dp)
+            Text("Playing on", color = overlay.muted, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        ) {
+            members.forEach { member ->
+                val isLeader = member.massPlayerId == selected?.groupRootId
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(
+                            if (isLeader) ActiveYellow.copy(alpha = 0.35f) else overlay.well,
+                        )
+                        .border(
+                            width = 1.dp,
+                            color = if (isLeader) ActiveYellow.copy(alpha = 0.7f) else overlay.muted.copy(alpha = 0.25f),
+                            shape = RoundedCornerShape(14.dp),
+                        )
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    MdiIcon(
+                        if (isLeader) "mdi:speaker-multiple" else "mdi:speaker",
+                        tint = if (isLeader) Color.Black else overlay.muted,
+                        size = 16.dp,
+                    )
+                    Text(
+                        member.name,
+                        color = overlay.text,
+                        fontSize = 13.sp,
+                        fontWeight = if (isLeader) FontWeight.SemiBold else FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun PlayerChip(
     name: String,
@@ -783,59 +1022,118 @@ private fun PlayerChip(
     massLinked: Boolean,
     grouped: Boolean,
     groupEnabled: Boolean,
+    role: PlayerGroupRole = PlayerGroupRole.Standalone,
     onSelect: () -> Unit,
     onGroupChange: (Boolean) -> Unit,
 ) {
     val overlay = LocalOverlay.current
     val background = when {
         selected -> ActiveYellow
+        role == PlayerGroupRole.Member -> overlay.card.copy(alpha = 0.92f)
         else -> overlay.card
     }
     val tint = if (selected) Color.Black else overlay.text
+    val memberIndent = if (role == PlayerGroupRole.Member) 14.dp else 0.dp
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(background)
-            .padding(horizontal = 10.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(start = memberIndent),
+        verticalAlignment = Alignment.Top,
     ) {
-        GroupCheckbox(
-            checked = grouped,
-            enabled = groupEnabled || grouped,
-            selectedRow = selected,
-            onCheckedChange = onGroupChange,
-        )
-        Column(
+        if (role == PlayerGroupRole.Member) {
+            Box(
+                modifier = Modifier
+                    .width(10.dp)
+                    .height(48.dp)
+                    .padding(top = 6.dp),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(2.dp)
+                        .height(36.dp)
+                        .clip(RoundedCornerShape(1.dp))
+                        .background(ActiveYellow.copy(alpha = 0.45f)),
+                )
+            }
+        }
+        Row(
             modifier = Modifier
                 .weight(1f)
-                .clickable(onClick = onSelect),
+                .clip(RoundedCornerShape(18.dp))
+                .background(background)
+                .padding(horizontal = 10.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    name,
-                    color = tint,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                if (massLinked) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(if (selected) Color.Black else ActiveYellow),
-                    )
-                }
-            }
-            Text(
-                state.replaceFirstChar { it.uppercase() },
-                color = if (selected) Color.Black.copy(alpha = 0.65f) else overlay.muted,
-                fontSize = 12.sp,
+            GroupCheckbox(
+                checked = grouped,
+                enabled = groupEnabled || grouped,
+                selectedRow = selected,
+                onCheckedChange = onGroupChange,
             )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(onClick = onSelect),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        name,
+                        color = tint,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (role == PlayerGroupRole.Leader) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    if (selected) Color.Black.copy(alpha = 0.12f)
+                                    else ActiveYellow.copy(alpha = 0.22f),
+                                )
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                        ) {
+                            MdiIcon(
+                                "mdi:speaker-multiple",
+                                tint = if (selected) Color.Black else ActiveYellow,
+                                size = 14.dp,
+                            )
+                            Text(
+                                "Group",
+                                color = tint,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                    if (massLinked) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(if (selected) Color.Black else ActiveYellow),
+                        )
+                    }
+                }
+                Text(
+                    when (role) {
+                        PlayerGroupRole.Leader -> "Group leader · ${state.replaceFirstChar { it.uppercase() }}"
+                        PlayerGroupRole.Member -> "Synced · ${state.replaceFirstChar { it.uppercase() }}"
+                        PlayerGroupRole.Standalone -> state.replaceFirstChar { it.uppercase() }
+                    },
+                    color = if (selected) Color.Black.copy(alpha = 0.65f) else overlay.muted,
+                    fontSize = 12.sp,
+                )
+            }
         }
     }
 }
