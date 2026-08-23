@@ -15,7 +15,35 @@ data class MusicAssistantPlayer(
     val entityId: String,
     val name: String,
     val massPlayerType: String? = null,
+    /** Music Assistant player/queue id when matched via the MA API. */
+    val massPlayerId: String? = null,
 )
+
+data class MassMediaItem(
+    val uri: String,
+    val name: String,
+    val mediaType: String,
+    val imageUrl: String? = null,
+    val subtitle: String? = null,
+    val provider: String? = null,
+    val itemId: String? = null,
+)
+
+data class MassRecommendationSection(
+    val name: String,
+    val provider: String? = null,
+    val items: List<MassMediaItem> = emptyList(),
+)
+
+data class MassSearchResults(
+    val artists: List<MassMediaItem> = emptyList(),
+    val albums: List<MassMediaItem> = emptyList(),
+    val tracks: List<MassMediaItem> = emptyList(),
+    val playlists: List<MassMediaItem> = emptyList(),
+) {
+    val isEmpty: Boolean
+        get() = artists.isEmpty() && albums.isEmpty() && tracks.isEmpty() && playlists.isEmpty()
+}
 
 data class MusicAssistantQueueItem(
     val queueItemId: String? = null,
@@ -156,4 +184,96 @@ fun formatMediaClock(seconds: Double?): String {
     val mins = total / 60
     val secs = total % 60
     return "%d:%02d".format(mins, secs)
+}
+
+fun parseMassMediaItem(element: JsonElement?): MassMediaItem? {
+    val obj = element as? JsonObject ?: return null
+    val mediaType = obj["media_type"]?.jsonPrimitive?.contentOrNull ?: "track"
+    if (mediaType == "folder") return null
+    val name = obj["name"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return null
+    val uri = obj["uri"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return null
+    val artists = (obj["artists"] as? JsonArray)
+        ?.mapNotNull { (it as? JsonObject)?.get("name")?.jsonPrimitive?.contentOrNull }
+        ?.filter { it.isNotBlank() }
+        ?.joinToString(", ")
+        ?.takeIf { it.isNotBlank() }
+    val owner = obj["owner"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+    val version = obj["version"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+    val subtitle = when (mediaType) {
+        "track" -> artists
+        "album" -> listOfNotNull(artists, version).joinToString(" · ").ifBlank { null }
+        "playlist" -> owner ?: mediaType.replaceFirstChar { it.uppercase() }
+        "artist" -> "Artist"
+        else -> mediaType.replaceFirstChar { it.uppercase() }
+    }
+    return MassMediaItem(
+        uri = uri,
+        name = name,
+        mediaType = mediaType,
+        imageUrl = extractMassImageUrl(obj),
+        subtitle = subtitle,
+        provider = obj["provider"]?.jsonPrimitive?.contentOrNull,
+        itemId = obj["item_id"]?.jsonPrimitive?.contentOrNull,
+    )
+}
+
+fun parseMassRecommendationSections(element: JsonElement?): List<MassRecommendationSection> {
+    val rows = element as? JsonArray ?: return emptyList()
+    return rows.mapNotNull { row ->
+        val obj = row as? JsonObject ?: return@mapNotNull null
+        val name = obj["name"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        val items = (obj["items"] as? JsonArray)
+            ?.mapNotNull(::parseMassMediaItem)
+            .orEmpty()
+        if (items.isEmpty()) return@mapNotNull null
+        MassRecommendationSection(
+            name = name,
+            provider = obj["provider"]?.jsonPrimitive?.contentOrNull,
+            items = items,
+        )
+    }
+}
+
+fun parseMassSearchResults(element: JsonElement?): MassSearchResults {
+    val obj = element as? JsonObject ?: return MassSearchResults()
+    fun list(key: String): List<MassMediaItem> =
+        (obj[key] as? JsonArray)?.mapNotNull(::parseMassMediaItem).orEmpty()
+    return MassSearchResults(
+        artists = list("artists"),
+        albums = list("albums"),
+        tracks = list("tracks"),
+        playlists = list("playlists"),
+    )
+}
+
+fun extractMassImageUrl(obj: JsonObject): String? {
+    when (val image = obj["image"]) {
+        is JsonPrimitive -> image.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
+        is JsonObject -> {
+            image["path"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
+            image["url"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
+        }
+        else -> Unit
+    }
+    val metadata = obj["metadata"] as? JsonObject
+    val images = metadata?.get("images") as? JsonArray
+    val first = images?.firstOrNull() as? JsonObject
+    return first?.get("path")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+        ?: first?.get("url")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+}
+
+fun normalizeMusicPlayerName(name: String): String =
+    name.lowercase()
+        .replace(Regex("['’]"), "")
+        .replace(Regex("[^a-z0-9]+"), "")
+
+fun matchMassPlayerId(haName: String, massPlayers: List<Pair<String, String>>): String? {
+    val target = normalizeMusicPlayerName(haName)
+    if (target.isBlank()) return null
+    massPlayers.firstOrNull { normalizeMusicPlayerName(it.second) == target }?.first?.let { return it }
+    massPlayers.firstOrNull {
+        val other = normalizeMusicPlayerName(it.second)
+        other.contains(target) || target.contains(other)
+    }?.first?.let { return it }
+    return null
 }

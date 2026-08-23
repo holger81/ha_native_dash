@@ -153,6 +153,11 @@ class HaClient {
         .pingInterval(30, TimeUnit.SECONDS)
         .callTimeout(30, TimeUnit.SECONDS)
         .build()
+    private val massHttp = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(60, TimeUnit.SECONDS)
+        .build()
 
     private var webSocket: WebSocket? = null
     private var baseUrl: String = ""
@@ -168,9 +173,18 @@ class HaClient {
     val connection: StateFlow<ConnectionState> = _connection
     private val deviceNameCache = ConcurrentHashMap<String, String?>()
     private val snapshotCache = ConcurrentHashMap<String, ByteArray>()
+    @Volatile private var massIngress: MassIngressSession? = null
+    @Volatile private var massAddonSlug: String? = null
+    @Volatile private var massPlayersCache: Pair<Long, List<Pair<String, String>>>? = null
 
     val currentBaseUrl: String get() = baseUrl
     val currentToken: String get() = token
+
+    private data class MassIngressSession(
+        val session: String,
+        val apiUrl: String,
+        val expiresAtMs: Long,
+    )
 
     fun state(entityId: String?): EntityState? = entityId?.let { _states.value[it] }
 
@@ -205,6 +219,9 @@ class HaClient {
         pending.clear()
         forecastSubscriptions.values.forEach { it(emptyList()) }
         forecastSubscriptions.clear()
+        massIngress = null
+        massAddonSlug = null
+        massPlayersCache = null
         _connection.value = ConnectionState.Disconnected
     }
 
@@ -428,21 +445,23 @@ class HaClient {
                 )
             }
             .toList()
-        if (fromMass.isNotEmpty()) return sortMusicPlayers(fromMass)
-
-        // Ordinary media players until the Music Assistant integration exposes MA entities.
-        val fallback = states
-            .asSequence()
-            .filter { it.entityId.startsWith("media_player.") }
-            .filter { it.state !in setOf("unavailable", "unknown") }
-            .map {
-                MusicAssistantPlayer(
-                    entityId = it.entityId,
-                    name = it.friendlyName,
-                )
-            }
-            .toList()
-        return sortMusicPlayers(fallback)
+        val base = if (fromMass.isNotEmpty()) {
+            fromMass
+        } else {
+            // Ordinary media players until the Music Assistant integration exposes MA entities.
+            states
+                .asSequence()
+                .filter { it.entityId.startsWith("media_player.") }
+                .filter { it.state !in setOf("unavailable", "unknown") }
+                .map {
+                    MusicAssistantPlayer(
+                        entityId = it.entityId,
+                        name = it.friendlyName,
+                    )
+                }
+                .toList()
+        }
+        return sortMusicPlayers(enrichMusicPlayersWithMassIds(base))
     }
 
     private fun sortMusicPlayers(players: List<MusicAssistantPlayer>): List<MusicAssistantPlayer> =
@@ -508,6 +527,217 @@ class HaClient {
             entityId = listOf(targetEntityId),
             data = data,
         )
+    }
+
+    suspend fun musicAssistantMassPlayers(): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+        val cached = massPlayersCache
+        if (cached != null && System.currentTimeMillis() - cached.first < 60_000L) {
+            return@withContext cached.second
+        }
+        val result = massCommand("players/all")
+        val rows = result as? JsonArray ?: return@withContext emptyList()
+        val players = rows.mapNotNull { element ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            val id = obj["player_id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val name = obj["display_name"]?.jsonPrimitive?.contentOrNull
+                ?: obj["name"]?.jsonPrimitive?.contentOrNull
+                ?: id
+            id to name
+        }
+        massPlayersCache = System.currentTimeMillis() to players
+        players
+    }
+
+    suspend fun enrichMusicPlayersWithMassIds(players: List<MusicAssistantPlayer>): List<MusicAssistantPlayer> {
+        val massPlayers = runCatching { musicAssistantMassPlayers() }.getOrElse { emptyList() }
+        if (massPlayers.isEmpty()) return players
+        return players.map { player ->
+            val matched = matchMassPlayerId(player.name, massPlayers)
+            if (matched == null || matched == player.massPlayerId) player
+            else player.copy(massPlayerId = matched)
+        }
+    }
+
+    suspend fun musicDiscoveryRecentlyPlayed(limit: Int = 12): List<MassMediaItem> {
+        val result = massCommand(
+            "music/recently_played_items",
+            buildJsonObject {
+                put("limit", limit)
+                put("media_types", JsonArray(listOf(JsonPrimitive("playlist"), JsonPrimitive("album"), JsonPrimitive("track"))))
+            },
+        )
+        return (result as? JsonArray)?.mapNotNull(::parseMassMediaItem).orEmpty()
+    }
+
+    suspend fun musicDiscoveryRecommendations(): List<MassRecommendationSection> {
+        return parseMassRecommendationSections(massCommand("music/recommendations"))
+    }
+
+    suspend fun musicDiscoveryNewMusicTracks(limit: Int = 20): List<MassMediaItem> {
+        val root = findAppleMusicBrowseRoot()
+        val playlists = massCommand(
+            "music/browse",
+            buildJsonObject { put("path", massBrowseChildPath(root, "playlists")) },
+        ) as? JsonArray
+        val playlist = playlists
+            ?.mapNotNull(::parseMassMediaItem)
+            ?.firstOrNull { it.name.equals("New Music", ignoreCase = true) }
+            ?: return emptyList()
+        val provider = playlist.provider
+            ?: playlist.uri.substringBefore("://", missingDelimiterValue = "apple_music")
+        val itemId = playlist.itemId
+            ?: playlist.uri.substringAfterLast('/')
+        val tracks = massCommand(
+            "music/playlists/playlist_tracks",
+            buildJsonObject {
+                put("item_id", itemId)
+                put("provider_instance_id_or_domain", provider)
+                put("allow_dynamic_tracks", true)
+            },
+        )
+        val parsed = (tracks as? JsonArray)?.mapNotNull(::parseMassMediaItem).orEmpty()
+        return listOf(playlist) + parsed.take(limit)
+    }
+
+    suspend fun musicSearch(
+        query: String,
+        limit: Int = 8,
+    ): MassSearchResults {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return MassSearchResults()
+        val result = massCommand(
+            "music/search",
+            buildJsonObject {
+                put("search_query", trimmed)
+                put("limit", limit)
+                put(
+                    "media_types",
+                    JsonArray(
+                        listOf(
+                            JsonPrimitive("track"),
+                            JsonPrimitive("album"),
+                            JsonPrimitive("playlist"),
+                            JsonPrimitive("artist"),
+                        ),
+                    ),
+                )
+            },
+        )
+        return parseMassSearchResults(result)
+    }
+
+    suspend fun playMassMedia(queueId: String, mediaUri: String, option: String = "replace") {
+        massCommand(
+            "player_queues/play_media",
+            buildJsonObject {
+                put("queue_id", queueId)
+                put("media", mediaUri)
+                put("option", option)
+            },
+        )
+    }
+
+    private suspend fun findAppleMusicBrowseRoot(): String {
+        val root = massCommand("music/browse", buildJsonObject {}) as? JsonArray ?: return "apple_music://"
+        val apple = root.mapNotNull { it as? JsonObject }.firstOrNull {
+            it["name"]?.jsonPrimitive?.contentOrNull?.equals("Apple Music", ignoreCase = true) == true ||
+                it["provider"]?.jsonPrimitive?.contentOrNull?.contains("apple_music") == true
+        }
+        return apple?.get("path")?.jsonPrimitive?.contentOrNull
+            ?: apple?.get("uri")?.jsonPrimitive?.contentOrNull
+            ?: "apple_music://"
+    }
+
+    private fun massBrowseChildPath(root: String, child: String): String {
+        return when {
+            root.endsWith("://") -> "$root$child"
+            root.endsWith("/") -> "$root$child"
+            else -> "$root/$child"
+        }
+    }
+
+    private suspend fun massCommand(commandName: String, args: JsonObject? = null): JsonElement =
+        withContext(Dispatchers.IO) {
+            val ingress = ensureMassIngress()
+            val body = buildJsonObject {
+                put("command", commandName)
+                if (args != null) put("args", args)
+            }.toString().toRequestBody(mediaType)
+            fun execute(session: MassIngressSession): Pair<Int, String> {
+                val request = Request.Builder()
+                    .url(session.apiUrl)
+                    .addHeader("Content-Type", "application/json")
+                    .addHeader("Cookie", "ingress_session=${session.session}")
+                    .post(body)
+                    .build()
+                return massHttp.newCall(request).execute().use { response ->
+                    val text = response.body?.string().orEmpty()
+                    response.code to text
+                }
+            }
+            var (code, text) = execute(ingress)
+            if (code == 401 || code == 403) {
+                massIngress = null
+                val refreshed = ensureMassIngress(force = true)
+                val retry = execute(refreshed)
+                code = retry.first
+                text = retry.second
+            }
+            if (code !in 200..299) {
+                throw IllegalStateException(text.ifBlank { "Music Assistant request failed ($code)" })
+            }
+            if (text.isBlank()) return@withContext JsonNull
+            json.parseToJsonElement(text)
+        }
+
+    private suspend fun ensureMassIngress(force: Boolean = false): MassIngressSession {
+        val cached = massIngress
+        if (!force && cached != null && cached.expiresAtMs > System.currentTimeMillis()) {
+            return cached
+        }
+        val sessionResult = command {
+            put("type", "supervisor/api")
+            put("endpoint", "/ingress/session")
+            put("method", "post")
+        }.jsonObject
+        val session = sessionResult["session"]?.jsonPrimitive?.contentOrNull
+            ?: throw IllegalStateException("Could not create Home Assistant ingress session")
+        val slug = resolveMusicAssistantAddonSlug()
+        val info = command {
+            put("type", "supervisor/api")
+            put("endpoint", "/addons/$slug/info")
+            put("method", "get")
+        }.jsonObject
+        val ingressUrl = info["ingress_url"]?.jsonPrimitive?.contentOrNull?.trimEnd('/')
+            ?: throw IllegalStateException("Music Assistant addon has no ingress URL")
+        val apiUrl = "$baseUrl$ingressUrl/api"
+        val created = MassIngressSession(
+            session = session,
+            apiUrl = apiUrl,
+            expiresAtMs = System.currentTimeMillis() + 45 * 60_000L,
+        )
+        massIngress = created
+        return created
+    }
+
+    private suspend fun resolveMusicAssistantAddonSlug(): String {
+        massAddonSlug?.let { return it }
+        val addonsResult = command {
+            put("type", "supervisor/api")
+            put("endpoint", "/addons")
+            put("method", "get")
+        }.jsonObject
+        val addons = addonsResult["addons"] as? JsonArray
+            ?: throw IllegalStateException("Could not list Home Assistant addons")
+        val slug = addons.mapNotNull { it as? JsonObject }.firstOrNull { addon ->
+            val candidate = addon["slug"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            val name = addon["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            candidate.contains("music_assistant", ignoreCase = true) ||
+                name.contains("Music Assistant", ignoreCase = true)
+        }?.get("slug")?.jsonPrimitive?.contentOrNull
+            ?: throw IllegalStateException("Music Assistant addon not found")
+        massAddonSlug = slug
+        return slug
     }
 
     suspend fun toggle(entityId: String) {
@@ -816,12 +1046,13 @@ class HaClient {
     suspend fun authenticatedBytes(path: String): ByteArray? = withContext(Dispatchers.IO) {
         if (!path.startsWith("http") && (baseUrl.isBlank() || token.isBlank())) return@withContext null
         val url = if (path.startsWith("http")) path else baseUrl + path
+        val isHaUrl = !path.startsWith("http") || url.startsWith(baseUrl)
         runCatching {
-            val request = Request.Builder()
-                .url(url)
-                .addHeader("Authorization", "Bearer $token")
-                .build()
-            http.newCall(request).execute().use { response ->
+            val builder = Request.Builder().url(url)
+            if (isHaUrl && token.isNotBlank()) {
+                builder.addHeader("Authorization", "Bearer $token")
+            }
+            http.newCall(builder.build()).execute().use { response ->
                 if (!response.isSuccessful) return@use null
                 response.body?.bytes()
             }

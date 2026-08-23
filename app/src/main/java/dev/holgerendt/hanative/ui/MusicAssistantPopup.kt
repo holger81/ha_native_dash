@@ -19,6 +19,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -39,6 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.holgerendt.hanative.data.EntityState
+import dev.holgerendt.hanative.data.MassMediaItem
 import dev.holgerendt.hanative.data.MusicAssistantQueueItem
 import dev.holgerendt.hanative.data.formatMediaClock
 import dev.holgerendt.hanative.data.mediaAlbum
@@ -57,8 +60,8 @@ import dev.holgerendt.hanative.ui.widgets.EntityPicture
 import kotlinx.coroutines.delay
 
 /**
- * Native wall Music Assistant player: pick a MA media_player, control transport/volume,
- * and show now-playing plus up-next from `music_assistant.get_queue`.
+ * Native wall Music Assistant player: now playing / queue controls, plus Discover
+ * (Apple Music recently played, new music, stations, and search).
  */
 @Composable
 fun MusicAssistantPopup(popup: PopupNode, viewModel: HaViewModel) {
@@ -89,6 +92,112 @@ fun MusicAssistantPopup(popup: PopupNode, viewModel: HaViewModel) {
         return
     }
 
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(horizontal = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        MusicTabRow(
+            selected = wall.tab,
+            onSelect = viewModel::setMusicWallTab,
+        )
+        Row(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Column(
+                modifier = Modifier
+                    .width(200.dp)
+                    .fillMaxHeight()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("Players", color = overlay.muted, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                wall.players.forEach { player ->
+                    val state = states[player.entityId]
+                    PlayerChip(
+                        name = player.name,
+                        state = state?.state ?: "idle",
+                        selected = player.entityId == wall.selectedEntityId,
+                        massLinked = !player.massPlayerId.isNullOrBlank(),
+                        onClick = { viewModel.selectMusicPlayer(player.entityId) },
+                    )
+                }
+                val playingElsewhere = wall.players.firstOrNull {
+                    it.entityId != wall.selectedEntityId && states[it.entityId]?.state == "playing"
+                }
+                if (playingElsewhere != null && wall.selectedEntityId != null && wall.tab == "now") {
+                    Spacer(Modifier.height(8.dp))
+                    Text("Move queue here", color = overlay.muted, fontSize = 12.sp)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(overlay.well)
+                            .clickable { viewModel.transferMusicToSelected(playingElsewhere.entityId) }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                    ) {
+                        Text(
+                            "From ${playingElsewhere.name}",
+                            color = overlay.text,
+                            fontSize = 14.sp,
+                        )
+                    }
+                }
+            }
+
+            if (wall.tab == "discover") {
+                DiscoverPane(viewModel = viewModel, wall = wall)
+            } else {
+                NowPlayingPane(viewModel = viewModel, wall = wall, states = states)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MusicTabRow(selected: String, onSelect: (String) -> Unit) {
+    val overlay = LocalOverlay.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(overlay.well)
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        listOf("now" to "Now playing", "discover" to "Discover").forEach { (id, label) ->
+            val active = selected == id
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (active) ActiveYellow else Color.Transparent)
+                    .clickable { onSelect(id) }
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    label,
+                    color = if (active) Color.Black else overlay.text,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NowPlayingPane(
+    viewModel: HaViewModel,
+    wall: MusicWallState,
+    states: Map<String, EntityState>,
+) {
+    val overlay = LocalOverlay.current
     val selectedId = wall.selectedEntityId
     val entity = selectedId?.let { states[it] }
     val playing = entity?.state == "playing"
@@ -111,55 +220,9 @@ fun MusicAssistantPopup(popup: PopupNode, viewModel: HaViewModel) {
     }
 
     Row(
-        Modifier
-            .fillMaxSize()
-            .padding(horizontal = 4.dp),
+        Modifier.fillMaxSize(),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Column(
-            modifier = Modifier
-                .width(220.dp)
-                .fillMaxHeight()
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text("Players", color = overlay.muted, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-            wall.players.forEach { player ->
-                val state = states[player.entityId]
-                PlayerChip(
-                    name = player.name,
-                    state = state?.state ?: "idle",
-                    selected = player.entityId == selectedId,
-                    onClick = { viewModel.selectMusicPlayer(player.entityId) },
-                )
-            }
-            val playingElsewhere = wall.players.firstOrNull {
-                it.entityId != selectedId && states[it.entityId]?.state == "playing"
-            }
-            if (playingElsewhere != null && selectedId != null) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Move queue here",
-                    color = overlay.muted,
-                    fontSize = 12.sp,
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(overlay.well)
-                        .clickable { viewModel.transferMusicToSelected(playingElsewhere.entityId) }
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                ) {
-                    Text(
-                        "From ${playingElsewhere.name}",
-                        color = overlay.text,
-                        fontSize = 14.sp,
-                    )
-                }
-            }
-        }
-
         Column(
             modifier = Modifier
                 .weight(1.2f)
@@ -173,13 +236,13 @@ fun MusicAssistantPopup(popup: PopupNode, viewModel: HaViewModel) {
                     path = art,
                     viewModel = viewModel,
                     modifier = Modifier
-                        .size(280.dp)
+                        .size(260.dp)
                         .clip(RoundedCornerShape(28.dp)),
                 )
             } else {
                 Box(
                     modifier = Modifier
-                        .size(280.dp)
+                        .size(260.dp)
                         .clip(RoundedCornerShape(28.dp))
                         .background(overlay.well),
                     contentAlignment = Alignment.Center,
@@ -190,7 +253,7 @@ fun MusicAssistantPopup(popup: PopupNode, viewModel: HaViewModel) {
             Text(
                 title,
                 color = overlay.text,
-                fontSize = 28.sp,
+                fontSize = 26.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
@@ -285,10 +348,255 @@ fun MusicAssistantPopup(popup: PopupNode, viewModel: HaViewModel) {
 }
 
 @Composable
+private fun DiscoverPane(viewModel: HaViewModel, wall: MusicWallState) {
+    val overlay = LocalOverlay.current
+    val discovery = wall.discovery
+    val fieldColors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = overlay.text,
+        unfocusedTextColor = overlay.text,
+        focusedBorderColor = ActiveYellow,
+        unfocusedBorderColor = overlay.muted.copy(alpha = 0.35f),
+        cursorColor = ActiveYellow,
+        focusedContainerColor = overlay.card,
+        unfocusedContainerColor = overlay.card,
+        focusedPlaceholderColor = overlay.muted,
+        unfocusedPlaceholderColor = overlay.muted,
+    )
+    val selectedHasMass = wall.players.any {
+        it.entityId == wall.selectedEntityId && !it.massPlayerId.isNullOrBlank()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        OutlinedTextField(
+            value = discovery.searchQuery,
+            onValueChange = viewModel::setMusicSearchQuery,
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            placeholder = { Text("Search tracks, albums, playlists…") },
+            shape = RoundedCornerShape(18.dp),
+            colors = fieldColors,
+            leadingIcon = {
+                MdiIcon("mdi:magnify", tint = overlay.muted, size = 22.dp)
+            },
+        )
+
+        if (!selectedHasMass) {
+            Text(
+                "Tip: pick a player with a Music Assistant link (yellow dot) so Discover can play to it.",
+                color = overlay.muted,
+                fontSize = 13.sp,
+            )
+        }
+
+        discovery.error?.let {
+            Text(it, color = Color(0xFFFF8A80), fontSize = 13.sp)
+        }
+
+        when {
+            discovery.searchLoading -> {
+                Box(Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
+                    LoadingSpinner()
+                }
+            }
+            discovery.searchResults != null -> {
+                val results = discovery.searchResults
+                if (results.isEmpty) {
+                    Text("No matches for “${discovery.searchQuery.trim()}”.", color = overlay.muted, fontSize = 14.sp)
+                } else {
+                    SearchResultSection("Tracks", results.tracks, discovery.playingUri, viewModel)
+                    SearchResultSection("Albums", results.albums, discovery.playingUri, viewModel)
+                    SearchResultSection("Playlists", results.playlists, discovery.playingUri, viewModel)
+                    SearchResultSection("Artists", results.artists, discovery.playingUri, viewModel)
+                }
+            }
+            discovery.loading -> {
+                Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
+                    LoadingSpinner()
+                }
+            }
+            else -> {
+                DiscoveryShelf(
+                    title = "Recently played",
+                    subtitle = "Apple Music & last queues",
+                    items = discovery.recentlyPlayed,
+                    playingUri = discovery.playingUri,
+                    viewModel = viewModel,
+                )
+                DiscoveryShelf(
+                    title = "New music",
+                    subtitle = "Apple Music Friday refresh",
+                    items = discovery.newMusic,
+                    playingUri = discovery.playingUri,
+                    viewModel = viewModel,
+                )
+                DiscoveryShelf(
+                    title = "Stations for you",
+                    subtitle = "Apple Music radio",
+                    items = discovery.stationsForYou,
+                    playingUri = discovery.playingUri,
+                    viewModel = viewModel,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiscoveryShelf(
+    title: String,
+    subtitle: String,
+    items: List<MassMediaItem>,
+    playingUri: String?,
+    viewModel: HaViewModel,
+) {
+    val overlay = LocalOverlay.current
+    if (items.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(title, color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Text(subtitle, color = overlay.muted, fontSize = 13.sp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            items.forEach { item ->
+                DiscoveryTile(
+                    item = item,
+                    playing = item.uri == playingUri,
+                    onClick = { viewModel.playMusicDiscoveryItem(item) },
+                    viewModel = viewModel,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchResultSection(
+    title: String,
+    items: List<MassMediaItem>,
+    playingUri: String?,
+    viewModel: HaViewModel,
+) {
+    val overlay = LocalOverlay.current
+    if (items.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, color = overlay.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        items.forEach { item ->
+            DiscoveryListRow(
+                item = item,
+                playing = item.uri == playingUri,
+                onClick = { viewModel.playMusicDiscoveryItem(item) },
+                viewModel = viewModel,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DiscoveryTile(
+    item: MassMediaItem,
+    playing: Boolean,
+    onClick: () -> Unit,
+    viewModel: HaViewModel,
+) {
+    val overlay = LocalOverlay.current
+    Column(
+        modifier = Modifier
+            .width(148.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(if (playing) ActiveYellow.copy(alpha = 0.28f) else overlay.card)
+            .clickable(onClick = onClick)
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        val thumb = Modifier
+            .size(128.dp)
+            .clip(RoundedCornerShape(14.dp))
+        if (!item.imageUrl.isNullOrBlank()) {
+            EntityPicture(path = item.imageUrl, viewModel = viewModel, modifier = thumb)
+        } else {
+            Box(modifier = thumb.background(overlay.well), contentAlignment = Alignment.Center) {
+                MdiIcon("mdi:music-note", tint = overlay.muted, size = 36.dp)
+            }
+        }
+        Text(
+            item.name,
+            color = overlay.text,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            item.subtitle ?: item.mediaType.replaceFirstChar { it.uppercase() },
+            color = overlay.muted,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun DiscoveryListRow(
+    item: MassMediaItem,
+    playing: Boolean,
+    onClick: () -> Unit,
+    viewModel: HaViewModel,
+) {
+    val overlay = LocalOverlay.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (playing) ActiveYellow.copy(alpha = 0.28f) else overlay.card)
+            .clickable(onClick = onClick)
+            .padding(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val thumb = Modifier.size(56.dp).clip(RoundedCornerShape(12.dp))
+        if (!item.imageUrl.isNullOrBlank()) {
+            EntityPicture(path = item.imageUrl, viewModel = viewModel, modifier = thumb)
+        } else {
+            Box(modifier = thumb.background(overlay.well), contentAlignment = Alignment.Center) {
+                MdiIcon("mdi:music-note", tint = overlay.muted, size = 22.dp)
+            }
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                item.name,
+                color = overlay.text,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                item.subtitle ?: item.mediaType.replaceFirstChar { it.uppercase() },
+                color = overlay.muted,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        MdiIcon("mdi:play-circle", tint = if (playing) Color.Black else overlay.muted, size = 28.dp)
+    }
+}
+
+@Composable
 private fun PlayerChip(
     name: String,
     state: String,
     selected: Boolean,
+    massLinked: Boolean,
     onClick: () -> Unit,
 ) {
     val overlay = LocalOverlay.current
@@ -305,7 +613,25 @@ private fun PlayerChip(
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
-        Text(name, color = tint, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                name,
+                color = tint,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (massLinked) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(if (selected) Color.Black else ActiveYellow),
+                )
+            }
+        }
         Text(
             state.replaceFirstChar { it.uppercase() },
             color = if (selected) Color.Black.copy(alpha = 0.65f) else overlay.muted,
@@ -334,7 +660,7 @@ private fun QueueItemRow(item: MusicAssistantQueueItem, viewModel: HaViewModel, 
             }
         }
         Box(modifier = Modifier.weight(1f)) {
-            androidx.compose.foundation.layout.Column {
+            Column {
                 Text(
                     text = heading,
                     color = if (muted) overlay.muted else overlay.text,
@@ -388,7 +714,7 @@ private fun ProgressRow(
         } else {
             Spacer(Modifier.height(8.dp))
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(formatMediaClock(live), color = overlay.muted, fontSize = 12.sp)
             Text(if (max > 0) formatMediaClock(max) else "--:--", color = overlay.muted, fontSize = 12.sp)
         }
@@ -407,7 +733,6 @@ private fun TransportRow(
     onShuffle: () -> Unit,
     onRepeat: () -> Unit,
 ) {
-    val overlay = LocalOverlay.current
     Row(
         modifier = Modifier
             .fillMaxWidth()

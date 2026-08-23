@@ -22,6 +22,8 @@ import dev.holgerendt.hanative.data.ManagementServer
 import dev.holgerendt.hanative.data.ManagementTls
 import dev.holgerendt.hanative.data.MusicAssistantPlayer
 import dev.holgerendt.hanative.data.MusicAssistantQueue
+import dev.holgerendt.hanative.data.MassMediaItem
+import dev.holgerendt.hanative.data.MassSearchResults
 import dev.holgerendt.hanative.data.MmWaveLiveTargets
 import dev.holgerendt.hanative.data.MmWaveLiveTracker
 import dev.holgerendt.hanative.data.isShuffleOn
@@ -64,12 +66,26 @@ data class WeatherPopupContext(
     val initialTab: String? = null,
 )
 
+data class MusicDiscoveryState(
+    val loading: Boolean = false,
+    val recentlyPlayed: List<MassMediaItem> = emptyList(),
+    val newMusic: List<MassMediaItem> = emptyList(),
+    val stationsForYou: List<MassMediaItem> = emptyList(),
+    val searchQuery: String = "",
+    val searchLoading: Boolean = false,
+    val searchResults: MassSearchResults? = null,
+    val error: String? = null,
+    val playingUri: String? = null,
+)
+
 data class MusicWallState(
     val loading: Boolean = true,
     val players: List<MusicAssistantPlayer> = emptyList(),
     val selectedEntityId: String? = null,
     val queue: MusicAssistantQueue? = null,
     val error: String? = null,
+    val tab: String = "now",
+    val discovery: MusicDiscoveryState = MusicDiscoveryState(),
 )
 
 data class UiState(
@@ -363,6 +379,8 @@ class HaViewModel(
     private val _musicWall = MutableStateFlow(MusicWallState(selectedEntityId = credentials.musicPlayerEntity.ifBlank { null }))
     val musicWall: StateFlow<MusicWallState> = _musicWall
     private var musicWallJob: Job? = null
+    private var musicDiscoveryJob: Job? = null
+    private var musicSearchJob: Job? = null
 
     fun selectMusicPlayer(entityId: String) {
         val normalized = CredentialsStore.normalizeEntityId(entityId)
@@ -370,6 +388,93 @@ class HaViewModel(
         credentials.musicPlayerEntity = normalized
         _musicWall.value = _musicWall.value.copy(selectedEntityId = normalized, error = null)
         refreshMusicQueue()
+    }
+
+    fun setMusicWallTab(tab: String) {
+        val normalized = if (tab == "discover") "discover" else "now"
+        _musicWall.value = _musicWall.value.copy(tab = normalized)
+        if (normalized == "discover" &&
+            !_musicWall.value.discovery.loading &&
+            _musicWall.value.discovery.recentlyPlayed.isEmpty() &&
+            _musicWall.value.discovery.newMusic.isEmpty() &&
+            _musicWall.value.discovery.stationsForYou.isEmpty() &&
+            _musicWall.value.discovery.error == null
+        ) {
+            loadMusicDiscovery()
+        }
+    }
+
+    fun setMusicSearchQuery(query: String) {
+        _musicWall.value = _musicWall.value.copy(
+            discovery = _musicWall.value.discovery.copy(searchQuery = query),
+        )
+        musicSearchJob?.cancel()
+        val trimmed = query.trim()
+        if (trimmed.length < 2) {
+            _musicWall.value = _musicWall.value.copy(
+                discovery = _musicWall.value.discovery.copy(
+                    searchLoading = false,
+                    searchResults = null,
+                ),
+            )
+            return
+        }
+        musicSearchJob = viewModelScope.launch {
+            delay(350)
+            _musicWall.value = _musicWall.value.copy(
+                discovery = _musicWall.value.discovery.copy(searchLoading = true),
+            )
+            val result = runCatching { client.musicSearch(trimmed) }
+            _musicWall.value = _musicWall.value.copy(
+                discovery = _musicWall.value.discovery.copy(
+                    searchLoading = false,
+                    searchResults = result.getOrNull(),
+                    error = result.exceptionOrNull()?.message
+                        ?: _musicWall.value.discovery.error,
+                ),
+            )
+        }
+    }
+
+    fun refreshMusicDiscovery() {
+        loadMusicDiscovery()
+    }
+
+    fun playMusicDiscoveryItem(item: MassMediaItem) {
+        val wall = _musicWall.value
+        val selected = wall.players.firstOrNull { it.entityId == wall.selectedEntityId }
+        val queueId = selected?.massPlayerId
+        if (queueId.isNullOrBlank()) {
+            _musicWall.value = wall.copy(
+                discovery = wall.discovery.copy(
+                    error = "Select a Music Assistant player to play from Discover.",
+                ),
+            )
+            return
+        }
+        viewModelScope.launch {
+            _musicWall.value = _musicWall.value.copy(
+                discovery = _musicWall.value.discovery.copy(playingUri = item.uri, error = null),
+                tab = "now",
+            )
+            runCatching { client.playMassMedia(queueId, item.uri) }
+                .onFailure { error ->
+                    _musicWall.value = _musicWall.value.copy(
+                        discovery = _musicWall.value.discovery.copy(
+                            playingUri = null,
+                            error = error.message ?: "Could not play ${item.name}",
+                        ),
+                        tab = "discover",
+                    )
+                }
+                .onSuccess {
+                    delay(500)
+                    refreshMusicWall(forcePlayers = false)
+                    _musicWall.value = _musicWall.value.copy(
+                        discovery = _musicWall.value.discovery.copy(playingUri = null),
+                    )
+                }
+        }
     }
 
     fun mediaPlayPause() {
@@ -459,6 +564,7 @@ class HaViewModel(
     private fun openMusicWall() {
         musicWallJob?.cancel()
         _musicWall.value = _musicWall.value.copy(loading = true, error = null)
+        loadMusicDiscovery()
         musicWallJob = viewModelScope.launch {
             while (_ui.value.popupHash == "#music") {
                 refreshMusicWall(forcePlayers = true)
@@ -470,6 +576,61 @@ class HaViewModel(
     private fun closeMusicWall() {
         musicWallJob?.cancel()
         musicWallJob = null
+        musicDiscoveryJob?.cancel()
+        musicDiscoveryJob = null
+        musicSearchJob?.cancel()
+        musicSearchJob = null
+    }
+
+    private fun loadMusicDiscovery() {
+        musicDiscoveryJob?.cancel()
+        musicDiscoveryJob = viewModelScope.launch {
+            _musicWall.value = _musicWall.value.copy(
+                discovery = _musicWall.value.discovery.copy(loading = true, error = null),
+            )
+            try {
+                val recently = runCatching { client.musicDiscoveryRecentlyPlayed() }.getOrElse { emptyList() }
+                val recommendations = runCatching { client.musicDiscoveryRecommendations() }.getOrElse { emptyList() }
+                val newMusic = runCatching { client.musicDiscoveryNewMusicTracks() }.getOrElse { emptyList() }
+                val appleRecently = recommendations
+                    .firstOrNull {
+                        it.name.equals("Recently Played", ignoreCase = true) &&
+                            it.provider?.contains("apple_music", ignoreCase = true) == true
+                    }
+                    ?.items
+                    .orEmpty()
+                val stations = recommendations
+                    .firstOrNull {
+                        it.name.equals("Stations for You", ignoreCase = true)
+                    }
+                    ?.items
+                    .orEmpty()
+                val mergedRecent = (recently + appleRecently)
+                    .distinctBy { it.uri }
+                _musicWall.value = _musicWall.value.copy(
+                    discovery = _musicWall.value.discovery.copy(
+                        loading = false,
+                        recentlyPlayed = mergedRecent,
+                        newMusic = newMusic,
+                        stationsForYou = stations,
+                        error = when {
+                            mergedRecent.isEmpty() && newMusic.isEmpty() && stations.isEmpty() ->
+                                "Could not load Apple Music discovery from Music Assistant."
+                            else -> null
+                        },
+                    ),
+                )
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _musicWall.value = _musicWall.value.copy(
+                    discovery = _musicWall.value.discovery.copy(
+                        loading = false,
+                        error = error.message ?: "Discovery failed to load",
+                    ),
+                )
+            }
+        }
     }
 
     private fun refreshMusicQueue() {
@@ -516,7 +677,8 @@ class HaViewModel(
             } else {
                 null
             }
-            _musicWall.value = MusicWallState(
+            val current = _musicWall.value
+            _musicWall.value = current.copy(
                 loading = false,
                 players = players,
                 selectedEntityId = selected,
