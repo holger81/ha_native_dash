@@ -62,6 +62,21 @@ class LiveCameraHub(
         targets.filter { it.hasLiveSource() }.forEach { startOne(session(it)) }
     }
 
+    fun stopTargets(targets: Collection<CameraTarget>) {
+        targets.forEach { target ->
+            val session = sessions.remove(key(target)) ?: return@forEach
+            session.job?.cancel()
+            session.jpegJob?.cancel()
+            runOnMain {
+                session.listener?.let { listener -> session.player?.removeListener(listener) }
+                session.player?.release()
+                session.placeholder?.release()
+                session.player = null
+                session.placeholder = null
+            }
+        }
+    }
+
     fun markAttached(target: CameraTarget) {
         session(target).attached += 1
     }

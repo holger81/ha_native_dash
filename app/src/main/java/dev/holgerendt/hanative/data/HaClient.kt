@@ -31,6 +31,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.net.URLEncoder
+import java.time.format.DateTimeFormatter
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -94,11 +95,77 @@ data class HaCalendarEvent(
     val endDate: LocalDate? = null,
     val uid: String? = null,
     val keyFrame: String? = null,
+    val clipPath: String? = null,
     val cameraName: String? = null,
     val category: String? = null,
     val label: String? = null,
     val color: String? = null,
     val icon: String? = null,
+)
+
+private val CLIP_LINE_REGEX = Regex("""(?im)^clip:\s*(\S+)\s*$""")
+private val CLIP_URL_REGEX = Regex("""(/api/frigate/notifications/[^/\s"']+/clip\.mp4|/api/events/[^/\s"']+/clip\.mp4)""")
+
+internal fun splitClipFromDescription(description: String?): Pair<String?, String?> {
+    if (description.isNullOrBlank()) return null to null
+    var clipPath = CLIP_LINE_REGEX.find(description)?.groupValues?.get(1)?.trim()
+    if (clipPath.isNullOrBlank()) {
+        clipPath = CLIP_URL_REGEX.find(description)?.groupValues?.get(1)
+    }
+    val displayDescription = description.lines()
+        .filterNot { line -> CLIP_LINE_REGEX.containsMatchIn(line) }
+        .joinToString("\n")
+        .replace(CLIP_URL_REGEX, "")
+        .trim()
+        .ifBlank { null }
+    return displayDescription to clipPath
+}
+
+internal fun frigateSnapshotFromClip(clipPath: String): String? {
+    val trimmed = clipPath.trimEnd('/')
+    val clipSuffix = "/clip.mp4"
+    if (!trimmed.endsWith(clipSuffix, ignoreCase = true)) return null
+    return trimmed.dropLast(clipSuffix.length) + "/snapshot.jpg"
+}
+
+internal fun timelineSnapshotPath(keyFrame: String?, clipPath: String?): String? {
+    val frame = keyFrame?.trim()?.takeIf { it.isNotBlank() }
+    if (frame != null) {
+        return frigateSnapshotFromClip(frame) ?: frame
+    }
+    return clipPath?.let(::frigateSnapshotFromClip)
+}
+
+enum class MusicAssistantLoadMode {
+    /** Supervisor ingress session + addon `ingress_url` (HA App panels). */
+    INGRESS,
+    /** Load HA frontend root with external auth, then navigate to the panel route. */
+    SPA_BOOTSTRAP,
+    /** Load a HA frontend route directly with external auth. */
+    SPA_ROUTE,
+}
+
+data class MusicAssistantLoadTarget(
+    val mode: MusicAssistantLoadMode,
+    val label: String,
+    val path: String = "/",
+    val addonSlug: String? = null,
+)
+
+data class MusicAssistantPanelResolution(
+    val targets: List<MusicAssistantLoadTarget>,
+    val debugInfo: List<String>,
+)
+
+data class IngressLoad(
+    val session: String,
+    val ingressUrl: String,
+)
+
+private data class MusicAssistantPanel(
+    val urlPath: String,
+    val componentName: String?,
+    val addonSlug: String?,
 )
 
 sealed interface ConnectionState {
@@ -124,6 +191,7 @@ class HaClient {
     private var token: String = ""
     private val nextId = AtomicInteger(1)
     private val pending = ConcurrentHashMap<Int, (Result<JsonElement>) -> Unit>()
+    private val forecastSubscriptions = ConcurrentHashMap<Int, (List<JsonObject>) -> Unit>()
 
     private val _states = MutableStateFlow<Map<String, EntityState>>(emptyMap())
     val states: StateFlow<Map<String, EntityState>> = _states
@@ -167,6 +235,8 @@ class HaClient {
         webSocket = null
         pending.values.forEach { it(Result.failure(IllegalStateException("Disconnected"))) }
         pending.clear()
+        forecastSubscriptions.values.forEach { it(emptyList()) }
+        forecastSubscriptions.clear()
         _connection.value = ConnectionState.Disconnected
     }
 
@@ -229,6 +299,14 @@ class HaClient {
             "result" -> {
                 val id = obj["id"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: return
                 val success = obj["success"]?.jsonPrimitive?.contentOrNull != "false"
+                val forecastCallback = forecastSubscriptions[id]
+                if (forecastCallback != null) {
+                    if (!success) {
+                        forecastSubscriptions.remove(id)
+                        forecastCallback(emptyList())
+                    }
+                    return
+                }
                 val callback = pending.remove(id)
                 if (callback != null) {
                     if (success) {
@@ -243,6 +321,15 @@ class HaClient {
                 }
             }
             "event" -> {
+                val subscriptionId = obj["id"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+                val forecastCallback = subscriptionId?.let { forecastSubscriptions.remove(it) }
+                if (forecastCallback != null) {
+                    val event = obj["event"]?.jsonObject
+                    val forecast = (event?.get("forecast") as? JsonArray)?.mapNotNull { it as? JsonObject } ?: emptyList()
+                    forecastCallback(forecast)
+                    unsubscribe(subscriptionId)
+                    return
+                }
                 val event = obj["event"]?.jsonObject ?: return
                 when (event["event_type"]?.jsonPrimitive?.contentOrNull) {
                     "state_changed" -> {
@@ -304,6 +391,14 @@ class HaClient {
 
     private fun send(obj: JsonObject) {
         webSocket?.send(obj.toString())
+    }
+
+    private fun unsubscribe(subscriptionId: Int) {
+        send(buildJsonObject {
+            put("id", nextId.getAndIncrement())
+            put("type", "unsubscribe_events")
+            put("subscription", subscriptionId)
+        })
     }
 
     private suspend fun command(builder: JsonObjectBuilder.(Int) -> Unit): JsonElement {
@@ -713,6 +808,72 @@ class HaClient {
         return rows.mapNotNull { parseCalendarEvent(it as? JsonObject ?: return@mapNotNull null, entityId) }
     }
 
+    suspend fun createCalendarEvent(
+        entityId: String,
+        title: String,
+        start: Instant? = null,
+        end: Instant? = null,
+        startDate: LocalDate? = null,
+        endDate: LocalDate? = null,
+        allDay: Boolean = false,
+    ) {
+        val data = buildMap<String, JsonElement> {
+            put("summary", JsonPrimitive(title))
+            if (allDay) {
+                requireNotNull(startDate) { "startDate required for all-day events" }
+                requireNotNull(endDate) { "endDate required for all-day events" }
+                put("start_date", JsonPrimitive(startDate.toString()))
+                put("end_date", JsonPrimitive(endDate.toString()))
+            } else {
+                requireNotNull(start) { "start required for timed events" }
+                requireNotNull(end) { "end required for timed events" }
+                put("start_date_time", JsonPrimitive(formatHaLocalDateTime(start)))
+                put("end_date_time", JsonPrimitive(formatHaLocalDateTime(end)))
+            }
+        }
+        callService("calendar", "create_event", listOf(entityId), data)
+    }
+
+    suspend fun deleteCalendarEvent(entityId: String, uid: String) {
+        command {
+            put("type", "calendar/event/delete")
+            put("entity_id", entityId)
+            put("uid", uid)
+        }
+    }
+
+    suspend fun updateCalendarEvent(
+        entityId: String,
+        uid: String,
+        title: String,
+        start: Instant? = null,
+        end: Instant? = null,
+        startDate: LocalDate? = null,
+        endDate: LocalDate? = null,
+        allDay: Boolean = false,
+    ) {
+        val eventData = buildMap<String, JsonElement> {
+            put("summary", JsonPrimitive(title))
+            if (allDay) {
+                requireNotNull(startDate) { "startDate required for all-day events" }
+                requireNotNull(endDate) { "endDate required for all-day events" }
+                put("start", JsonPrimitive(startDate.toString()))
+                put("end", JsonPrimitive(endDate.toString()))
+            } else {
+                requireNotNull(start) { "start required for timed events" }
+                requireNotNull(end) { "end required for timed events" }
+                put("start", JsonPrimitive(formatHaLocalDateTime(start)))
+                put("end", JsonPrimitive(formatHaLocalDateTime(end)))
+            }
+        }
+        command {
+            put("type", "calendar/event/update")
+            put("entity_id", entityId)
+            put("uid", uid)
+            put("event", JsonObject(eventData))
+        }
+    }
+
     suspend fun llmVisionEvents(
         entityId: String = "calendar.llm_vision_timeline",
         limit: Int = 5,
@@ -741,9 +902,22 @@ class HaClient {
             .take(limit)
     }
 
+    suspend fun authenticatedMediaUrl(path: String): String? {
+        if (path.isBlank()) return null
+        if (path.startsWith("http://") || path.startsWith("https://")) return path
+        if (path.startsWith("/api/")) return "$baseUrl$path"
+        val resolved = resolveMediaUrl(path) ?: return null
+        return if (resolved.startsWith("http://") || resolved.startsWith("https://")) {
+            resolved
+        } else {
+            "$baseUrl$resolved"
+        }
+    }
+
     suspend fun resolveMediaUrl(path: String): String? {
         if (path.isBlank()) return null
         if (path.startsWith("http://") || path.startsWith("https://")) return path
+        if (path.startsWith("/api/")) return path
         val mediaId = when {
             path.startsWith("media-source://") -> path
             path.startsWith("/media/") -> "media-source://media_source/local/" + path.removePrefix("/media/")
@@ -766,8 +940,13 @@ class HaClient {
     }
 
     suspend fun mediaBytes(path: String): ByteArray? {
-        val url = resolveMediaUrl(path) ?: return null
-        return authenticatedBytes(url) ?: authenticatedBytes(path)
+        if (path.isBlank()) return null
+        val fetchPath = when {
+            path.startsWith("http://") || path.startsWith("https://") -> path
+            path.startsWith("/api/") -> path
+            else -> resolveMediaUrl(path) ?: return null
+        }
+        return authenticatedBytes(fetchPath)
     }
 
     private suspend fun restGet(path: String): JsonElement? = withContext(Dispatchers.IO) {
@@ -813,20 +992,25 @@ class HaClient {
             ?: return null
         val startBound = parseTimeBound(obj["start"] ?: obj["startTime"])
         val endBound = parseTimeBound(obj["end"] ?: obj["endTime"])
+        val rawDescription = obj["description"]?.jsonPrimitive?.contentOrNull
+        val (displayDescription, clipPath) = splitClipFromDescription(rawDescription)
+        val rawKeyFrame = obj["key_frame"]?.jsonPrimitive?.contentOrNull
+            ?: obj["keyFrame"]?.jsonPrimitive?.contentOrNull
+            ?: obj["image"]?.jsonPrimitive?.contentOrNull
+            ?: obj["snapshot"]?.jsonPrimitive?.contentOrNull
+        val keyFrame = timelineSnapshotPath(rawKeyFrame, clipPath)
         return HaCalendarEvent(
             entityId = "calendar.llm_vision_timeline",
             summary = summary,
-            description = obj["description"]?.jsonPrimitive?.contentOrNull,
+            description = displayDescription,
             start = startBound.first,
             end = endBound.first,
             allDay = false,
             startDate = startBound.second,
             endDate = endBound.second,
             uid = obj["uid"]?.jsonPrimitive?.contentOrNull ?: obj["id"]?.jsonPrimitive?.contentOrNull,
-            keyFrame = obj["key_frame"]?.jsonPrimitive?.contentOrNull
-                ?: obj["keyFrame"]?.jsonPrimitive?.contentOrNull
-                ?: obj["image"]?.jsonPrimitive?.contentOrNull
-                ?: obj["snapshot"]?.jsonPrimitive?.contentOrNull,
+            keyFrame = keyFrame,
+            clipPath = clipPath,
             cameraName = obj["camera_name"]?.jsonPrimitive?.contentOrNull
                 ?: obj["cameraName"]?.jsonPrimitive?.contentOrNull,
             category = obj["category"]?.jsonPrimitive?.contentOrNull,
@@ -878,23 +1062,66 @@ class HaClient {
         return null
     }
 
+    private fun formatHaLocalDateTime(instant: Instant): String =
+        LocalDateTime.ofInstant(instant, ZoneId.systemDefault()).format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+
     suspend fun weatherForecast(entityId: String, forecastType: String = "daily"): List<JsonObject> {
-        val fromWs = runCatching {
-            val result = command {
-                put("type", "weather/get_forecasts")
-                put("entity_id", JsonArray(listOf(JsonPrimitive(entityId))))
-                put("forecast_type", forecastType)
-            }
-            result.jsonObject[entityId]?.jsonObject?.get("forecast") as? JsonArray
-        }.getOrNull()
-        if (fromWs != null && fromWs.isNotEmpty()) {
-            return fromWs.mapNotNull { it as? JsonObject }
-        }
+        val fromRest = runCatching { forecastViaRest(entityId, forecastType) }.getOrDefault(emptyList())
+        if (fromRest.isNotEmpty()) return fromRest
+
+        val fromSubscribe = runCatching { forecastViaSubscribe(entityId, forecastType) }.getOrDefault(emptyList())
+        if (fromSubscribe.isNotEmpty()) return fromSubscribe
+
         if (forecastType == "daily") {
             forecastFromAttributes(entityId).takeIf { it.isNotEmpty() }?.let { return it }
             return forecastFromAttributes("sensor.weather_forecast_daily")
         }
         return emptyList()
+    }
+
+    private suspend fun forecastViaRest(entityId: String, forecastType: String): List<JsonObject> =
+        withContext(Dispatchers.IO) {
+            if (baseUrl.isBlank() || token.isBlank()) return@withContext emptyList()
+            val body = buildJsonObject {
+                put("entity_id", JsonArray(listOf(JsonPrimitive(entityId))))
+                put("type", forecastType)
+            }
+            val request = Request.Builder()
+                .url("$baseUrl/api/services/weather/get_forecasts?return_response=true")
+                .addHeader("Authorization", "Bearer $token")
+                .post(body.toString().toRequestBody(mediaType))
+                .build()
+            http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@use emptyList()
+                val root = runCatching {
+                    json.parseToJsonElement(response.body?.string().orEmpty()).jsonObject
+                }.getOrNull() ?: return@use emptyList()
+                val forecast = root[entityId]?.jsonObject?.get("forecast") as? JsonArray
+                forecast?.mapNotNull { it as? JsonObject } ?: emptyList()
+            }
+        }
+
+    private suspend fun forecastViaSubscribe(entityId: String, forecastType: String): List<JsonObject> {
+        if (webSocket == null) return emptyList()
+        val id = nextId.getAndIncrement()
+        return suspendCancellableCoroutine { cont ->
+            forecastSubscriptions[id] = { forecast ->
+                cont.resume(forecast)
+            }
+            cont.invokeOnCancellation { forecastSubscriptions.remove(id) }
+            val sent = webSocket?.send(
+                buildJsonObject {
+                    put("id", id)
+                    put("type", "weather/subscribe_forecast")
+                    put("entity_id", entityId)
+                    put("forecast_type", forecastType)
+                }.toString(),
+            ) == true
+            if (!sent) {
+                forecastSubscriptions.remove(id)
+                cont.resume(emptyList())
+            }
+        }
     }
 
     private fun forecastFromAttributes(entityId: String): List<JsonObject> {
@@ -914,6 +1141,197 @@ class HaClient {
                 }
             }
         }
+    }
+
+    /** Known Music Assistant HA App slug when `get_panels` is unavailable. */
+    private val musicAssistantAppSlug = "d5369777_music_assistant"
+
+    suspend fun musicAssistantLoadTargets(): MusicAssistantPanelResolution {
+        val panel = resolveMusicAssistantPanel()
+        val debugInfo = mutableListOf<String>()
+        if (panel == null) {
+            debugInfo += "get_panels: Music Assistant panel not found; using known app slug"
+            val knownPanelPath = "/$musicAssistantAppSlug"
+            return MusicAssistantPanelResolution(
+                targets = listOf(
+                    MusicAssistantLoadTarget(
+                        mode = MusicAssistantLoadMode.INGRESS,
+                        label = "addon ingress ($musicAssistantAppSlug)",
+                        addonSlug = musicAssistantAppSlug,
+                    ),
+                    MusicAssistantLoadTarget(
+                        mode = MusicAssistantLoadMode.SPA_BOOTSTRAP,
+                        label = "frontend navigate $knownPanelPath",
+                        path = knownPanelPath,
+                    ),
+                    MusicAssistantLoadTarget(
+                        mode = MusicAssistantLoadMode.SPA_ROUTE,
+                        label = "panel route $knownPanelPath",
+                        path = knownPanelPath,
+                    ),
+                ),
+                debugInfo = debugInfo,
+            )
+        }
+
+        debugInfo += buildString {
+            append("get_panels: url_path=${panel.urlPath}")
+            panel.componentName?.let { append(", component=$it") }
+            panel.addonSlug?.let { append(", addon=$it") }
+        }
+
+        val addonSlug = panel.addonSlug?.trim()?.takeIf { it.isNotEmpty() }
+        if (panel.componentName == "app" && addonSlug != null) {
+            runCatching {
+                fetchAddonIngressUrl(addonSlug)?.let { ingressUrl ->
+                    debugInfo += "supervisor ingress_url=$ingressUrl"
+                }
+            }
+            val panelPath = "/${panel.urlPath.trimStart('/')}"
+            val targets = listOf(
+                MusicAssistantLoadTarget(
+                    mode = MusicAssistantLoadMode.INGRESS,
+                    label = "addon ingress ($addonSlug)",
+                    addonSlug = addonSlug,
+                ),
+                MusicAssistantLoadTarget(
+                    mode = MusicAssistantLoadMode.SPA_BOOTSTRAP,
+                    label = "frontend navigate $panelPath",
+                    path = panelPath,
+                ),
+                MusicAssistantLoadTarget(
+                    mode = MusicAssistantLoadMode.SPA_ROUTE,
+                    label = "panel route $panelPath",
+                    path = panelPath,
+                ),
+            )
+            debugInfo += targets.map { it.label }
+            return MusicAssistantPanelResolution(targets = targets, debugInfo = debugInfo)
+        }
+
+        val panelPath = "/${panel.urlPath.trimStart('/')}"
+        val targets = listOf(
+            MusicAssistantLoadTarget(
+                mode = MusicAssistantLoadMode.SPA_BOOTSTRAP,
+                label = "frontend navigate $panelPath",
+                path = panelPath,
+            ),
+            MusicAssistantLoadTarget(
+                mode = MusicAssistantLoadMode.SPA_ROUTE,
+                label = "panel route $panelPath",
+                path = panelPath,
+            ),
+        )
+        debugInfo += targets.map { it.label }
+        return MusicAssistantPanelResolution(targets = targets, debugInfo = debugInfo)
+    }
+
+    suspend fun createIngressSession(): String {
+        val result = supervisorApi(method = "post", endpoint = "/ingress/session").jsonObject
+        return result["session"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+            ?: error("Supervisor ingress session missing")
+    }
+
+    suspend fun fetchAddonIngressUrl(addonSlug: String): String? {
+        val slug = addonSlug.trim().trim('/')
+        if (slug.isEmpty()) return null
+        val result = supervisorApi(method = "get", endpoint = "/addons/$slug/info").jsonObject
+        return result["ingress_url"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+            ?.let(::ensureIngressTrailingSlash)
+    }
+
+    private fun ensureIngressTrailingSlash(path: String): String {
+        val pathPart = path.substringBefore('?')
+        val query = path.substringAfter('?', missingDelimiterValue = "")
+        val normalized = if (pathPart.endsWith("/")) pathPart else "$pathPart/"
+        return if (query.isEmpty()) normalized else "$normalized?$query"
+    }
+
+    /** Returns true when the addon ingress URL responds with HTTP 2xx using a fresh session. */
+    suspend fun verifyIngressLoad(ingressPath: String, session: String): Boolean =
+        withContext(Dispatchers.IO) {
+            if (baseUrl.isBlank() || ingressPath.isBlank() || session.isBlank()) return@withContext false
+            val normalizedPath = ensureIngressTrailingSlash(
+                when {
+                    ingressPath.startsWith("http://") || ingressPath.startsWith("https://") -> ingressPath
+                    ingressPath.startsWith("/") -> ingressPath
+                    else -> "/$ingressPath"
+                },
+            )
+            val url = if (normalizedPath.startsWith("http")) {
+                normalizedPath
+            } else {
+                baseUrl.trim().trimEnd('/') + normalizedPath
+            }
+            val request = Request.Builder()
+                .url(url)
+                .addHeader("Cookie", "ingress_session=${session.trim()}")
+                .build()
+            runCatching {
+                http.newCall(request).execute().use { response ->
+                    response.code in 200..299
+                }
+            }.getOrDefault(false)
+        }
+
+    private suspend fun supervisorApi(
+        method: String,
+        endpoint: String,
+        data: JsonObject? = null,
+    ): JsonElement = command {
+        put("type", "supervisor/api")
+        put("endpoint", endpoint)
+        put("method", method.lowercase())
+        if (data != null) {
+            put("data", data)
+        }
+    }
+
+    private suspend fun resolveMusicAssistantPanel(): MusicAssistantPanel? {
+        val panels = runCatching {
+            command {
+                put("type", "get_panels")
+            }.jsonObject
+        }.getOrNull() ?: return null
+
+        return panels.entries.mapNotNull { (_, value) ->
+            value as? JsonObject
+        }.firstNotNullOfOrNull { panel ->
+            parseMusicAssistantPanel(panel)
+        }
+    }
+
+    private fun parseMusicAssistantPanel(panel: JsonObject): MusicAssistantPanel? {
+        val urlPath = panel["url_path"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+            ?: return null
+        if (!isMusicAssistantPanel(panel, urlPath)) return null
+
+        val config = panel["config"]?.jsonObject
+        val addon = config?.get("addon")?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+        val componentName = panel["component_name"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+        return MusicAssistantPanel(
+            urlPath = urlPath,
+            componentName = componentName,
+            addonSlug = addon ?: urlPath,
+        )
+    }
+
+    private fun isMusicAssistantPanel(panel: JsonObject, urlPath: String): Boolean {
+        val title = panel["title"]?.jsonPrimitive?.contentOrNull
+        val config = panel["config"]?.jsonObject
+        val addon = config?.get("addon")?.jsonPrimitive?.contentOrNull
+        val panelCustom = config?.get("_panel_custom")?.jsonObject
+        val customName = panelCustom?.get("name")?.jsonPrimitive?.contentOrNull
+        val moduleUrl = panelCustom?.get("module_url")?.jsonPrimitive?.contentOrNull
+            ?: panelCustom?.get("js_url")?.jsonPrimitive?.contentOrNull
+
+        return title.equals("Music Assistant", ignoreCase = true) ||
+            urlPath.contains("music_assistant", ignoreCase = true) ||
+            addon?.contains("music_assistant", ignoreCase = true) == true ||
+            customName?.contains("music-assistant", ignoreCase = true) == true ||
+            customName?.contains("mass", ignoreCase = true) == true ||
+            moduleUrl?.contains("mass", ignoreCase = true) == true ||
+            moduleUrl?.contains("music-assistant", ignoreCase = true) == true
     }
 
     suspend fun reconnectLoop() {

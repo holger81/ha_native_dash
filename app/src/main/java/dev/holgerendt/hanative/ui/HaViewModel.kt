@@ -12,6 +12,7 @@ import dev.holgerendt.hanative.data.CredentialsStore
 import dev.holgerendt.hanative.data.DashboardLoader
 import dev.holgerendt.hanative.data.EntityState
 import dev.holgerendt.hanative.data.HaClient
+import dev.holgerendt.hanative.data.IngressLoad
 import dev.holgerendt.hanative.data.KioskCommand
 import dev.holgerendt.hanative.data.KioskCommands
 import dev.holgerendt.hanative.data.KioskSnapshot
@@ -20,11 +21,15 @@ import dev.holgerendt.hanative.data.LiveCameraHub
 import dev.holgerendt.hanative.data.LiveCameraView
 import dev.holgerendt.hanative.data.ManagementServer
 import dev.holgerendt.hanative.data.ManagementTls
+import dev.holgerendt.hanative.data.MusicAssistantLoadMode
+import dev.holgerendt.hanative.data.MusicAssistantLoadTarget
+import dev.holgerendt.hanative.data.MusicAssistantPanelResolution
 import dev.holgerendt.hanative.data.MmWaveLiveTargets
 import dev.holgerendt.hanative.data.MmWaveLiveTracker
 import dev.holgerendt.hanative.model.ActionNode
 import dev.holgerendt.hanative.model.CalendarSourceNode
 import dev.holgerendt.hanative.model.DashboardFile
+import dev.holgerendt.hanative.model.PersonCameraBinding
 import dev.holgerendt.hanative.model.PopupNode
 import dev.holgerendt.hanative.model.WidgetNode
 import kotlinx.coroutines.Dispatchers
@@ -47,14 +52,30 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import java.security.SecureRandom
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
 import kotlin.math.abs
 import kotlin.math.roundToInt
+
+data class WeatherPopupContext(
+    val focusDate: LocalDate? = null,
+    val entityId: String? = null,
+    val initialTab: String? = null,
+)
+
+data class MusicAssistantPanelState(
+    val resolved: Boolean = false,
+    val targets: List<MusicAssistantLoadTarget> = emptyList(),
+    val debugInfo: List<String> = emptyList(),
+)
 
 data class UiState(
     val dashboard: DashboardFile? = null,
     val showSetup: Boolean = true,
     val drawerOpen: Boolean = false,
     val popupHash: String? = null,
+    val weatherPopupContext: WeatherPopupContext? = null,
     val moreInfoId: String? = null,
     val mediaPreview: MediaPreview? = null,
     val setupError: String? = null,
@@ -75,6 +96,7 @@ data class MediaPreview(
     val title: String? = null,
     val subtitle: String? = null,
     val description: String? = null,
+    val isVideo: Boolean = false,
 )
 
 class HaViewModel(
@@ -106,6 +128,15 @@ class HaViewModel(
 
     private val _availableCalendars = MutableStateFlow(listOf<CalendarInfo>())
     val availableCalendars: StateFlow<List<CalendarInfo>> = _availableCalendars
+
+    private val _calendarEventsRevision = MutableStateFlow(0)
+    val calendarEventsRevision: StateFlow<Int> = _calendarEventsRevision
+
+    private val _activePersonCameras = MutableStateFlow<List<WidgetNode>>(emptyList())
+    val activePersonCameras: StateFlow<List<WidgetNode>> = _activePersonCameras
+    private val _debugPersonCamerasEnabled = MutableStateFlow(false)
+    val debugPersonCamerasEnabled: StateFlow<Boolean> = _debugPersonCamerasEnabled
+    private var personCameraCooldownJob: Job? = null
 
     private var lastActivityMs = System.currentTimeMillis()
     private var sleptAtMs = 0L
@@ -146,6 +177,7 @@ class HaViewModel(
             _mmWaveLive.value = MmWaveLiveTracker.merge(_mmWaveLive.value, event)
         }
         watchCameraFlag()
+        watchPersonCameras()
         watchMmWaveClear()
         watchIdleTimeout()
         watchDisplayPower()
@@ -187,6 +219,20 @@ class HaViewModel(
         currentPin = normalized
         _ui.value = _ui.value.copy(remotePin = currentPin, pinIsUserSet = true)
         return Result.success(Unit)
+    }
+
+    fun verifyManagementPin(pin: String): Boolean {
+        return credentials.managementPin.isNotBlank() && pin.trim() == credentials.managementPin
+    }
+
+    private var calendarManagementUnlockedUntilMs: Long = 0
+
+    fun isCalendarManagementUnlocked(): Boolean {
+        return System.currentTimeMillis() < calendarManagementUnlockedUntilMs
+    }
+
+    fun unlockCalendarManagement(durationMs: Long = 5 * 60 * 1000) {
+        calendarManagementUnlockedUntilMs = System.currentTimeMillis() + durationMs
     }
 
     fun retryRestoreIfNeeded() {
@@ -255,8 +301,16 @@ class HaViewModel(
 
     fun entity(id: String?): EntityState? = id?.let { states.value[it] }
 
-    fun popup(hash: String?): PopupNode? =
-        _ui.value.dashboard?.home?.popups?.firstOrNull { it.hash == hash }
+    fun popup(hash: String?): PopupNode? {
+        if (hash == "#music") {
+            return PopupNode(
+                name = "Music Assistant",
+                icon = "mdi:music-note",
+                hash = "#music",
+            )
+        }
+        return _ui.value.dashboard?.home?.popups?.firstOrNull { it.hash == hash }
+    }
 
     suspend fun connect(url: String, token: String): Result<Unit> {
         _ui.value = _ui.value.copy(setupBusy = true, setupError = null)
@@ -275,6 +329,7 @@ class HaViewModel(
         }
         client.connect(url, token)
         refreshCalendars()
+        refreshMusicAssistantPanelPaths()
         prefetchWallCameras()
         _ui.value = _ui.value.copy(
             showSetup = false,
@@ -304,6 +359,17 @@ class HaViewModel(
     val savedUrl: String get() = credentials.baseUrl
     val savedToken: String get() = credentials.token
 
+    private val _musicAssistantPanelState = MutableStateFlow(MusicAssistantPanelState())
+    val musicAssistantPanelState: StateFlow<MusicAssistantPanelState> = _musicAssistantPanelState
+
+    suspend fun resolveMusicAssistantIngress(addonSlug: String): IngressLoad? =
+        runCatching {
+            val session = client.createIngressSession()
+            val ingressUrl = client.fetchAddonIngressUrl(addonSlug) ?: return null
+            if (!client.verifyIngressLoad(ingressUrl, session)) return null
+            IngressLoad(session = session, ingressUrl = ingressUrl)
+        }.getOrNull()
+
     fun openSetup() {
         _ui.value = _ui.value.copy(showSetup = true, drawerOpen = false)
     }
@@ -319,11 +385,30 @@ class HaViewModel(
     }
 
     fun openPopup(hash: String?) {
-        _ui.value = _ui.value.copy(popupHash = hash, drawerOpen = false)
+        if (hash == "#music") {
+            refreshMusicAssistantPanelPaths()
+        }
+        _ui.value = _ui.value.copy(
+            popupHash = hash,
+            drawerOpen = false,
+            weatherPopupContext = null,
+        )
+    }
+
+    fun openWeatherPopup(
+        focusDate: LocalDate? = null,
+        entityId: String? = null,
+        initialTab: String? = null,
+    ) {
+        _ui.value = _ui.value.copy(
+            popupHash = "#weather",
+            drawerOpen = false,
+            weatherPopupContext = WeatherPopupContext(focusDate, entityId, initialTab),
+        )
     }
 
     fun closePopup() {
-        _ui.value = _ui.value.copy(popupHash = null)
+        _ui.value = _ui.value.copy(popupHash = null, weatherPopupContext = null)
     }
 
     fun openMoreInfo(entityId: String?) {
@@ -340,12 +425,20 @@ class HaViewModel(
         title: String? = null,
         subtitle: String? = null,
         description: String? = null,
+        isVideo: Boolean = false,
     ) {
         if (path.isNullOrBlank()) return
         _ui.value = _ui.value.copy(
-            mediaPreview = MediaPreview(path, title, subtitle, description),
+            mediaPreview = MediaPreview(path, title, subtitle, description, isVideo),
         )
     }
+
+    fun openVideo(
+        path: String?,
+        title: String? = null,
+        subtitle: String? = null,
+        description: String? = null,
+    ) = openMedia(path, title, subtitle, description, isVideo = true)
 
     fun closeMedia() {
         _ui.value = _ui.value.copy(mediaPreview = null)
@@ -480,6 +573,40 @@ class HaViewModel(
             .map { it.key to it.value.friendlyName }
             .sortedBy { it.second.lowercase() }
             .toList()
+
+    private fun refreshMusicAssistantPanelPaths() {
+        _musicAssistantPanelState.value = MusicAssistantPanelState(resolved = false)
+        viewModelScope.launch {
+            val resolution = runCatching { client.musicAssistantLoadTargets() }
+                .getOrElse { error ->
+                    MusicAssistantPanelResolution(
+                        targets = listOf(
+                            MusicAssistantLoadTarget(
+                                mode = MusicAssistantLoadMode.INGRESS,
+                                label = "addon ingress (d5369777_music_assistant)",
+                                addonSlug = "d5369777_music_assistant",
+                            ),
+                            MusicAssistantLoadTarget(
+                                mode = MusicAssistantLoadMode.SPA_BOOTSTRAP,
+                                label = "frontend navigate /d5369777_music_assistant",
+                                path = "/d5369777_music_assistant",
+                            ),
+                            MusicAssistantLoadTarget(
+                                mode = MusicAssistantLoadMode.SPA_ROUTE,
+                                label = "panel route /d5369777_music_assistant",
+                                path = "/d5369777_music_assistant",
+                            ),
+                        ),
+                        debugInfo = listOf("Detection failed: ${error.message ?: error.javaClass.simpleName}"),
+                    )
+                }
+            _musicAssistantPanelState.value = MusicAssistantPanelState(
+                resolved = true,
+                targets = resolution.targets,
+                debugInfo = resolution.debugInfo,
+            )
+        }
+    }
 
     private fun prefetchWallCameras() {
         viewModelScope.launch {
@@ -695,6 +822,92 @@ class HaViewModel(
         }
     }
 
+    fun setDebugPersonCamerasEnabled(enabled: Boolean) {
+        _debugPersonCamerasEnabled.value = enabled
+        if (!enabled) {
+            clearActivePersonCamerasImmediate()
+        }
+    }
+
+    private fun watchPersonCameras() {
+        viewModelScope.launch {
+            combine(
+                states,
+                _ui.map { it.dashboard?.home?.personCameras }.distinctUntilChanged(),
+                _debugPersonCamerasEnabled,
+            ) { allStates, config, debugEnabled ->
+                Triple(config, allStates, debugEnabled)
+            }.collect { (config, allStates, debugEnabled) ->
+                if (config == null || config.bindings.isEmpty()) {
+                    personCameraCooldownJob?.cancel()
+                    personCameraCooldownJob = null
+                    _activePersonCameras.value = emptyList()
+                    return@collect
+                }
+                val active = if (debugEnabled) {
+                    config.bindings.map { it.toCameraWidget() }
+                } else {
+                    config.bindings
+                        .filter { binding -> personSensorActive(binding, allStates) }
+                        .map { it.toCameraWidget() }
+                }
+                updateActivePersonCameras(
+                    active,
+                    if (debugEnabled) 0 else config.cooldownSeconds,
+                    ignoreCooldown = debugEnabled,
+                )
+            }
+        }
+    }
+
+    private fun personSensorActive(binding: PersonCameraBinding, allStates: Map<String, EntityState>): Boolean {
+        val state = allStates[binding.sensor]?.state ?: return false
+        if (state == "on") return true
+        return state.toIntOrNull()?.let { it > 0 } == true
+    }
+
+    private fun clearActivePersonCamerasImmediate() {
+        personCameraCooldownJob?.cancel()
+        personCameraCooldownJob = null
+        val previous = _activePersonCameras.value
+        if (previous.isEmpty()) return
+        _activePersonCameras.value = emptyList()
+        viewModelScope.launch {
+            liveCameras.stopTargets(previous.map { CameraStreams.fromWidget(it) })
+        }
+    }
+
+    private fun updateActivePersonCameras(
+        cameras: List<WidgetNode>,
+        cooldownSeconds: Int,
+        ignoreCooldown: Boolean = false,
+    ) {
+        if (cameras.isNotEmpty()) {
+            personCameraCooldownJob?.cancel()
+            personCameraCooldownJob = null
+            val wasEmpty = _activePersonCameras.value.isEmpty()
+            if (cameras != _activePersonCameras.value) {
+                _activePersonCameras.value = cameras
+                viewModelScope.launch {
+                    liveCameras.ensureRunning(cameras.map { CameraStreams.fromWidget(it) })
+                }
+            }
+            if (wasEmpty) wakeScreen()
+            lastActivityMs = System.currentTimeMillis()
+            return
+        }
+        if (ignoreCooldown) {
+            clearActivePersonCamerasImmediate()
+            return
+        }
+        if (_activePersonCameras.value.isEmpty()) return
+        if (personCameraCooldownJob?.isActive == true) return
+        personCameraCooldownJob = viewModelScope.launch {
+            delay(cooldownSeconds.coerceAtLeast(0) * 1_000L)
+            clearActivePersonCamerasImmediate()
+        }
+    }
+
     fun plannerCalendars(defaults: List<CalendarSourceNode>): List<CalendarSourceNode> {
         val selected = _subscribedCalendars.value ?: defaults.mapNotNull { it.entity }
         val byEntity = defaults.associateBy { it.entity }
@@ -738,6 +951,127 @@ class HaViewModel(
                 .distinctBy { it.entityId }
                 .filter { it.entityId !in hidden }
                 .sortedBy { it.name.lowercase() }
+        }
+    }
+
+    fun createCalendarEvent(
+        entityId: String,
+        title: String,
+        date: LocalDate,
+        startTime: LocalTime?,
+        endTime: LocalTime?,
+        allDay: Boolean,
+        onResult: (Result<Unit>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = runCalendarEventMutation {
+                createCalendarEventPayload(entityId, title, date, startTime, endTime, allDay)
+            }
+            onResult(result)
+        }
+    }
+
+    fun updateCalendarEvent(
+        entityId: String,
+        uid: String,
+        title: String,
+        date: LocalDate,
+        startTime: LocalTime?,
+        endTime: LocalTime?,
+        allDay: Boolean,
+        onResult: (Result<Unit>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = runCalendarEventMutation {
+                updateCalendarEventPayload(entityId, uid, title, date, startTime, endTime, allDay)
+            }
+            onResult(result)
+        }
+    }
+
+    fun deleteCalendarEvent(
+        entityId: String,
+        uid: String,
+        onResult: (Result<Unit>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = runCalendarEventMutation {
+                client.deleteCalendarEvent(entityId = entityId, uid = uid)
+            }
+            onResult(result)
+        }
+    }
+
+    private suspend fun runCalendarEventMutation(block: suspend () -> Unit): Result<Unit> {
+        val result = runCatching { block() }
+        if (result.isSuccess) {
+            _calendarEventsRevision.value++
+        }
+        return result
+    }
+
+    private suspend fun createCalendarEventPayload(
+        entityId: String,
+        title: String,
+        date: LocalDate,
+        startTime: LocalTime?,
+        endTime: LocalTime?,
+        allDay: Boolean,
+    ) {
+        if (allDay || startTime == null) {
+            client.createCalendarEvent(
+                entityId = entityId,
+                title = title,
+                startDate = date,
+                endDate = date.plusDays(1),
+                allDay = true,
+            )
+        } else {
+            val zone = ZoneId.systemDefault()
+            val end = endTime ?: startTime.plusHours(1)
+            val startInstant = date.atTime(startTime).atZone(zone).toInstant()
+            val endInstant = date.atTime(end).atZone(zone).toInstant()
+            client.createCalendarEvent(
+                entityId = entityId,
+                title = title,
+                start = startInstant,
+                end = endInstant,
+                allDay = false,
+            )
+        }
+    }
+
+    private suspend fun updateCalendarEventPayload(
+        entityId: String,
+        uid: String,
+        title: String,
+        date: LocalDate,
+        startTime: LocalTime?,
+        endTime: LocalTime?,
+        allDay: Boolean,
+    ) {
+        if (allDay || startTime == null) {
+            client.updateCalendarEvent(
+                entityId = entityId,
+                uid = uid,
+                title = title,
+                startDate = date,
+                endDate = date.plusDays(1),
+                allDay = true,
+            )
+        } else {
+            val zone = ZoneId.systemDefault()
+            val end = endTime ?: startTime.plusHours(1)
+            val startInstant = date.atTime(startTime).atZone(zone).toInstant()
+            val endInstant = date.atTime(end).atZone(zone).toInstant()
+            client.updateCalendarEvent(
+                entityId = entityId,
+                uid = uid,
+                title = title,
+                start = startInstant,
+                end = endInstant,
+                allDay = false,
+            )
         }
     }
 

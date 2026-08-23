@@ -4,22 +4,29 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-/** mysmarthome: white wall, gray000 tiles, gray800 text. */
+/** mysmarthome light theme palette (greatroom-wall.yaml / paper-buttons-row). */
+val Gray000 = Color(0xFFEDEFF2)
+val Gray800 = Color(0xFF0F0F10)
+val ThemeBlack = Color(0xFF28282A)
+val ThemeWhite = Color(0xFFF5F7FA)
+
 val ScreenBackground = Color(0xFFFFFFFF)
-val CardLight = Color(0xFFF3F1EC)
-val PopupCard = Color(0xF2F3F1EC)
+val CardLight = Gray000
+val PopupCard = Color(0xF2EDEFF2)
 /** Solid popup sheet so Lovelace’s 42% mix is not invisible on a white wall. */
-val PopupOverlay = Color(0xFFF3F1EC)
+val PopupOverlay = Gray000
 val DockBackground = Color(0xFF2A2A2A)
-val TextDark = Color(0xFF2A2A2A)
-val TextMuted = Color(0xFF2A2A2A).copy(alpha = 0.7f)
-val ChipDark = Color(0xFF2C2C2C)
-val ChipOnDark = Color(0xFFF5F5F5)
+val TextDark = ThemeBlack
+val TextMuted = ThemeBlack.copy(alpha = 0.7f)
+val ChipDark = Gray800
+val ChipOnDark = Gray000
 val ActiveYellow = Color(0xFFFFC107)
 val ActiveLight = Color(0xFFFFD4C1)
 val AccentGreen = Color(0xFFC5E1A5)
@@ -95,6 +102,17 @@ val AccentPink = Color(0xFFF48FB1)
 val AccentBlueDark = Color(0xFF9FA8DA)
 val VacuumStart = Color(0xFFA5DD9B)
 val VacuumStop = Color(0xFFFF8A8A)
+
+/** Lovelace `--active-big`: peach → pink → blue at 145°. */
+fun activeBigBrush(): Brush = Brush.linearGradient(
+    colorStops = arrayOf(
+        0f to Color(0xFFFFDCB2),
+        0.6f to Color(0xFFFFB0E9),
+        1f to Color(0xFF689CFF),
+    ),
+    start = Offset.Zero,
+    end = Offset(200f, 280f),
+)
 
 fun accentColor(name: String?): Color = when (name?.removePrefix("var(--")?.removeSuffix(")")) {
     "green" -> AccentGreen

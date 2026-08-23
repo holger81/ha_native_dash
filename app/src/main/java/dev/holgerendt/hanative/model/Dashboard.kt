@@ -24,8 +24,35 @@ data class HomeDashboard(
     val calendar: WidgetNode? = null,
     val timeline: WidgetNode? = null,
     val rooms: List<WidgetNode> = emptyList(),
+  @SerialName("person_cameras") val personCameras: PersonCameraOverlayConfig? = null,
     val popups: List<PopupNode> = emptyList(),
 )
+
+@Serializable
+data class PersonCameraOverlayConfig(
+    @SerialName("cooldown_seconds") val cooldownSeconds: Int = 15,
+    val bindings: List<PersonCameraBinding> = emptyList(),
+)
+
+@Serializable
+data class PersonCameraBinding(
+    val sensor: String,
+    val type: String = "camera",
+    val name: String? = null,
+    val entity: String? = null,
+    @SerialName("stream_server") val streamServer: String? = null,
+    @SerialName("stream_name") val streamName: String? = null,
+    val muted: Boolean? = true,
+) {
+    fun toCameraWidget(): WidgetNode = WidgetNode(
+        type = type,
+        name = name,
+        entity = entity,
+        streamServer = streamServer,
+        streamName = streamName,
+        muted = muted,
+    )
+}
 
 @Serializable
 data class PopupNode(

@@ -3018,6 +3018,38 @@
       "show_low_temperature": true,
       "grid_area": null
     },
+    "person_cameras": {
+      "cooldown_seconds": 15,
+      "bindings": [
+        {
+          "sensor": "binary_sensor.gardennorth_person_occupancy_2",
+          "type": "camera",
+          "entity": "camera.gardennorth_2",
+          "name": "Garden North",
+          "stream_server": "http://192.168.10.31:1984/",
+          "stream_name": "gardennorth_sub",
+          "muted": true
+        },
+        {
+          "sensor": "binary_sensor.gardensoutheast_person_occupancy_2",
+          "type": "camera",
+          "entity": "camera.gardensoutheast_2",
+          "name": "Garden Southeast",
+          "stream_server": "http://192.168.10.31:1984/",
+          "stream_name": "gardensoutheast_sub",
+          "muted": true
+        },
+        {
+          "sensor": "binary_sensor.north_person_occupancy_2",
+          "type": "camera",
+          "entity": "camera.north_2",
+          "name": "North",
+          "stream_server": "http://192.168.10.31:1984/",
+          "stream_name": "north_sub",
+          "muted": true
+        }
+      ]
+    },
     "timeline": {
       "type": "vision_timeline",
       "entity": "calendar.llm_vision_timeline",
@@ -3036,7 +3068,13 @@
     "calendar.calendar",
     "calendar.family_2",
     "calendar.llm_vision_timeline",
+    "binary_sensor.gardennorth_person_occupancy_2",
+    "binary_sensor.gardensoutheast_person_occupancy_2",
+    "binary_sensor.north_person_occupancy_2",
     "camera.garagefront_2",
+    "camera.gardennorth_2",
+    "camera.gardensoutheast_2",
+    "camera.north_2",
     "camera.reolink_video_doorbell_poe_fluent",
     "climate.emilias_room_room",
     "climate.great_room_room",

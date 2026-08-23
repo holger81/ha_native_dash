@@ -83,7 +83,10 @@ import dev.holgerendt.hanative.ui.theme.accentColor
 import dev.holgerendt.hanative.ui.widgets.CameraPopup
 import dev.holgerendt.hanative.ui.widgets.ChipRow
 import dev.holgerendt.hanative.ui.widgets.MediaImageDialog
+import dev.holgerendt.hanative.ui.widgets.MediaVideoDialog
 import dev.holgerendt.hanative.ui.widgets.PersonCard
+import dev.holgerendt.hanative.ui.widgets.personCameraStripHeight
+import dev.holgerendt.hanative.ui.widgets.PersonCameraOverlay
 import dev.holgerendt.hanative.ui.widgets.PopupScaffold
 import dev.holgerendt.hanative.ui.widgets.RoomGrid
 import dev.holgerendt.hanative.ui.widgets.VisionTimeline
@@ -157,7 +160,11 @@ fun HaApp(viewModel: HaViewModel) {
                 dismissOnScrim = true,
                 scrim = PopupScrim.copy(alpha = 0.72f),
             ) {
-                MediaImageDialog(preview, viewModel, onDismiss = { viewModel.closeMedia() })
+                if (preview.isVideo) {
+                    MediaVideoDialog(preview, viewModel, onDismiss = { viewModel.closeMedia() })
+                } else {
+                    MediaImageDialog(preview, viewModel, onDismiss = { viewModel.closeMedia() })
+                }
             }
         }
         var consumeWakeGesture by remember { mutableStateOf(false) }
@@ -197,6 +204,7 @@ private fun DrawerMenu(viewModel: HaViewModel) {
         "Cars" to "#bil",
         "Staubinator" to "#staubinator",
         "Camera" to "#camerafront_view",
+        "Music" to "#music",
         "Settings" to "#settings",
     )
     Column(Modifier.fillMaxHeight().width(280.dp).padding(20.dp)) {
@@ -276,14 +284,27 @@ private fun HomeScreen(viewModel: HaViewModel) {
         }
         Spacer(Modifier.height(12.dp))
         // Lovelace `(min-width: 1024px)`: 50% rooms | 50% timeline. 1080px portrait qualifies.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            RoomGrid(home.rooms, viewModel, Modifier.weight(1f))
-            home.timeline?.let {
-                VisionTimeline(it, viewModel, Modifier.weight(1f))
+        val activePersonCameras by viewModel.activePersonCameras.collectAsState()
+        Column(modifier = Modifier.fillMaxWidth()) {
+            if (activePersonCameras.isNotEmpty()) {
+                PersonCameraOverlay(
+                    cameras = activePersonCameras,
+                    viewModel = viewModel,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(personCameraStripHeight(activePersonCameras.size)),
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                RoomGrid(home.rooms, viewModel, Modifier.weight(1f))
+                home.timeline?.let {
+                    VisionTimeline(it, viewModel, Modifier.weight(1f))
+                }
             }
         }
     }
@@ -291,12 +312,13 @@ private fun HomeScreen(viewModel: HaViewModel) {
 
 private data class DockItem(val hash: String, val icon: String)
 
-/** Lovelace footer order: vacuum, camera, power, cars, settings. Weather is the header, not the dock. */
+/** Lovelace footer order: vacuum, camera, power, cars, music, settings. Weather is the header, not the dock. */
 private val DockItems = listOf(
     DockItem("#staubinator", "mdi:vacuum-outline"),
     DockItem("#camerafront_view", "mdi:video"),
     DockItem("#power", "mdi:power-plug-outline"),
     DockItem("#bil", "mdi:car-outline"),
+    DockItem("#music", "mdi:music-note"),
     DockItem("#settings", "mdi:tune-variant"),
 )
 
@@ -347,10 +369,27 @@ private fun DockButton(item: DockItem, onClick: () -> Unit, modifier: Modifier =
 @Composable
 private fun PopupHost(popup: PopupNode, viewModel: HaViewModel) {
     val cameraPopup = popup.hash == "#camerafront_view"
-    PopupScaffold(popup, viewModel, scrollContent = !cameraPopup) {
+    val musicPopup = popup.hash == "#music"
+    val weatherPopup = popup.hash == "#weather"
+    val ui by viewModel.ui.collectAsState()
+    val states by viewModel.states.collectAsState()
+    val weatherEntity = ui.weatherPopupContext?.entityId ?: "weather.forecast_tankerland_ct"
+    val weatherSubtitle = if (weatherPopup) {
+        states[weatherEntity]?.friendlyName?.takeIf { it.isNotBlank() }
+    } else {
+        null
+    }
+    PopupScaffold(
+        popup = popup,
+        viewModel = viewModel,
+        scrollContent = !cameraPopup && !musicPopup,
+        denseContent = musicPopup,
+        subtitleOverride = weatherSubtitle,
+    ) {
         when (popup.hash) {
             "#weather" -> WeatherPopup(popup, viewModel)
             "#camerafront_view" -> CameraPopup(popup, viewModel)
+            "#music" -> MusicAssistantPopup(popup, viewModel)
             "#settings" -> SettingsPopup(popup, viewModel)
             else -> WidgetTree(popup.cards, viewModel)
         }
@@ -363,6 +402,7 @@ private fun SettingsPopup(popup: PopupNode, viewModel: HaViewModel) {
         ScreenTimeoutCard(viewModel)
         ManagementPinCard(viewModel)
         CalendarSubscriptionsCard(viewModel)
+        DebugPersonCamerasCard(viewModel)
         WidgetTree(popup.cards, viewModel)
     }
 }
@@ -609,6 +649,46 @@ private fun EntityPickerField(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun DebugPersonCamerasCard(viewModel: HaViewModel) {
+    val overlay = LocalOverlay.current
+    val debugEnabled by viewModel.debugPersonCamerasEnabled.collectAsState()
+    val cameraCount = viewModel.ui.collectAsState().value.dashboard?.home?.personCameras?.bindings?.size ?: 0
+    if (cameraCount == 0) return
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .background(overlay.card)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("Debug", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                Text("Preview backyard cameras", color = overlay.text, fontSize = 16.sp)
+                Text(
+                    "Shows all $cameraCount person-camera streams on the home layout, ignoring sensors.",
+                    color = overlay.muted,
+                    fontSize = 14.sp,
+                )
+            }
+            Switch(
+                checked = debugEnabled,
+                onCheckedChange = viewModel::setDebugPersonCamerasEnabled,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.Black,
+                    checkedTrackColor = ActiveYellow,
+                ),
+            )
         }
     }
 }

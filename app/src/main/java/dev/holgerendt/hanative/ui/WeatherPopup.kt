@@ -36,7 +36,6 @@ import dev.holgerendt.hanative.model.PopupNode
 import dev.holgerendt.hanative.ui.theme.AccentBlue
 import dev.holgerendt.hanative.ui.theme.LocalOverlay
 import dev.holgerendt.hanative.ui.theme.OverlayColors
-import dev.holgerendt.hanative.ui.widgets.PopupScaffold
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -49,72 +48,123 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 
-private const val WEATHER_ENTITY = "weather.forecast_tankerland_ct"
-private const val TEMP_ENTITY = "sensor.st_00063154_temperature"
+private const val DEFAULT_WEATHER_ENTITY = "weather.forecast_tankerland_ct"
+private const val DEFAULT_TEMP_ENTITY = "sensor.st_00063154_temperature"
 
 private enum class ForecastTab { Daily, Hourly }
 
 @Composable
 fun WeatherPopup(popup: PopupNode, viewModel: HaViewModel) {
-    val states by viewModel.states.collectAsState()
-    val weather = states[WEATHER_ENTITY]
-    val location = weather?.friendlyName?.takeIf { it.isNotBlank() }
-        ?: popup.name.orEmpty().ifBlank { "Forecast" }
-
-    PopupScaffold(
-        popup = popup,
+    val ui by viewModel.ui.collectAsState()
+    val context = ui.weatherPopupContext
+    WeatherPopupBody(
         viewModel = viewModel,
-        titleOverride = "Forecast",
-        subtitleOverride = location,
-        content = { WeatherPopupBody(viewModel) },
+        weatherEntity = context?.entityId ?: DEFAULT_WEATHER_ENTITY,
+        tempEntity = DEFAULT_TEMP_ENTITY,
+        focusDate = context?.focusDate,
+        initialTab = context?.initialTab,
     )
 }
 
 @Composable
-private fun WeatherPopupBody(viewModel: HaViewModel) {
+private fun WeatherPopupBody(
+    viewModel: HaViewModel,
+    weatherEntity: String,
+    tempEntity: String,
+    focusDate: LocalDate?,
+    initialTab: String?,
+) {
     val overlay = LocalOverlay.current
     val states by viewModel.states.collectAsState()
-    val weather = states[WEATHER_ENTITY]
+    val weather = states[weatherEntity]
     val sunAbove = states["sun.sun"]?.state == "above_horizon"
-    val temp = states[TEMP_ENTITY]?.state?.toDoubleOrNull()
-        ?: weather?.attrDouble("temperature")
-    val humidity = weather?.attrDouble("humidity")
-    val pressure = weather?.attrDouble("pressure")
-    val wind = weather?.attrDouble("wind_speed")
-    val windBearing = weather?.attrDouble("wind_bearing")
-    val condition = weatherConditionLabel(weather?.state)
-    val updatedLabel = relativeAgeLabel(weather?.lastUpdated ?: weather?.lastChanged)
+    val today = LocalDate.now()
 
-    var tab by remember { mutableStateOf(ForecastTab.Daily) }
+    var tab by remember(weatherEntity, focusDate, initialTab) {
+        mutableStateOf(
+            if (initialTab == "hourly") ForecastTab.Hourly else ForecastTab.Daily,
+        )
+    }
     var daily by remember { mutableStateOf(listOf<JsonObject>()) }
     var hourly by remember { mutableStateOf(listOf<JsonObject>()) }
     var dailyLoaded by remember { mutableStateOf(false) }
     var hourlyLoaded by remember { mutableStateOf(false) }
 
-    LaunchedEffect(viewModel.client.currentBaseUrl, weather?.state) {
+    LaunchedEffect(viewModel.client.currentBaseUrl, weatherEntity, weather?.state) {
         dailyLoaded = false
-        daily = runCatching { viewModel.client.weatherForecast(WEATHER_ENTITY, "daily") }.getOrDefault(emptyList())
+        daily = runCatching { viewModel.client.weatherForecast(weatherEntity, "daily") }.getOrDefault(emptyList())
         dailyLoaded = true
     }
-    LaunchedEffect(viewModel.client.currentBaseUrl, tab) {
-        if (tab != ForecastTab.Hourly || hourlyLoaded) return@LaunchedEffect
-        hourly = runCatching { viewModel.client.weatherForecast(WEATHER_ENTITY, "hourly") }.getOrDefault(emptyList())
+    LaunchedEffect(viewModel.client.currentBaseUrl, weatherEntity, tab) {
+        if (tab != ForecastTab.Hourly) return@LaunchedEffect
+        hourlyLoaded = false
+        hourly = runCatching { viewModel.client.weatherForecast(weatherEntity, "hourly") }.getOrDefault(emptyList())
         hourlyLoaded = true
+    }
+
+    val focusedDayForecast = focusDate?.let { date ->
+        daily.firstOrNull { forecastMatchesDay(it, date) }
+    }
+    val showingFocusedDay = focusDate != null && focusDate != today && focusedDayForecast != null
+
+    val currentTemp = states[tempEntity]?.state?.toDoubleOrNull()
+        ?: weather?.attrDouble("temperature")
+    val temp = if (showingFocusedDay) {
+        forecastNumber(focusedDayForecast?.get("temperature")) ?: currentTemp
+    } else {
+        currentTemp
+    }
+    val humidity = if (showingFocusedDay) {
+        forecastNumber(focusedDayForecast?.get("humidity")) ?: weather?.attrDouble("humidity")
+    } else {
+        weather?.attrDouble("humidity")
+    }
+    val pressure = weather?.attrDouble("pressure")
+    val wind = if (showingFocusedDay) {
+        forecastNumber(focusedDayForecast?.get("wind_speed")) ?: weather?.attrDouble("wind_speed")
+    } else {
+        weather?.attrDouble("wind_speed")
+    }
+    val windBearing = if (showingFocusedDay) {
+        forecastNumber(focusedDayForecast?.get("wind_bearing")) ?: weather?.attrDouble("wind_bearing")
+    } else {
+        weather?.attrDouble("wind_bearing")
+    }
+    val conditionState = if (showingFocusedDay) {
+        forecastText(focusedDayForecast?.get("condition")).ifBlank { weather?.state }
+    } else {
+        weather?.state
+    }
+    val condition = weatherConditionLabel(conditionState)
+    val updatedLabel = if (showingFocusedDay) {
+        focusDateLabel(focusDate)
+    } else {
+        relativeAgeLabel(weather?.lastUpdated ?: weather?.lastChanged)
     }
 
     val todayHigh = daily.firstOrNull()?.let { forecastNumber(it["temperature"]) }
     val todayLow = daily.firstOrNull()?.let { forecastNumber(it["templow"]) }
+    val cardHigh = if (showingFocusedDay) {
+        forecastNumber(focusedDayForecast?.get("temperature"))
+    } else {
+        todayHigh
+    }
+    val cardLow = if (showingFocusedDay) {
+        forecastNumber(focusedDayForecast?.get("templow"))
+    } else {
+        todayLow
+    }
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         CurrentConditionsCard(
             overlay = overlay,
             condition = condition,
-            weatherState = weather?.state,
+            weatherState = conditionState,
             sunAbove = sunAbove,
             updatedLabel = updatedLabel,
             temp = temp,
-            high = todayHigh,
-            low = todayLow,
+            high = cardHigh,
+            low = cardLow,
         )
 
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -143,11 +193,13 @@ private fun WeatherPopupBody(viewModel: HaViewModel) {
                     forecasts = daily,
                     loading = !dailyLoaded,
                     sunAbove = sunAbove,
+                    focusDate = focusDate,
                 )
                 ForecastTab.Hourly -> HourlyForecastRow(
                     overlay = overlay,
                     forecasts = hourly,
                     loading = !hourlyLoaded,
+                    focusDate = focusDate,
                 )
             }
         }
@@ -291,6 +343,7 @@ private fun DailyForecastRow(
     forecasts: List<JsonObject>,
     loading: Boolean,
     sunAbove: Boolean,
+    focusDate: LocalDate?,
 ) {
     if (loading && forecasts.isEmpty()) {
         Box(Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
@@ -298,10 +351,18 @@ private fun DailyForecastRow(
         }
         return
     }
+    val scrollState = rememberScrollState()
+    LaunchedEffect(focusDate, forecasts) {
+        val date = focusDate ?: return@LaunchedEffect
+        val index = forecasts.indexOfFirst { forecastMatchesDay(it, date) }
+        if (index > 0) {
+            scrollState.scrollTo(index * 66)
+        }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
+            .horizontalScroll(scrollState),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         forecasts.forEach { dayForecast ->
@@ -309,10 +370,17 @@ private fun DailyForecastRow(
             val high = forecastNumber(dayForecast["temperature"])
             val low = forecastNumber(dayForecast["templow"])
             val weekday = forecastShortDay(forecastText(dayForecast["datetime"]))
+            val isFocused = focusDate != null && forecastMatchesDay(dayForecast, focusDate)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.width(52.dp),
+                modifier = Modifier
+                    .width(52.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(
+                        if (isFocused) AccentBlue.copy(alpha = 0.14f) else overlay.text.copy(alpha = 0f),
+                    )
+                    .padding(vertical = if (isFocused) 4.dp else 0.dp),
             ) {
                 Text(weekday, color = overlay.muted, fontSize = 13.sp, maxLines = 1)
                 MdiIcon(
@@ -332,6 +400,7 @@ private fun HourlyForecastRow(
     overlay: OverlayColors,
     forecasts: List<JsonObject>,
     loading: Boolean,
+    focusDate: LocalDate?,
 ) {
     if (loading && forecasts.isEmpty()) {
         Box(Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
@@ -363,21 +432,37 @@ private fun HourlyForecastRow(
                     condition = condition,
                     temp = temp,
                     dayIcon = hour in 7..19,
+                    localDate = localDate,
                 ),
             )
+        }
+    }
+    val scrollState = rememberScrollState()
+    LaunchedEffect(focusDate, items) {
+        val date = focusDate ?: return@LaunchedEffect
+        val index = items.indexOfFirst { it.localDate == date }
+        if (index > 0) {
+            scrollState.scrollTo(index * 52)
         }
     }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
+            .horizontalScroll(scrollState),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         items.forEach { item ->
+            val isFocused = focusDate != null && item.localDate == focusDate
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.width(48.dp),
+                modifier = Modifier
+                    .width(48.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(
+                        if (isFocused) AccentBlue.copy(alpha = 0.14f) else overlay.text.copy(alpha = 0f),
+                    )
+                    .padding(vertical = if (isFocused) 4.dp else 0.dp),
             ) {
                 Text(
                     item.dayLabel,
@@ -404,7 +489,25 @@ private data class HourlyForecastItem(
     val condition: String,
     val temp: Double?,
     val dayIcon: Boolean,
+    val localDate: LocalDate?,
 )
+
+private fun forecastMatchesDay(forecast: JsonObject, day: LocalDate): Boolean {
+    val raw = forecastText(forecast["datetime"])
+    if (raw.startsWith(day.toString())) return true
+    val instant = forecastInstant(raw)
+    return instant?.atZone(ZoneId.systemDefault())?.toLocalDate() == day
+}
+
+private fun focusDateLabel(date: LocalDate?): String {
+    if (date == null) return ""
+    val today = LocalDate.now()
+    return when (date) {
+        today -> "Today"
+        today.plusDays(1) -> "Tomorrow"
+        else -> date.format(DateTimeFormatter.ofPattern("EEEE, MMM d"))
+    }
+}
 
 private fun weatherConditionLabel(raw: String?): String {
     val value = raw?.replace('_', ' ')?.trim().orEmpty()

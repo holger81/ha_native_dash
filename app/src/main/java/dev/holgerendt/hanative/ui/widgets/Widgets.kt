@@ -3,6 +3,7 @@
 package dev.holgerendt.hanative.ui.widgets
 
 import android.graphics.BitmapFactory
+import android.view.LayoutInflater
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -30,6 +31,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -48,6 +50,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -74,14 +86,23 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.holgerendt.hanative.data.EntityState
 import dev.holgerendt.hanative.data.HaCalendarEvent
+import dev.holgerendt.hanative.R
+import dev.holgerendt.hanative.data.timelineSnapshotPath
 import dev.holgerendt.hanative.data.hasLiveCameraSource
 import dev.holgerendt.hanative.model.PopupNode
 import dev.holgerendt.hanative.model.StateFormat
 import dev.holgerendt.hanative.model.WidgetNode
+import dev.holgerendt.hanative.ui.AddCalendarEventDialog
+import dev.holgerendt.hanative.ui.CalendarEventActionDialog
+import dev.holgerendt.hanative.ui.CalendarManageAction
+import dev.holgerendt.hanative.ui.CalendarMessageDialog
+import dev.holgerendt.hanative.ui.DeleteCalendarEventDialog
+import dev.holgerendt.hanative.ui.EditCalendarEventDialog
 import dev.holgerendt.hanative.ui.HaViewModel
 import dev.holgerendt.hanative.ui.LoadingSpinner
 import dev.holgerendt.hanative.ui.MdiIcon
 import dev.holgerendt.hanative.ui.MediaPreview
+import dev.holgerendt.hanative.ui.PinGateDialog
 import dev.holgerendt.hanative.ui.brightnessPct
 import dev.holgerendt.hanative.ui.format
 import dev.holgerendt.hanative.ui.formatState
@@ -90,8 +111,14 @@ import dev.holgerendt.hanative.ui.isVisible
 import dev.holgerendt.hanative.ui.number
 import dev.holgerendt.hanative.ui.stateOf
 import dev.holgerendt.hanative.ui.tempHum
+import dev.holgerendt.hanative.ui.timelineEventStyle
 import dev.holgerendt.hanative.ui.toDoubleOrNullSafe
 import dev.holgerendt.hanative.ui.theme.AccentBlue
+import dev.holgerendt.hanative.ui.theme.Gray000
+import dev.holgerendt.hanative.ui.theme.Gray800
+import dev.holgerendt.hanative.ui.theme.ThemeBlack
+import dev.holgerendt.hanative.ui.theme.ThemeWhite
+import dev.holgerendt.hanative.ui.theme.activeBigBrush
 import dev.holgerendt.hanative.ui.theme.AccentRed
 import dev.holgerendt.hanative.ui.theme.ActiveLight
 import dev.holgerendt.hanative.ui.theme.ActiveYellow
@@ -245,8 +272,9 @@ fun ChipRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Mod
     ) {
         widget.chips.filter { states.isVisible(it) }.forEach { chip ->
             val entity = states[chip.entity]
+            val unlocked = chip.emphasizeUnlocked == true && entity?.state == "unlocked"
             val highlighted = when {
-                chip.emphasizeUnlocked == true -> entity?.state == "unlocked"
+                unlocked -> true
                 chip.accent == "active" || chip.accent == "active-big" -> true
                 else -> false
             }
@@ -255,10 +283,20 @@ fun ChipRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Mod
                 chip.state != null -> states.formatState(chip.state)
                 else -> chip.name
             }
+            val iconCircle = when {
+                unlocked -> ThemeWhite
+                else -> Gray000
+            }
             Row(
                 modifier = Modifier
                     .clip(ChipShape)
-                    .background(if (highlighted) ActiveYellow else ChipDark)
+                    .then(
+                        if (highlighted) {
+                            Modifier.background(activeBigBrush())
+                        } else {
+                            Modifier.background(Gray800)
+                        },
+                    )
                     .widgetClicks(chip, viewModel)
                     .padding(end = 12.dp, start = 2.dp, top = 2.dp, bottom = 2.dp)
                     .height(34.dp),
@@ -266,17 +304,17 @@ fun ChipRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Mod
             ) {
                 Box(
                     modifier = Modifier
-                        .size(30.dp)
+                        .size(36.dp)
                         .clip(CircleShape)
-                        .background(if (highlighted) Color.White else CardLight),
+                        .background(iconCircle),
                     contentAlignment = Alignment.Center,
                 ) {
-                    MdiIcon(chip.icon, tint = TextDark, size = 18.dp)
+                    MdiIcon(chip.icon, tint = Gray800, size = 22.dp)
                 }
                 if (!label.isNullOrBlank()) {
                     Text(
                         text = label,
-                        color = if (highlighted) Color.Black else ChipOnDark,
+                        color = if (highlighted) ThemeBlack else Gray000,
                         fontSize = 13.sp,
                         modifier = Modifier.padding(start = 8.dp),
                     )
@@ -425,13 +463,28 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
     val columns = (if (widget.columns == null) 5 else widget.columnCount()).coerceIn(1, 7)
     val dayCount = widget.days ?: 10
     val subscribed by viewModel.subscribedCalendars.collectAsState()
+    val availableCalendars by viewModel.availableCalendars.collectAsState()
+    val calendarRevision by viewModel.calendarEventsRevision.collectAsState()
     val sources = remember(subscribed, widget.calendars) { viewModel.plannerCalendars(widget.calendars) }
     var dayOffset by remember { mutableIntStateOf(0) }
     var events by remember { mutableStateOf(listOf<HaCalendarEvent>()) }
     var forecasts by remember { mutableStateOf(listOf<Map<String, String>>()) }
     var loaded by remember { mutableStateOf(false) }
+    var showAddDialog by remember { mutableStateOf(false) }
+    var addDialogDate by remember { mutableStateOf(LocalDate.now(zone)) }
+    var manageOverlay by remember { mutableStateOf<WeekPlannerManageOverlay?>(null) }
+    val ui by viewModel.ui.collectAsState()
+    val plannerCalendars = remember(sources, availableCalendars) {
+        sources.mapNotNull { source ->
+            val entity = source.entity ?: return@mapNotNull null
+            val name = availableCalendars.firstOrNull { it.entityId == entity }?.name
+                ?: entity.removePrefix("calendar.").replace('_', ' ')
+            entity to name
+        }
+    }
     val weatherEntity = widget.weatherEntity ?: "weather.forecast_tankerland_ct"
-    LaunchedEffect(sources, dayOffset, viewModel.client.currentBaseUrl) {
+    LaunchedEffect(Unit) { viewModel.refreshCalendars() }
+    LaunchedEffect(sources, dayOffset, calendarRevision, viewModel.client.currentBaseUrl) {
         loaded = false
         while (true) {
             if (viewModel.client.currentBaseUrl.isBlank()) {
@@ -469,6 +522,37 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
     }
     val today = LocalDate.now(zone)
     val days = (0 until dayCount).map { today.plusDays(dayOffset.toLong() + it) }
+    val openAddDialog: (LocalDate) -> Unit = { date ->
+        addDialogDate = date
+        showAddDialog = true
+    }
+    fun proceedAfterPin(event: HaCalendarEvent, action: CalendarManageAction) {
+        manageOverlay = when (action) {
+            CalendarManageAction.Edit -> WeekPlannerManageOverlay.Edit(event)
+            CalendarManageAction.Delete -> WeekPlannerManageOverlay.DeleteConfirm(event)
+        }
+    }
+    fun requestManageAction(event: HaCalendarEvent, action: CalendarManageAction) {
+        if (event.uid.isNullOrBlank()) {
+            manageOverlay = WeekPlannerManageOverlay.Message(
+                title = "Not supported",
+                message = "This event cannot be edited or deleted.",
+            )
+            return
+        }
+        if (!ui.pinIsUserSet) {
+            manageOverlay = WeekPlannerManageOverlay.Message(
+                title = "PIN required",
+                message = "Set a PIN in Settings first.",
+            )
+            return
+        }
+        if (viewModel.isCalendarManagementUnlocked()) {
+            proceedAfterPin(event, action)
+        } else {
+            manageOverlay = WeekPlannerManageOverlay.PinGate(event, action)
+        }
+    }
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (widget.showNavigation == true) {
             Row(
@@ -484,8 +568,16 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                     color = TextDark,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(start = 6.dp),
+                    modifier = Modifier.padding(start = 6.dp).weight(1f),
                 )
+                CalendarAddIcon(onClick = { openAddDialog(today) })
+            }
+        } else if (plannerCalendars.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                CalendarAddIcon(onClick = { openAddDialog(today) })
             }
         }
         if (!loaded) {
@@ -513,6 +605,15 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                             showLowTemperature = widget.showLowTemperature == true,
                             loading = false,
                             viewModel = viewModel,
+                            weatherEntity = weatherEntity,
+                            onAddEvent = if (plannerCalendars.isNotEmpty()) {
+                                { openAddDialog(day) }
+                            } else {
+                                null
+                            },
+                            onEventClick = { event ->
+                                manageOverlay = WeekPlannerManageOverlay.ChooseAction(event)
+                            },
                             modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 280.dp),
                         )
                     }
@@ -521,6 +622,55 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
             }
         }
     }
+    if (showAddDialog) {
+        AddCalendarEventDialog(
+            viewModel = viewModel,
+            calendars = plannerCalendars,
+            initialDate = addDialogDate,
+            onDismiss = { showAddDialog = false },
+        )
+    }
+    when (val overlay = manageOverlay) {
+        null -> Unit
+        is WeekPlannerManageOverlay.ChooseAction -> CalendarEventActionDialog(
+            event = overlay.event,
+            onDismiss = { manageOverlay = null },
+            onEdit = { requestManageAction(overlay.event, CalendarManageAction.Edit) },
+            onDelete = { requestManageAction(overlay.event, CalendarManageAction.Delete) },
+        )
+        is WeekPlannerManageOverlay.PinGate -> PinGateDialog(
+            viewModel = viewModel,
+            onDismiss = { manageOverlay = WeekPlannerManageOverlay.ChooseAction(overlay.event) },
+            onVerified = {
+                proceedAfterPin(overlay.event, overlay.action)
+            },
+        )
+        is WeekPlannerManageOverlay.Edit -> EditCalendarEventDialog(
+            viewModel = viewModel,
+            event = overlay.event,
+            calendars = plannerCalendars,
+            onDismiss = { manageOverlay = null },
+        )
+        is WeekPlannerManageOverlay.DeleteConfirm -> DeleteCalendarEventDialog(
+            viewModel = viewModel,
+            event = overlay.event,
+            onDismiss = { manageOverlay = null },
+            onDeleted = { manageOverlay = null },
+        )
+        is WeekPlannerManageOverlay.Message -> CalendarMessageDialog(
+            title = overlay.title,
+            message = overlay.message,
+            onDismiss = { manageOverlay = null },
+        )
+    }
+}
+
+private sealed interface WeekPlannerManageOverlay {
+    data class ChooseAction(val event: HaCalendarEvent) : WeekPlannerManageOverlay
+    data class PinGate(val event: HaCalendarEvent, val action: CalendarManageAction) : WeekPlannerManageOverlay
+    data class Edit(val event: HaCalendarEvent) : WeekPlannerManageOverlay
+    data class DeleteConfirm(val event: HaCalendarEvent) : WeekPlannerManageOverlay
+    data class Message(val title: String, val message: String) : WeekPlannerManageOverlay
 }
 
 @Composable
@@ -563,6 +713,24 @@ private fun CalendarTodayIcon(onClick: () -> Unit) {
 }
 
 @Composable
+private fun CalendarAddIcon(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(16.dp)) {
+            val stroke = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round)
+            val centerX = size.width / 2f
+            val centerY = size.height / 2f
+            drawLine(TextMuted, Offset(centerX, 2.dp.toPx()), Offset(centerX, size.height - 2.dp.toPx()), strokeWidth = stroke.width, cap = stroke.cap)
+            drawLine(TextMuted, Offset(2.dp.toPx(), centerY), Offset(size.width - 2.dp.toPx(), centerY), strokeWidth = stroke.width, cap = stroke.cap)
+        }
+    }
+}
+
+@Composable
 private fun WeekPlannerDay(
     day: LocalDate,
     today: LocalDate,
@@ -573,6 +741,9 @@ private fun WeekPlannerDay(
     showLowTemperature: Boolean,
     loading: Boolean,
     viewModel: HaViewModel,
+    weatherEntity: String,
+    onAddEvent: (() -> Unit)? = null,
+    onEventClick: ((HaCalendarEvent) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val weekday = when (day) {
@@ -609,22 +780,33 @@ private fun WeekPlannerDay(
                 maxLines = 1,
                 modifier = Modifier.padding(top = 10.dp).weight(1f),
             )
-            if (showCondition || showTemperature) {
-                Column(horizontalAlignment = Alignment.End) {
-                    if (loading && forecast == null) {
-                        LoadingSpinner(indicatorSize = 18.dp)
-                    } else {
-                        if (temp.isNotBlank()) {
-                            Text(temp, color = TextMuted, fontSize = 11.sp, maxLines = 1)
-                        }
-                        if (showCondition) {
-                            MdiIcon(
-                                weatherIcon(forecast?.get("condition"), true),
-                                tint = weatherTint(forecast?.get("condition")),
-                                size = 22.dp,
-                            )
+            Column(horizontalAlignment = Alignment.End) {
+                if (showCondition || showTemperature) {
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        modifier = Modifier.clickable(
+                            enabled = showCondition,
+                            onClick = { viewModel.openWeatherPopup(focusDate = day, entityId = weatherEntity) },
+                        ),
+                    ) {
+                        if (loading && forecast == null) {
+                            LoadingSpinner(indicatorSize = 18.dp)
+                        } else {
+                            if (temp.isNotBlank()) {
+                                Text(temp, color = TextMuted, fontSize = 11.sp, maxLines = 1)
+                            }
+                            if (showCondition) {
+                                MdiIcon(
+                                    weatherIcon(forecast?.get("condition"), true),
+                                    tint = weatherTint(forecast?.get("condition")),
+                                    size = 22.dp,
+                                )
+                            }
                         }
                     }
+                }
+                if (onAddEvent != null) {
+                    CalendarAddIcon(onClick = onAddEvent)
                 }
             }
         }
@@ -659,7 +841,9 @@ private fun WeekPlannerDay(
                                 .height(IntrinsicSize.Min)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(CardLight)
-                                .clickable { viewModel.openMoreInfo(event.entityId) },
+                                .clickable(enabled = onEventClick != null) {
+                                    onEventClick?.invoke(event)
+                                },
                         ) {
                             Box(Modifier.width(3.dp).fillMaxHeight().background(stripe))
                             Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp).weight(1f)) {
@@ -694,7 +878,6 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
     val days = widget.days
     val entityId = widget.entity ?: "calendar.llm_vision_timeline"
     var events by remember { mutableStateOf(listOf<HaCalendarEvent>()) }
-    var expandedId by remember { mutableStateOf<String?>(null) }
     var loaded by remember { mutableStateOf(false) }
     LaunchedEffect(entityId, limit, hours, days, viewModel.client.currentBaseUrl) {
         loaded = false
@@ -757,8 +940,7 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
                         timeLabel.takeIf { it.isNotBlank() },
                         cameraLabel?.takeIf { it.isNotBlank() && it != "clip" },
                     ).joinToString(" • ")
-                    val style = timelineStyle(event)
-                    val eventKey = event.uid ?: "${event.start}-${event.summary}"
+                    val style = timelineEventStyle(event)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -767,18 +949,25 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
                             .background(CardLight)
                             .clickable {
                                 val frame = event.keyFrame
-                                if (!frame.isNullOrBlank()) {
-                                    viewModel.openMedia(
+                                val clip = event.clipPath
+                                when {
+                                    !clip.isNullOrBlank() -> viewModel.openVideo(
+                                        path = clip,
+                                        title = event.summary,
+                                        subtitle = subtitle.takeIf { it.isNotBlank() },
+                                        description = event.description,
+                                    )
+                                    !frame.isNullOrBlank() -> viewModel.openMedia(
                                         path = frame,
                                         title = event.summary,
                                         subtitle = subtitle.takeIf { it.isNotBlank() },
                                         description = event.description,
                                     )
-                                } else {
-                                    val camera = event.cameraName?.takeIf { '.' in it }
-                                    viewModel.openMoreInfo(camera ?: event.entityId)
+                                    else -> {
+                                        val camera = event.cameraName?.takeIf { '.' in it }
+                                        viewModel.openMoreInfo(camera ?: event.entityId)
+                                    }
                                 }
-                                expandedId = if (expandedId == eventKey) null else eventKey
                             }
                             .padding(horizontal = 10.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -806,27 +995,15 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
                                 Text(subtitle, color = TextMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
-                        if (!event.keyFrame.isNullOrBlank()) {
+                        timelineSnapshotPath(event.keyFrame, event.clipPath)?.let { snapshotPath ->
                             TimelineSnapshot(
-                                path = event.keyFrame,
+                                path = snapshotPath,
                                 viewModel = viewModel,
                                 modifier = Modifier
                                     .size(59.dp)
                                     .clip(RoundedCornerShape(12.dp)),
                             )
                         }
-                    }
-                    if (expandedId == eventKey && !event.description.isNullOrBlank()) {
-                        Text(
-                            text = event.description.orEmpty(),
-                            color = TextMuted,
-                            fontSize = 13.sp,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(CardLight)
-                                .padding(12.dp),
-                        )
                     }
                 }
             }
@@ -917,25 +1094,104 @@ fun MediaImageDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
     }
 }
 
+@androidx.annotation.OptIn(UnstableApi::class)
+@Composable
+fun MediaVideoDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var videoUrl by remember(preview.path) { mutableStateOf<String?>(null) }
+    var loadFailed by remember(preview.path) { mutableStateOf(false) }
+    LaunchedEffect(preview.path, viewModel.client.currentBaseUrl) {
+        loadFailed = false
+        videoUrl = runCatching { viewModel.client.authenticatedMediaUrl(preview.path) }.getOrNull()
+        if (videoUrl.isNullOrBlank()) loadFailed = true
+    }
+    val exoPlayer = remember(videoUrl) {
+        val url = videoUrl ?: return@remember null
+        val factory = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(8_000)
+            .setReadTimeoutMs(20_000)
+            .setDefaultRequestProperties(viewModel.client.bearerHeaders())
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(factory))
+            .build()
+            .apply {
+                setMediaItem(MediaItem.fromUri(url))
+                prepare()
+                playWhenReady = true
+            }
+    }
+    DisposableEffect(exoPlayer) {
+        onDispose { exoPlayer?.release() }
+    }
+    Box(
+        modifier = popupSheetModifier(PopupSheetKind.Detail)
+            .padding(horizontal = 10.dp, vertical = 8.dp)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {},
+            ),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .popupSheetLook(OverlayLightPopup.sheet)
+                .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp)
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            PopupSheetChrome(
+                title = preview.title.orEmpty().ifBlank { "Clip" },
+                onClose = onDismiss,
+                overlay = OverlayLightPopup,
+                subtitle = preview.subtitle,
+            )
+            when {
+                exoPlayer != null -> AndroidView(
+                    factory = { ctx ->
+                        (LayoutInflater.from(ctx).inflate(R.layout.camera_player_view, null) as PlayerView).apply {
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            useController = true
+                            player = exoPlayer
+                        }
+                    },
+                    update = { view ->
+                        view.player = exoPlayer
+                        view.useController = true
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(16f / 9f)
+                        .clip(RoundedCornerShape(22.dp)),
+                )
+                loadFailed -> Text("Can't load video", color = OverlayLightPopup.muted, fontSize = 14.sp)
+                else -> Box(
+                    modifier = Modifier.fillMaxWidth().height(220.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    LoadingSpinner(color = TextMuted)
+                }
+            }
+            if (!preview.description.isNullOrBlank()) {
+                Text(
+                    text = preview.description,
+                    color = OverlayLightPopup.text,
+                    fontSize = 14.sp,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                )
+            }
+        }
+    }
+}
+
 private fun visionDateLabel(date: LocalDate): String {
     val today = LocalDate.now()
     return when (date) {
         today -> "Today"
         today.minusDays(1) -> "Yesterday"
         else -> date.format(DateTimeFormatter.ofPattern("MMM d"))
-    }
-}
-
-private fun timelineStyle(event: HaCalendarEvent): Pair<String, Color> {
-    val haystack = listOfNotNull(event.category, event.label, event.summary).joinToString(" ").lowercase()
-    return when {
-        "package" in haystack || "delivery" in haystack -> "mdi:package-variant-closed" to Color(0xFFEA580C)
-        "car" in haystack || "vehicle" in haystack || "truck" in haystack -> "mdi:car" to Color(0xFF64748B)
-        "dog" in haystack -> "mdi:dog" to Color(0xFF00DD51)
-        "cat" in haystack -> "mdi:cat" to Color(0xFF00DD51)
-        "person" in haystack -> "mdi:walk" to Color(0xFF3B82F6)
-        "door" in haystack -> "mdi:door-closed" to Color(0xFF8B5CF6)
-        else -> "mdi:motion-sensor" to Color(0xFF3B82F6)
     }
 }
 
@@ -1897,7 +2153,7 @@ fun PopupSheetChrome(
 enum class PopupSheetKind { Room, Camera, Utility, Settings, Detail }
 
 fun popupSheetKind(hash: String?): PopupSheetKind = when (hash) {
-    "#camerafront_view" -> PopupSheetKind.Camera
+    "#camerafront_view", "#music" -> PopupSheetKind.Camera
     "#settings" -> PopupSheetKind.Settings
     "#weather", "#power", "#bil", "#staubinator" -> PopupSheetKind.Utility
     else -> PopupSheetKind.Room
@@ -1908,22 +2164,34 @@ fun PopupScaffold(
     popup: PopupNode,
     viewModel: HaViewModel,
     scrollContent: Boolean = true,
+    denseContent: Boolean = false,
     overlay: OverlayColors = OverlayLightPopup,
     titleOverride: String? = null,
     subtitleOverride: String? = null,
     content: @Composable () -> Unit,
 ) {
+    val outerPadding = if (denseContent) {
+        PaddingValues(horizontal = 4.dp, vertical = 4.dp)
+    } else {
+        PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+    }
+    val innerPadding = if (denseContent) {
+        PaddingValues(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 8.dp)
+    } else {
+        PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp)
+    }
+    val headerSpacer = if (denseContent) 6.dp else 12.dp
     CompositionLocalProvider(LocalOverlay provides overlay) {
         Column(
             modifier = popupSheetModifier(popupSheetKind(popup.hash))
-                .padding(horizontal = 10.dp, vertical = 8.dp)
+                .padding(outerPadding)
                 .popupSheetLook(overlay.sheet)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                     onClick = {},
                 )
-                .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp),
+                .padding(innerPadding),
         ) {
             PopupSheetChrome(
                 title = titleOverride ?: popup.name.orEmpty(),
@@ -1933,13 +2201,13 @@ fun PopupScaffold(
                 accent = popup.accent,
                 subtitle = subtitleOverride,
             )
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(headerSpacer))
             if (scrollContent) {
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                     content()
                 }
             } else {
-                Box(Modifier.weight(1f).fillMaxWidth()) {
+                Box(Modifier.weight(1f).fillMaxSize()) {
                     content()
                 }
             }
