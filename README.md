@@ -1,6 +1,6 @@
 # Greatroom Wall — native Android
 
-Native Jetpack Compose tablet app that mirrors the Lovelace **greatroom wall** dashboard. It does **not** use a WebView. Widgets talk to Home Assistant over the REST and WebSocket APIs.
+Native Jetpack Compose tablet app that mirrors the Lovelace **greatroom wall** dashboard. It does **not** use a WebView for the wall UI. Widgets talk to Home Assistant over the REST and WebSocket APIs. The Music popup is a native player for Music Assistant `media_player` entities (transport, volume, up-next via `music_assistant.get_queue`).
 
 ## What it covers
 
@@ -8,7 +8,7 @@ Native Jetpack Compose tablet app that mirrors the Lovelace **greatroom wall** d
 - Status chips (lock, AQI, laundry, vacuum, solar, grid, battery, …)
 - Room tiles with live temperature / humidity
 - Room popups: lights (slider + toggle), vents, climate, scenes, media
-- Weather, power, cars, vacuum (Staubinator), camera, and settings popups
+- Weather, power, cars, vacuum (Staubinator), camera, settings, and a native Music Assistant wall player
 - Real-time state updates via `subscribe_events`
 - Home Assistant URL, long-lived token, and optional management PIN stored so they survive uninstall/reinstall on the same device (never committed)
 

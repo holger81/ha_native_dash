@@ -136,38 +136,6 @@ internal fun timelineSnapshotPath(keyFrame: String?, clipPath: String?): String?
     return clipPath?.let(::frigateSnapshotFromClip)
 }
 
-enum class MusicAssistantLoadMode {
-    /** Supervisor ingress session + addon `ingress_url` (HA App panels). */
-    INGRESS,
-    /** Load HA frontend root with external auth, then navigate to the panel route. */
-    SPA_BOOTSTRAP,
-    /** Load a HA frontend route directly with external auth. */
-    SPA_ROUTE,
-}
-
-data class MusicAssistantLoadTarget(
-    val mode: MusicAssistantLoadMode,
-    val label: String,
-    val path: String = "/",
-    val addonSlug: String? = null,
-)
-
-data class MusicAssistantPanelResolution(
-    val targets: List<MusicAssistantLoadTarget>,
-    val debugInfo: List<String>,
-)
-
-data class IngressLoad(
-    val session: String,
-    val ingressUrl: String,
-)
-
-private data class MusicAssistantPanel(
-    val urlPath: String,
-    val componentName: String?,
-    val addonSlug: String?,
-)
-
 sealed interface ConnectionState {
     data object Disconnected : ConnectionState
     data object Connecting : ConnectionState
@@ -427,8 +395,9 @@ class HaClient {
         service: String,
         entityId: List<String>? = null,
         data: Map<String, JsonElement> = emptyMap(),
-    ) {
-        command {
+        returnResponse: Boolean = false,
+    ): JsonElement {
+        return command {
             put("type", "call_service")
             put("domain", domain)
             put("service", service)
@@ -440,7 +409,101 @@ class HaClient {
             if (data.isNotEmpty()) {
                 put("service_data", JsonObject(data))
             }
+            if (returnResponse) {
+                put("return_response", true)
+            }
         }
+    }
+
+    suspend fun musicAssistantPlayers(): List<MusicAssistantPlayer> {
+        val fromStates = _states.value.values
+            .asSequence()
+            .filter { it.isMusicAssistantPlayer() }
+            .map {
+                MusicAssistantPlayer(
+                    entityId = it.entityId,
+                    name = it.friendlyName,
+                    massPlayerType = it.attrString("mass_player_type"),
+                )
+            }
+            .toList()
+        if (fromStates.isNotEmpty()) {
+            return fromStates.sortedWith(
+                compareByDescending<MusicAssistantPlayer> { player ->
+                    val state = state(player.entityId)?.state
+                    state == "playing" || state == "paused"
+                }.thenBy { it.name.lowercase() },
+            )
+        }
+        val registry = runCatching {
+            command { put("type", "config/entity_registry/list") }.jsonArray
+        }.getOrNull() ?: return emptyList()
+        return registry.mapNotNull { element ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            val entityId = obj["entity_id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            if (!entityId.startsWith("media_player.")) return@mapNotNull null
+            val platform = obj["platform"]?.jsonPrimitive?.contentOrNull
+            if (!platform.equals("music_assistant", ignoreCase = true)) return@mapNotNull null
+            if (obj["disabled_by"]?.jsonPrimitive?.contentOrNull != null) return@mapNotNull null
+            val name = obj["name"]?.jsonPrimitive?.contentOrNull
+                ?: obj["original_name"]?.jsonPrimitive?.contentOrNull
+                ?: state(entityId)?.friendlyName
+                ?: entityId.substringAfter('.')
+            MusicAssistantPlayer(entityId = entityId, name = name)
+        }.sortedBy { it.name.lowercase() }
+    }
+
+    suspend fun musicAssistantQueue(entityId: String): MusicAssistantQueue? {
+        val result = callService(
+            domain = "music_assistant",
+            service = "get_queue",
+            entityId = listOf(entityId),
+            returnResponse = true,
+        )
+        return parseMusicAssistantQueue(result, entityId)
+    }
+
+    suspend fun mediaPlayerCommand(entityId: String, service: String, data: Map<String, JsonElement> = emptyMap()) {
+        callService("media_player", service, listOf(entityId), data)
+    }
+
+    suspend fun setMediaVolume(entityId: String, level: Float) {
+        mediaPlayerCommand(
+            entityId,
+            "volume_set",
+            mapOf("volume_level" to JsonPrimitive(level.coerceIn(0f, 1f).toDouble())),
+        )
+    }
+
+    suspend fun setMediaShuffle(entityId: String, shuffle: Boolean) {
+        mediaPlayerCommand(entityId, "shuffle_set", mapOf("shuffle" to JsonPrimitive(shuffle)))
+    }
+
+    suspend fun setMediaRepeat(entityId: String, repeat: String) {
+        mediaPlayerCommand(entityId, "repeat_set", mapOf("repeat" to JsonPrimitive(repeat)))
+    }
+
+    suspend fun seekMedia(entityId: String, positionSec: Double) {
+        mediaPlayerCommand(
+            entityId,
+            "media_seek",
+            mapOf("seek_position" to JsonPrimitive(positionSec.coerceAtLeast(0.0))),
+        )
+    }
+
+    suspend fun transferMusicQueue(targetEntityId: String, sourceEntityId: String? = null, autoPlay: Boolean = true) {
+        val data = buildMap {
+            if (!sourceEntityId.isNullOrBlank()) {
+                put("source_player", JsonPrimitive(sourceEntityId))
+            }
+            put("auto_play", JsonPrimitive(autoPlay))
+        }
+        callService(
+            domain = "music_assistant",
+            service = "transfer_queue",
+            entityId = listOf(targetEntityId),
+            data = data,
+        )
     }
 
     suspend fun toggle(entityId: String) {
@@ -1141,197 +1204,6 @@ class HaClient {
                 }
             }
         }
-    }
-
-    /** Known Music Assistant HA App slug when `get_panels` is unavailable. */
-    private val musicAssistantAppSlug = "d5369777_music_assistant"
-
-    suspend fun musicAssistantLoadTargets(): MusicAssistantPanelResolution {
-        val panel = resolveMusicAssistantPanel()
-        val debugInfo = mutableListOf<String>()
-        if (panel == null) {
-            debugInfo += "get_panels: Music Assistant panel not found; using known app slug"
-            val knownPanelPath = "/$musicAssistantAppSlug"
-            return MusicAssistantPanelResolution(
-                targets = listOf(
-                    MusicAssistantLoadTarget(
-                        mode = MusicAssistantLoadMode.INGRESS,
-                        label = "addon ingress ($musicAssistantAppSlug)",
-                        addonSlug = musicAssistantAppSlug,
-                    ),
-                    MusicAssistantLoadTarget(
-                        mode = MusicAssistantLoadMode.SPA_BOOTSTRAP,
-                        label = "frontend navigate $knownPanelPath",
-                        path = knownPanelPath,
-                    ),
-                    MusicAssistantLoadTarget(
-                        mode = MusicAssistantLoadMode.SPA_ROUTE,
-                        label = "panel route $knownPanelPath",
-                        path = knownPanelPath,
-                    ),
-                ),
-                debugInfo = debugInfo,
-            )
-        }
-
-        debugInfo += buildString {
-            append("get_panels: url_path=${panel.urlPath}")
-            panel.componentName?.let { append(", component=$it") }
-            panel.addonSlug?.let { append(", addon=$it") }
-        }
-
-        val addonSlug = panel.addonSlug?.trim()?.takeIf { it.isNotEmpty() }
-        if (panel.componentName == "app" && addonSlug != null) {
-            runCatching {
-                fetchAddonIngressUrl(addonSlug)?.let { ingressUrl ->
-                    debugInfo += "supervisor ingress_url=$ingressUrl"
-                }
-            }
-            val panelPath = "/${panel.urlPath.trimStart('/')}"
-            val targets = listOf(
-                MusicAssistantLoadTarget(
-                    mode = MusicAssistantLoadMode.INGRESS,
-                    label = "addon ingress ($addonSlug)",
-                    addonSlug = addonSlug,
-                ),
-                MusicAssistantLoadTarget(
-                    mode = MusicAssistantLoadMode.SPA_BOOTSTRAP,
-                    label = "frontend navigate $panelPath",
-                    path = panelPath,
-                ),
-                MusicAssistantLoadTarget(
-                    mode = MusicAssistantLoadMode.SPA_ROUTE,
-                    label = "panel route $panelPath",
-                    path = panelPath,
-                ),
-            )
-            debugInfo += targets.map { it.label }
-            return MusicAssistantPanelResolution(targets = targets, debugInfo = debugInfo)
-        }
-
-        val panelPath = "/${panel.urlPath.trimStart('/')}"
-        val targets = listOf(
-            MusicAssistantLoadTarget(
-                mode = MusicAssistantLoadMode.SPA_BOOTSTRAP,
-                label = "frontend navigate $panelPath",
-                path = panelPath,
-            ),
-            MusicAssistantLoadTarget(
-                mode = MusicAssistantLoadMode.SPA_ROUTE,
-                label = "panel route $panelPath",
-                path = panelPath,
-            ),
-        )
-        debugInfo += targets.map { it.label }
-        return MusicAssistantPanelResolution(targets = targets, debugInfo = debugInfo)
-    }
-
-    suspend fun createIngressSession(): String {
-        val result = supervisorApi(method = "post", endpoint = "/ingress/session").jsonObject
-        return result["session"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
-            ?: error("Supervisor ingress session missing")
-    }
-
-    suspend fun fetchAddonIngressUrl(addonSlug: String): String? {
-        val slug = addonSlug.trim().trim('/')
-        if (slug.isEmpty()) return null
-        val result = supervisorApi(method = "get", endpoint = "/addons/$slug/info").jsonObject
-        return result["ingress_url"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
-            ?.let(::ensureIngressTrailingSlash)
-    }
-
-    private fun ensureIngressTrailingSlash(path: String): String {
-        val pathPart = path.substringBefore('?')
-        val query = path.substringAfter('?', missingDelimiterValue = "")
-        val normalized = if (pathPart.endsWith("/")) pathPart else "$pathPart/"
-        return if (query.isEmpty()) normalized else "$normalized?$query"
-    }
-
-    /** Returns true when the addon ingress URL responds with HTTP 2xx using a fresh session. */
-    suspend fun verifyIngressLoad(ingressPath: String, session: String): Boolean =
-        withContext(Dispatchers.IO) {
-            if (baseUrl.isBlank() || ingressPath.isBlank() || session.isBlank()) return@withContext false
-            val normalizedPath = ensureIngressTrailingSlash(
-                when {
-                    ingressPath.startsWith("http://") || ingressPath.startsWith("https://") -> ingressPath
-                    ingressPath.startsWith("/") -> ingressPath
-                    else -> "/$ingressPath"
-                },
-            )
-            val url = if (normalizedPath.startsWith("http")) {
-                normalizedPath
-            } else {
-                baseUrl.trim().trimEnd('/') + normalizedPath
-            }
-            val request = Request.Builder()
-                .url(url)
-                .addHeader("Cookie", "ingress_session=${session.trim()}")
-                .build()
-            runCatching {
-                http.newCall(request).execute().use { response ->
-                    response.code in 200..299
-                }
-            }.getOrDefault(false)
-        }
-
-    private suspend fun supervisorApi(
-        method: String,
-        endpoint: String,
-        data: JsonObject? = null,
-    ): JsonElement = command {
-        put("type", "supervisor/api")
-        put("endpoint", endpoint)
-        put("method", method.lowercase())
-        if (data != null) {
-            put("data", data)
-        }
-    }
-
-    private suspend fun resolveMusicAssistantPanel(): MusicAssistantPanel? {
-        val panels = runCatching {
-            command {
-                put("type", "get_panels")
-            }.jsonObject
-        }.getOrNull() ?: return null
-
-        return panels.entries.mapNotNull { (_, value) ->
-            value as? JsonObject
-        }.firstNotNullOfOrNull { panel ->
-            parseMusicAssistantPanel(panel)
-        }
-    }
-
-    private fun parseMusicAssistantPanel(panel: JsonObject): MusicAssistantPanel? {
-        val urlPath = panel["url_path"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
-            ?: return null
-        if (!isMusicAssistantPanel(panel, urlPath)) return null
-
-        val config = panel["config"]?.jsonObject
-        val addon = config?.get("addon")?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
-        val componentName = panel["component_name"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
-        return MusicAssistantPanel(
-            urlPath = urlPath,
-            componentName = componentName,
-            addonSlug = addon ?: urlPath,
-        )
-    }
-
-    private fun isMusicAssistantPanel(panel: JsonObject, urlPath: String): Boolean {
-        val title = panel["title"]?.jsonPrimitive?.contentOrNull
-        val config = panel["config"]?.jsonObject
-        val addon = config?.get("addon")?.jsonPrimitive?.contentOrNull
-        val panelCustom = config?.get("_panel_custom")?.jsonObject
-        val customName = panelCustom?.get("name")?.jsonPrimitive?.contentOrNull
-        val moduleUrl = panelCustom?.get("module_url")?.jsonPrimitive?.contentOrNull
-            ?: panelCustom?.get("js_url")?.jsonPrimitive?.contentOrNull
-
-        return title.equals("Music Assistant", ignoreCase = true) ||
-            urlPath.contains("music_assistant", ignoreCase = true) ||
-            addon?.contains("music_assistant", ignoreCase = true) == true ||
-            customName?.contains("music-assistant", ignoreCase = true) == true ||
-            customName?.contains("mass", ignoreCase = true) == true ||
-            moduleUrl?.contains("mass", ignoreCase = true) == true ||
-            moduleUrl?.contains("music-assistant", ignoreCase = true) == true
     }
 
     suspend fun reconnectLoop() {

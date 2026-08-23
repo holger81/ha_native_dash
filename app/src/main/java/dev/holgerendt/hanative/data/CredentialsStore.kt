@@ -65,6 +65,15 @@ class CredentialsStore(context: Context) {
             persist()
         }
 
+    /** Last Music Assistant media_player selected on the wall player. */
+    private var musicPlayerEntityBacking = readPref(KEY_MUSIC_PLAYER)
+    var musicPlayerEntity: String
+        get() = musicPlayerEntityBacking
+        set(value) {
+            musicPlayerEntityBacking = normalizeEntityId(value)
+            persist()
+        }
+
     private var pinValue: String = readPref(KEY_PIN)
 
     var managementPin: String
@@ -152,6 +161,7 @@ class CredentialsStore(context: Context) {
             .putString(KEY_DISPLAY_OFF, displayOffEntity)
             .putString(KEY_DISPLAY_BRIGHTNESS, displayBrightnessEntity)
             .putString(KEY_DISPLAY_ILLUMINANCE, displayIlluminanceEntity)
+            .putString(KEY_MUSIC_PLAYER, musicPlayerEntity)
             .apply()
         persistRecoverable()
     }
@@ -186,6 +196,7 @@ class CredentialsStore(context: Context) {
             if (displayOffEntity.isNotBlank()) put("display_off_entity", displayOffEntity)
             if (displayBrightnessEntity.isNotBlank()) put("display_brightness_entity", displayBrightnessEntity)
             if (displayIlluminanceEntity.isNotBlank()) put("display_illuminance_entity", displayIlluminanceEntity)
+            if (musicPlayerEntity.isNotBlank()) put("music_player_entity", musicPlayerEntity)
             val calendars = subscribedCalendars ?: readCalendarList(existing)
             if (calendars != null) {
                 put("subscribed_calendars", JSONArray(calendars))
@@ -248,6 +259,9 @@ class CredentialsStore(context: Context) {
         if (!prefs.contains(KEY_DISPLAY_ILLUMINANCE) && obj.has("display_illuminance_entity")) {
             displayIlluminanceEntity = normalizeEntityId(obj.optString("display_illuminance_entity"))
         }
+        if (musicPlayerEntityBacking.isBlank() && obj.has("music_player_entity")) {
+            musicPlayerEntity = normalizeEntityId(obj.optString("music_player_entity"))
+        }
         val pin = obj.optString("management_pin").trim()
         val takeRestoredPin = PIN_PATTERN.matches(pin) &&
             (managementPin.isBlank() || (overwriteGeneratedPin && generatedThisProcess))
@@ -296,6 +310,7 @@ class CredentialsStore(context: Context) {
         private const val KEY_DISPLAY_OFF = "display_off_entity"
         private const val KEY_DISPLAY_BRIGHTNESS = "display_brightness_entity"
         private const val KEY_DISPLAY_ILLUMINANCE = "display_illuminance_entity"
+        private const val KEY_MUSIC_PLAYER = "music_player_entity"
         const val MAX_SCREEN_TIMEOUT_SECONDS = 86_400
         const val DEFAULT_DISPLAY_OFF_ENTITY = "switch.uc_display"
         const val DEFAULT_DISPLAY_BRIGHTNESS_ENTITY = "number.uc_display_brightness"

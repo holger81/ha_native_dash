@@ -12,7 +12,6 @@ import dev.holgerendt.hanative.data.CredentialsStore
 import dev.holgerendt.hanative.data.DashboardLoader
 import dev.holgerendt.hanative.data.EntityState
 import dev.holgerendt.hanative.data.HaClient
-import dev.holgerendt.hanative.data.IngressLoad
 import dev.holgerendt.hanative.data.KioskCommand
 import dev.holgerendt.hanative.data.KioskCommands
 import dev.holgerendt.hanative.data.KioskSnapshot
@@ -21,11 +20,12 @@ import dev.holgerendt.hanative.data.LiveCameraHub
 import dev.holgerendt.hanative.data.LiveCameraView
 import dev.holgerendt.hanative.data.ManagementServer
 import dev.holgerendt.hanative.data.ManagementTls
-import dev.holgerendt.hanative.data.MusicAssistantLoadMode
-import dev.holgerendt.hanative.data.MusicAssistantLoadTarget
-import dev.holgerendt.hanative.data.MusicAssistantPanelResolution
+import dev.holgerendt.hanative.data.MusicAssistantPlayer
+import dev.holgerendt.hanative.data.MusicAssistantQueue
 import dev.holgerendt.hanative.data.MmWaveLiveTargets
 import dev.holgerendt.hanative.data.MmWaveLiveTracker
+import dev.holgerendt.hanative.data.isShuffleOn
+import dev.holgerendt.hanative.data.repeatMode
 import dev.holgerendt.hanative.model.ActionNode
 import dev.holgerendt.hanative.model.CalendarSourceNode
 import dev.holgerendt.hanative.model.DashboardFile
@@ -64,10 +64,12 @@ data class WeatherPopupContext(
     val initialTab: String? = null,
 )
 
-data class MusicAssistantPanelState(
-    val resolved: Boolean = false,
-    val targets: List<MusicAssistantLoadTarget> = emptyList(),
-    val debugInfo: List<String> = emptyList(),
+data class MusicWallState(
+    val loading: Boolean = true,
+    val players: List<MusicAssistantPlayer> = emptyList(),
+    val selectedEntityId: String? = null,
+    val queue: MusicAssistantQueue? = null,
+    val error: String? = null,
 )
 
 data class UiState(
@@ -329,7 +331,6 @@ class HaViewModel(
         }
         client.connect(url, token)
         refreshCalendars()
-        refreshMusicAssistantPanelPaths()
         prefetchWallCameras()
         _ui.value = _ui.value.copy(
             showSetup = false,
@@ -359,16 +360,173 @@ class HaViewModel(
     val savedUrl: String get() = credentials.baseUrl
     val savedToken: String get() = credentials.token
 
-    private val _musicAssistantPanelState = MutableStateFlow(MusicAssistantPanelState())
-    val musicAssistantPanelState: StateFlow<MusicAssistantPanelState> = _musicAssistantPanelState
+    private val _musicWall = MutableStateFlow(MusicWallState(selectedEntityId = credentials.musicPlayerEntity.ifBlank { null }))
+    val musicWall: StateFlow<MusicWallState> = _musicWall
+    private var musicWallJob: Job? = null
 
-    suspend fun resolveMusicAssistantIngress(addonSlug: String): IngressLoad? =
-        runCatching {
-            val session = client.createIngressSession()
-            val ingressUrl = client.fetchAddonIngressUrl(addonSlug) ?: return null
-            if (!client.verifyIngressLoad(ingressUrl, session)) return null
-            IngressLoad(session = session, ingressUrl = ingressUrl)
-        }.getOrNull()
+    fun selectMusicPlayer(entityId: String) {
+        val normalized = CredentialsStore.normalizeEntityId(entityId)
+        if (normalized.isBlank()) return
+        credentials.musicPlayerEntity = normalized
+        _musicWall.value = _musicWall.value.copy(selectedEntityId = normalized, error = null)
+        refreshMusicQueue()
+    }
+
+    fun mediaPlayPause() {
+        val entityId = _musicWall.value.selectedEntityId ?: return
+        viewModelScope.launch {
+            runCatching { client.mediaPlayerCommand(entityId, "media_play_pause") }
+            refreshMusicQueueSoon()
+        }
+    }
+
+    fun mediaNext() {
+        val entityId = _musicWall.value.selectedEntityId ?: return
+        viewModelScope.launch {
+            runCatching { client.mediaPlayerCommand(entityId, "media_next_track") }
+            refreshMusicQueueSoon()
+        }
+    }
+
+    fun mediaPrevious() {
+        val entityId = _musicWall.value.selectedEntityId ?: return
+        viewModelScope.launch {
+            runCatching { client.mediaPlayerCommand(entityId, "media_previous_track") }
+            refreshMusicQueueSoon()
+        }
+    }
+
+    fun mediaStop() {
+        val entityId = _musicWall.value.selectedEntityId ?: return
+        viewModelScope.launch {
+            runCatching { client.mediaPlayerCommand(entityId, "media_stop") }
+            refreshMusicQueueSoon()
+        }
+    }
+
+    fun setMusicVolume(level: Float) {
+        val entityId = _musicWall.value.selectedEntityId ?: return
+        viewModelScope.launch {
+            runCatching { client.setMediaVolume(entityId, level) }
+        }
+    }
+
+    fun toggleMusicShuffle() {
+        val entityId = _musicWall.value.selectedEntityId ?: return
+        val current = client.state(entityId)?.isShuffleOn()
+            ?: _musicWall.value.queue?.shuffle
+            ?: false
+        viewModelScope.launch {
+            runCatching { client.setMediaShuffle(entityId, !current) }
+            refreshMusicQueueSoon()
+        }
+    }
+
+    fun cycleMusicRepeat() {
+        val entityId = _musicWall.value.selectedEntityId ?: return
+        val current = client.state(entityId)?.repeatMode()
+            ?: _musicWall.value.queue?.repeatMode?.lowercase()
+            ?: "off"
+        val next = when (current) {
+            "off" -> "all"
+            "all" -> "one"
+            else -> "off"
+        }
+        viewModelScope.launch {
+            runCatching { client.setMediaRepeat(entityId, next) }
+            refreshMusicQueueSoon()
+        }
+    }
+
+    fun seekMusic(positionSec: Double) {
+        val entityId = _musicWall.value.selectedEntityId ?: return
+        viewModelScope.launch {
+            runCatching { client.seekMedia(entityId, positionSec) }
+        }
+    }
+
+    fun transferMusicToSelected(sourceEntityId: String? = null) {
+        val target = _musicWall.value.selectedEntityId ?: return
+        viewModelScope.launch {
+            runCatching { client.transferMusicQueue(target, sourceEntityId, autoPlay = true) }
+                .onFailure { error ->
+                    _musicWall.value = _musicWall.value.copy(error = error.message ?: "Transfer failed")
+                }
+            refreshMusicQueueSoon()
+        }
+    }
+
+    private fun openMusicWall() {
+        musicWallJob?.cancel()
+        _musicWall.value = _musicWall.value.copy(loading = true, error = null)
+        musicWallJob = viewModelScope.launch {
+            while (_ui.value.popupHash == "#music") {
+                refreshMusicWall(forcePlayers = true)
+                delay(3_000)
+            }
+        }
+    }
+
+    private fun closeMusicWall() {
+        musicWallJob?.cancel()
+        musicWallJob = null
+    }
+
+    private fun refreshMusicQueue() {
+        viewModelScope.launch { refreshMusicWall(forcePlayers = false) }
+    }
+
+    private fun refreshMusicQueueSoon() {
+        viewModelScope.launch {
+            delay(350)
+            refreshMusicWall(forcePlayers = false)
+        }
+    }
+
+    private suspend fun refreshMusicWall(forcePlayers: Boolean) {
+        val players = if (forcePlayers || _musicWall.value.players.isEmpty()) {
+            runCatching { client.musicAssistantPlayers() }
+                .getOrElse { error ->
+                    _musicWall.value = _musicWall.value.copy(
+                        loading = false,
+                        error = error.message ?: "Could not load Music Assistant players",
+                    )
+                    return
+                }
+        } else {
+            _musicWall.value.players
+        }
+        val preferred = _musicWall.value.selectedEntityId
+            ?: credentials.musicPlayerEntity.takeIf { it.isNotBlank() }
+        val selected = when {
+            preferred != null && players.any { it.entityId == preferred } -> preferred
+            players.isEmpty() -> null
+            else -> {
+                players.firstOrNull { client.state(it.entityId)?.state == "playing" }?.entityId
+                    ?: players.firstOrNull { client.state(it.entityId)?.state == "paused" }?.entityId
+                    ?: players.first().entityId
+            }
+        }
+        if (selected != null && selected != credentials.musicPlayerEntity) {
+            credentials.musicPlayerEntity = selected
+        }
+        val queue = if (selected != null) {
+            runCatching { client.musicAssistantQueue(selected) }.getOrNull()
+        } else {
+            null
+        }
+        _musicWall.value = MusicWallState(
+            loading = false,
+            players = players,
+            selectedEntityId = selected,
+            queue = queue,
+            error = when {
+                players.isEmpty() ->
+                    "No Music Assistant players found. Install the Music Assistant integration in Home Assistant."
+                else -> null
+            },
+        )
+    }
 
     fun openSetup() {
         _ui.value = _ui.value.copy(showSetup = true, drawerOpen = false)
@@ -386,7 +544,9 @@ class HaViewModel(
 
     fun openPopup(hash: String?) {
         if (hash == "#music") {
-            refreshMusicAssistantPanelPaths()
+            openMusicWall()
+        } else {
+            closeMusicWall()
         }
         _ui.value = _ui.value.copy(
             popupHash = hash,
@@ -408,6 +568,7 @@ class HaViewModel(
     }
 
     fun closePopup() {
+        closeMusicWall()
         _ui.value = _ui.value.copy(popupHash = null, weatherPopupContext = null)
     }
 
@@ -573,40 +734,6 @@ class HaViewModel(
             .map { it.key to it.value.friendlyName }
             .sortedBy { it.second.lowercase() }
             .toList()
-
-    private fun refreshMusicAssistantPanelPaths() {
-        _musicAssistantPanelState.value = MusicAssistantPanelState(resolved = false)
-        viewModelScope.launch {
-            val resolution = runCatching { client.musicAssistantLoadTargets() }
-                .getOrElse { error ->
-                    MusicAssistantPanelResolution(
-                        targets = listOf(
-                            MusicAssistantLoadTarget(
-                                mode = MusicAssistantLoadMode.INGRESS,
-                                label = "addon ingress (d5369777_music_assistant)",
-                                addonSlug = "d5369777_music_assistant",
-                            ),
-                            MusicAssistantLoadTarget(
-                                mode = MusicAssistantLoadMode.SPA_BOOTSTRAP,
-                                label = "frontend navigate /d5369777_music_assistant",
-                                path = "/d5369777_music_assistant",
-                            ),
-                            MusicAssistantLoadTarget(
-                                mode = MusicAssistantLoadMode.SPA_ROUTE,
-                                label = "panel route /d5369777_music_assistant",
-                                path = "/d5369777_music_assistant",
-                            ),
-                        ),
-                        debugInfo = listOf("Detection failed: ${error.message ?: error.javaClass.simpleName}"),
-                    )
-                }
-            _musicAssistantPanelState.value = MusicAssistantPanelState(
-                resolved = true,
-                targets = resolution.targets,
-                debugInfo = resolution.debugInfo,
-            )
-        }
-    }
 
     private fun prefetchWallCameras() {
         viewModelScope.launch {
