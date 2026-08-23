@@ -40,6 +40,7 @@ import dev.holgerendt.hanative.model.PopupNode
 import dev.holgerendt.hanative.model.WidgetNode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -386,7 +387,10 @@ class HaViewModel(
     private var musicMediaWatchJob: Job? = null
     private var musicDiscoveryJob: Job? = null
     private var musicSearchJob: Job? = null
-    private var musicVolumeJob: Job? = null
+    private var musicVolumeDebounceJob: Job? = null
+    private var pendingMusicVolume: Pair<Float, String>? = null
+    private var pendingMemberVolume: Pair<String, Float>? = null
+    private var volumeRequestSeq = 0
     private var musicGroupJob: Job? = null
 
     fun selectMusicPlayer(entityId: String) {
@@ -411,9 +415,11 @@ class HaViewModel(
                     client.ungroupMassPlayer(massPlayerId)
                 }
             }.onFailure { error ->
-                _musicWall.value = _musicWall.value.copy(
-                    error = error.message ?: "Could not update player group",
-                )
+                if (!isBenignVolumeError(error)) {
+                    _musicWall.value = _musicWall.value.copy(
+                        error = error.message ?: "Could not update player group",
+                    )
+                }
             }
             delay(250)
             refreshMusicWall(forcePlayers = true)
@@ -421,57 +427,89 @@ class HaViewModel(
     }
 
     fun setMusicVolume(level: Float, mode: String = "auto") {
-        val wall = _musicWall.value
-        val selected = wall.players.firstOrNull { it.entityId == wall.selectedEntityId } ?: return
-        val clamped = level.coerceIn(0f, 1f)
-        musicVolumeJob?.cancel()
-        musicVolumeJob = viewModelScope.launch {
+        pendingMemberVolume = null
+        pendingMusicVolume = level.coerceIn(0f, 1f) to mode
+        _musicWall.value = _musicWall.value.copy(error = null)
+        scheduleVolumeApply()
+    }
+
+    fun setMemberVolume(massPlayerId: String, level: Float) {
+        pendingMusicVolume = null
+        pendingMemberVolume = massPlayerId to level.coerceIn(0f, 1f)
+        _musicWall.value = _musicWall.value.copy(error = null)
+        scheduleVolumeApply()
+    }
+
+    private fun scheduleVolumeApply() {
+        musicVolumeDebounceJob?.cancel()
+        musicVolumeDebounceJob = viewModelScope.launch {
+            delay(45)
+            launchVolumeApply()
+        }
+    }
+
+    private fun launchVolumeApply() {
+        val requestId = ++volumeRequestSeq
+        viewModelScope.launch {
             runCatching {
-                when (mode) {
-                    "group" -> {
-                        val root = selected.groupRootId ?: selected.massPlayerId
-                            ?: error("No Music Assistant group player")
-                        client.setMassGroupVolume(root, (clamped * 100).toInt())
+                when (val member = pendingMemberVolume) {
+                    null -> {
+                        val pending = pendingMusicVolume ?: return@runCatching
+                        applyMusicVolumeRequest(pending.first, pending.second)
                     }
-                    "player" -> {
-                        val massId = selected.massPlayerId
-                        if (massId != null) {
-                            client.setMassPlayerVolume(massId, (clamped * 100).toInt())
-                        } else {
-                            client.setMediaVolume(selected.entityId, clamped)
-                        }
-                    }
-                    else -> {
-                        val root = selected.groupRootId
-                        if (selected.isGrouped && root != null) {
-                            client.setMassGroupVolume(root, (clamped * 100).toInt())
-                        } else if (selected.massPlayerId != null) {
-                            client.setMassPlayerVolume(selected.massPlayerId, (clamped * 100).toInt())
-                        } else {
-                            client.setMediaVolume(selected.entityId, clamped)
-                        }
-                    }
+                    else -> client.setMassPlayerVolume(member.first, (member.second * 100).toInt())
                 }
             }.onFailure { error ->
-                _musicWall.value = _musicWall.value.copy(
-                    error = error.message ?: "Volume change failed",
-                )
+                if (!isBenignVolumeError(error) && requestId == volumeRequestSeq) {
+                    _musicWall.value = _musicWall.value.copy(
+                        error = error.message ?: "Volume change failed",
+                    )
+                }
+            }.onSuccess {
+                if (requestId == volumeRequestSeq) {
+                    _musicWall.value = _musicWall.value.copy(error = null)
+                }
             }
         }
     }
 
-    fun setMemberVolume(massPlayerId: String, level: Float) {
-        val clamped = level.coerceIn(0f, 1f)
-        musicVolumeJob?.cancel()
-        musicVolumeJob = viewModelScope.launch {
-            runCatching {
-                client.setMassPlayerVolume(massPlayerId, (clamped * 100).toInt())
-            }.onFailure { error ->
-                _musicWall.value = _musicWall.value.copy(
-                    error = error.message ?: "Volume change failed",
-                )
+    private suspend fun applyMusicVolumeRequest(level: Float, mode: String) {
+        val wall = _musicWall.value
+        val selected = wall.players.firstOrNull { it.entityId == wall.selectedEntityId }
+            ?: error("No player selected")
+        when (mode) {
+            "group" -> {
+                val root = selected.groupRootId ?: selected.massPlayerId
+                    ?: error("No Music Assistant group player")
+                client.setMassGroupVolume(root, (level * 100).toInt())
+            }
+            "player" -> {
+                val massId = selected.massPlayerId
+                if (massId != null) {
+                    client.setMassPlayerVolume(massId, (level * 100).toInt())
+                } else {
+                    client.setMediaVolume(selected.entityId, level)
+                }
+            }
+            else -> {
+                val root = selected.groupRootId
+                if (selected.isGrouped && root != null) {
+                    client.setMassGroupVolume(root, (level * 100).toInt())
+                } else if (selected.massPlayerId != null) {
+                    client.setMassPlayerVolume(selected.massPlayerId, (level * 100).toInt())
+                } else {
+                    client.setMediaVolume(selected.entityId, level)
+                }
             }
         }
+    }
+
+    private fun isBenignVolumeError(error: Throwable): Boolean {
+        if (error is CancellationException) return true
+        val message = error.message.orEmpty()
+        return message.contains("cancel", ignoreCase = true) ||
+            message.contains("coroutine", ignoreCase = true) ||
+            message.equals("Canceled", ignoreCase = true)
     }
 
     fun setMusicWallTab(tab: String) {
@@ -689,8 +727,8 @@ class HaViewModel(
         musicDiscoveryJob = null
         musicSearchJob?.cancel()
         musicSearchJob = null
-        musicVolumeJob?.cancel()
-        musicVolumeJob = null
+        musicVolumeDebounceJob?.cancel()
+        musicVolumeDebounceJob = null
         musicGroupJob?.cancel()
         musicGroupJob = null
     }
