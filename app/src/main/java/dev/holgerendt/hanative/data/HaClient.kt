@@ -472,9 +472,22 @@ class HaClient {
             }.thenBy { it.name.lowercase() },
         )
 
-    suspend fun musicAssistantQueue(entityId: String): MusicAssistantQueue? {
+    suspend fun musicAssistantQueue(
+        entityId: String,
+        players: List<MusicAssistantPlayer> = emptyList(),
+    ): MusicAssistantQueue? {
+        val player = players.firstOrNull { it.entityId == entityId }
+        val massPlayers = runCatching { musicAssistantMassPlayers() }.getOrElse { emptyList() }
+        val massQueueId = resolveMassQueueId(entityId, player, massPlayers)
+
+        val fromMass = if (!massQueueId.isNullOrBlank()) {
+            runCatching { musicAssistantMassQueue(massQueueId) }.getOrNull()
+        } else {
+            null
+        }
+
         val fromHa = runCatching {
-            withTimeout(4_000) {
+            withTimeout(2_500) {
                 val result = callService(
                     domain = "music_assistant",
                     service = "get_queue",
@@ -484,20 +497,36 @@ class HaClient {
                 parseMusicAssistantQueue(result, entityId)
             }
         }.getOrNull()
-        if (fromHa?.current != null && (fromHa.elapsedSec ?: 0.0) > 0.5) return fromHa
 
-        val massPlayers = runCatching { musicAssistantMassPlayers() }.getOrElse { emptyList() }
+        return mergeMusicAssistantQueues(fromHa, fromMass)
+    }
+
+    private fun resolveMassQueueId(
+        entityId: String,
+        player: MusicAssistantPlayer?,
+        massPlayers: List<MassPlayerInfo>,
+    ): String? {
+        player?.groupRootId?.takeIf { it.isNotBlank() }?.let { return it }
+        player?.massPlayerId?.takeIf { it.isNotBlank() }?.let { return it }
         val name = state(entityId)?.friendlyName
-        val massId = name?.let { matchMassPlayerInfo(it, massPlayers)?.playerId }
-        if (massId.isNullOrBlank()) return fromHa
-        val fromMass = runCatching { musicAssistantMassQueue(massId) }.getOrNull()
-        return when {
-            fromMass == null -> fromHa
-            fromHa == null -> fromMass
-            else -> fromMass.copy(
-                // Prefer HA shuffle/repeat if present, Mass elapsed/current for playback progress.
-                shuffle = fromHa.shuffle,
-                repeatMode = fromHa.repeatMode ?: fromMass.repeatMode,
+        return name?.let { matchMassPlayerInfo(it, massPlayers)?.playerId }
+    }
+
+    suspend fun refreshMusicPlayerTelemetry(players: List<MusicAssistantPlayer>): List<MusicAssistantPlayer> {
+        val massPlayers = runCatching { musicAssistantMassPlayers(force = true) }.getOrElse { emptyList() }
+        if (massPlayers.isEmpty()) return players
+        return players.map { player ->
+            val matched = matchMassPlayerInfo(player.name, massPlayers) ?: return@map player
+            player.copy(
+                massPlayerId = matched.playerId,
+                massVolume = matched.volume,
+                massGroupVolume = matched.groupVolume,
+                groupMemberIds = matched.groupMemberIds,
+                syncedToId = matched.syncedToId,
+                canGroupWithIds = matched.canGroupWithIds,
+                elapsedSec = matched.elapsedSec,
+                elapsedUpdatedAtMs = matched.elapsedUpdatedAtMs,
+                massPlaybackState = matched.playbackState,
             )
         }
     }

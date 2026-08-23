@@ -96,6 +96,7 @@ data class MusicAssistantQueue(
     val elapsedUpdatedAtMs: Long? = null,
     val shuffle: Boolean = false,
     val repeatMode: String? = null,
+    val playbackState: String? = null,
     val current: MusicAssistantQueueItem? = null,
     val next: MusicAssistantQueueItem? = null,
 )
@@ -181,8 +182,21 @@ fun parseMusicAssistantQueue(response: JsonElement?, entityId: String): MusicAss
             ?: payload["elapsed_time_last_updated"]?.jsonPrimitive?.longOrNull,
         shuffle = payload["shuffle_enabled"].toBooleanOrNull() == true,
         repeatMode = payload["repeat_mode"]?.jsonPrimitive?.contentOrNull,
+        playbackState = payload["state"]?.jsonPrimitive?.contentOrNull,
         current = parseQueueItem(payload["current_item"]),
         next = parseQueueItem(payload["next_item"]),
+    )
+}
+
+fun mergeMusicAssistantQueues(
+    fromHa: MusicAssistantQueue?,
+    fromMass: MusicAssistantQueue?,
+): MusicAssistantQueue? {
+    if (fromHa == null) return fromMass
+    if (fromMass == null) return fromHa
+    return fromMass.copy(
+        shuffle = fromHa.shuffle,
+        repeatMode = fromHa.repeatMode ?: fromMass.repeatMode,
     )
 }
 

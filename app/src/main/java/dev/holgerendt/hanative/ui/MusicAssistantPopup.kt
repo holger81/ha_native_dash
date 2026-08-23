@@ -244,7 +244,9 @@ private fun NowPlayingPane(
     val selected = wall.players.firstOrNull { it.entityId == selectedId }
     val entity = selectedId?.let { states[it] }
     val playing = entity?.state == "playing" ||
-        selected?.massPlaybackState.equals("playing", ignoreCase = true)
+        entity?.state == "paused" ||
+        selected?.massPlaybackState.equals("playing", ignoreCase = true) ||
+        wall.queue?.playbackState.equals("playing", ignoreCase = true)
     val title = wall.queue?.current?.streamTitle?.takeIf { it.isNotBlank() }
         ?: wall.queue?.current?.name
         ?: entity?.mediaTitle()

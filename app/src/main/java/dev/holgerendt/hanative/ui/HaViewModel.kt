@@ -27,6 +27,10 @@ import dev.holgerendt.hanative.data.MassSearchResults
 import dev.holgerendt.hanative.data.MmWaveLiveTargets
 import dev.holgerendt.hanative.data.MmWaveLiveTracker
 import dev.holgerendt.hanative.data.isShuffleOn
+import dev.holgerendt.hanative.data.mediaArtist
+import dev.holgerendt.hanative.data.mediaPositionSec
+import dev.holgerendt.hanative.data.mediaPositionUpdatedAtMs
+import dev.holgerendt.hanative.data.mediaTitle
 import dev.holgerendt.hanative.data.repeatMode
 import dev.holgerendt.hanative.model.ActionNode
 import dev.holgerendt.hanative.model.CalendarSourceNode
@@ -379,6 +383,7 @@ class HaViewModel(
     private val _musicWall = MutableStateFlow(MusicWallState(selectedEntityId = credentials.musicPlayerEntity.ifBlank { null }))
     val musicWall: StateFlow<MusicWallState> = _musicWall
     private var musicWallJob: Job? = null
+    private var musicMediaWatchJob: Job? = null
     private var musicDiscoveryJob: Job? = null
     private var musicSearchJob: Job? = null
     private var musicVolumeJob: Job? = null
@@ -635,12 +640,42 @@ class HaViewModel(
 
     private fun openMusicWall() {
         musicWallJob?.cancel()
+        musicMediaWatchJob?.cancel()
         _musicWall.value = _musicWall.value.copy(loading = true, error = null)
         loadMusicDiscovery()
+        musicMediaWatchJob = viewModelScope.launch {
+            combine(states, _musicWall) { map, wall ->
+                wall.players.joinToString("|") { player ->
+                    val entity = map[player.entityId]
+                    listOf(
+                        player.entityId,
+                        entity?.state,
+                        entity?.mediaTitle(),
+                        entity?.mediaArtist(),
+                        entity?.mediaPositionSec(),
+                        entity?.mediaPositionUpdatedAtMs(),
+                    ).joinToString(",")
+                }
+            }
+                .distinctUntilChanged()
+                .debounce(150)
+                .collect {
+                    if (_ui.value.popupHash == "#music") {
+                        refreshMusicWall(forcePlayers = false)
+                    }
+                }
+        }
         musicWallJob = viewModelScope.launch {
+            var tick = 0
             while (_ui.value.popupHash == "#music") {
-                refreshMusicWall(forcePlayers = true)
-                delay(3_000)
+                val forcePlayers = tick == 0 || tick % 5 == 0
+                refreshMusicWall(forcePlayers = forcePlayers)
+                val interval = when (_musicWall.value.tab) {
+                    "now" -> 1_000L
+                    else -> 3_000L
+                }
+                delay(interval)
+                tick++
             }
         }
     }
@@ -648,6 +683,8 @@ class HaViewModel(
     private fun closeMusicWall() {
         musicWallJob?.cancel()
         musicWallJob = null
+        musicMediaWatchJob?.cancel()
+        musicMediaWatchJob = null
         musicDiscoveryJob?.cancel()
         musicDiscoveryJob = null
         musicSearchJob?.cancel()
@@ -722,19 +759,22 @@ class HaViewModel(
 
     private suspend fun refreshMusicWall(forcePlayers: Boolean) {
         try {
-            val players = if (forcePlayers || _musicWall.value.players.isEmpty()) {
-                runCatching { client.musicAssistantPlayers() }
-                    .getOrElse { error ->
-                        _musicWall.value = _musicWall.value.copy(
-                            loading = false,
-                            error = error.message ?: "Could not load media players",
-                        )
-                        return
-                    }
-            } else {
-                _musicWall.value.players
+            val current = _musicWall.value
+            val players = when {
+                forcePlayers || current.players.isEmpty() -> {
+                    runCatching { client.musicAssistantPlayers() }
+                        .getOrElse { error ->
+                            _musicWall.value = current.copy(
+                                loading = false,
+                                error = error.message ?: "Could not load media players",
+                            )
+                            return
+                        }
+                }
+                else -> runCatching { client.refreshMusicPlayerTelemetry(current.players) }
+                    .getOrElse { current.players }
             }
-            val preferred = _musicWall.value.selectedEntityId
+            val preferred = current.selectedEntityId
                 ?: credentials.musicPlayerEntity.takeIf { it.isNotBlank() }
             val selected = when {
                 preferred != null && players.any { it.entityId == preferred } -> preferred
@@ -749,11 +789,10 @@ class HaViewModel(
                 credentials.musicPlayerEntity = selected
             }
             val queue = if (selected != null) {
-                runCatching { client.musicAssistantQueue(selected) }.getOrNull()
+                runCatching { client.musicAssistantQueue(selected, players) }.getOrNull()
             } else {
                 null
             }
-            val current = _musicWall.value
             _musicWall.value = current.copy(
                 loading = false,
                 players = players,
