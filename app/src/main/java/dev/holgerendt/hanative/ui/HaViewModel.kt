@@ -147,6 +147,9 @@ class HaViewModel(
     private val _subscribedCalendars = MutableStateFlow(credentials.subscribedCalendars)
     val subscribedCalendars: StateFlow<List<String>?> = _subscribedCalendars
 
+    private val _calendarColors = MutableStateFlow(credentials.calendarColors)
+    val calendarColors: StateFlow<Map<String, String>> = _calendarColors
+
     private val _mmWaveLive = MutableStateFlow(MmWaveLiveTargets())
     val mmWaveLive: StateFlow<MmWaveLiveTargets> = _mmWaveLive
 
@@ -173,12 +176,14 @@ class HaViewModel(
     private var manualBrightnessSuppressedUntilMs = 0L
 
     private val extraCalendarColors = listOf(
-        "var(--blue)",
-        "var(--orange)",
-        "var(--green)",
-        "var(--purple)",
-        "var(--pink)",
-        "var(--yellow)",
+        "blue",
+        "orange",
+        "green",
+        "purple",
+        "pink",
+        "yellow",
+        "red",
+        "blue-dark",
     )
 
     init {
@@ -1404,12 +1409,41 @@ class HaViewModel(
     fun plannerCalendars(defaults: List<CalendarSourceNode>): List<CalendarSourceNode> {
         val selected = _subscribedCalendars.value ?: defaults.mapNotNull { it.entity }
         val byEntity = defaults.associateBy { it.entity }
+        val colors = _calendarColors.value
         return selected.mapIndexed { index, entityId ->
-            byEntity[entityId] ?: CalendarSourceNode(
+            val fallback = byEntity[entityId]
+            val color = colors[entityId]
+                ?: fallback?.color?.removePrefix("var(--")?.removeSuffix(")")
+                ?: extraCalendarColors[index % extraCalendarColors.size]
+            CalendarSourceNode(
                 entity = entityId,
-                color = extraCalendarColors[index % extraCalendarColors.size],
+                color = color,
+                icon = fallback?.icon,
             )
         }
+    }
+
+    fun calendarColorFor(entityId: String, defaults: List<CalendarSourceNode> = emptyList()): String {
+        _calendarColors.value[entityId]?.let { return it }
+        defaults.firstOrNull { it.entity == entityId }?.color
+            ?.removePrefix("var(--")?.removeSuffix(")")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { return it }
+        val selected = _subscribedCalendars.value ?: defaults.mapNotNull { it.entity }
+        val index = selected.indexOf(entityId).coerceAtLeast(0)
+        return extraCalendarColors[index % extraCalendarColors.size]
+    }
+
+    fun setCalendarColor(entityId: String, color: String) {
+        val normalized = CredentialsStore.normalizeEntityId(entityId)
+        if (!normalized.startsWith("calendar.")) return
+        val clean = color.trim().removePrefix("var(--").removeSuffix(")")
+        if (clean.isBlank()) return
+        val next = _calendarColors.value.toMutableMap()
+        next[normalized] = clean
+        credentials.calendarColors = next
+        _calendarColors.value = next
+        _calendarEventsRevision.value++
     }
 
     fun isCalendarSubscribed(entityId: String, defaults: List<CalendarSourceNode>): Boolean {
@@ -1677,6 +1711,17 @@ class HaViewModel(
 
         private const val MMWAVE_OCCUPANCY_ENTITY = "binary_sensor.secondary_living_room_switch_occupancy"
         private const val MMWAVE_TARGET_COUNT_ENTITY = "input_number.secondary_living_room_mmwave_target_count"
+
+        val CalendarColorOptions = listOf(
+            "blue",
+            "orange",
+            "green",
+            "purple",
+            "pink",
+            "yellow",
+            "red",
+            "blue-dark",
+        )
 
         fun factory(app: Application): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {

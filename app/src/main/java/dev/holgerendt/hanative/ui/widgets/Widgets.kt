@@ -464,8 +464,11 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
     val dayCount = widget.days ?: 10
     val subscribed by viewModel.subscribedCalendars.collectAsState()
     val availableCalendars by viewModel.availableCalendars.collectAsState()
+    val calendarColors by viewModel.calendarColors.collectAsState()
     val calendarRevision by viewModel.calendarEventsRevision.collectAsState()
-    val sources = remember(subscribed, widget.calendars) { viewModel.plannerCalendars(widget.calendars) }
+    val sources = remember(subscribed, widget.calendars, calendarColors) {
+        viewModel.plannerCalendars(widget.calendars)
+    }
     var dayOffset by remember { mutableIntStateOf(0) }
     var events by remember { mutableStateOf(listOf<HaCalendarEvent>()) }
     var forecasts by remember { mutableStateOf(listOf<Map<String, String>>()) }
@@ -606,6 +609,7 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                             loading = false,
                             viewModel = viewModel,
                             weatherEntity = weatherEntity,
+                            calendarNames = availableCalendars.associate { it.entityId to it.name },
                             onAddEvent = if (plannerCalendars.isNotEmpty()) {
                                 { openAddDialog(day) }
                             } else {
@@ -634,6 +638,7 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
         null -> Unit
         is WeekPlannerManageOverlay.ChooseAction -> CalendarEventActionDialog(
             event = overlay.event,
+            calendarName = availableCalendars.firstOrNull { it.entityId == overlay.event.entityId }?.name,
             onDismiss = { manageOverlay = null },
             onEdit = { requestManageAction(overlay.event, CalendarManageAction.Edit) },
             onDelete = { requestManageAction(overlay.event, CalendarManageAction.Delete) },
@@ -742,6 +747,7 @@ private fun WeekPlannerDay(
     loading: Boolean,
     viewModel: HaViewModel,
     weatherEntity: String,
+    calendarNames: Map<String, String> = emptyMap(),
     onAddEvent: (() -> Unit)? = null,
     onEventClick: ((HaCalendarEvent) -> Unit)? = null,
     modifier: Modifier = Modifier,
@@ -835,6 +841,9 @@ private fun WeekPlannerDay(
                     events.forEach { event ->
                         val stripe = accentColor(event.color?.removePrefix("var(--")?.removeSuffix(")"))
                             .takeIf { event.color != null } ?: AccentBlue
+                        val calendarLabel = calendarNames[event.entityId]
+                            ?: event.entityId.removePrefix("calendar.").replace('_', ' ')
+                                .takeIf { event.entityId.isNotBlank() }
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -845,7 +854,7 @@ private fun WeekPlannerDay(
                                     onEventClick?.invoke(event)
                                 },
                         ) {
-                            Box(Modifier.width(3.dp).fillMaxHeight().background(stripe))
+                            Box(Modifier.width(4.dp).fillMaxHeight().background(stripe))
                             Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp).weight(1f)) {
                                 Text(
                                     text = eventTimeLabel(event),
@@ -861,6 +870,16 @@ private fun WeekPlannerDay(
                                     maxLines = 3,
                                     overflow = TextOverflow.Ellipsis,
                                 )
+                                if (!calendarLabel.isNullOrBlank()) {
+                                    Text(
+                                        text = calendarLabel,
+                                        color = stripe,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
                             }
                         }
                     }

@@ -694,6 +694,7 @@ private fun CalendarSubscriptionsCard(viewModel: HaViewModel) {
     val overlay = LocalOverlay.current
     val available by viewModel.availableCalendars.collectAsState()
     val subscribed by viewModel.subscribedCalendars.collectAsState()
+    val calendarColors by viewModel.calendarColors.collectAsState()
     val defaults = viewModel.ui.collectAsState().value.dashboard?.home?.calendar?.calendars.orEmpty()
     LaunchedEffect(Unit) { viewModel.refreshCalendars() }
     Column(
@@ -706,7 +707,7 @@ private fun CalendarSubscriptionsCard(viewModel: HaViewModel) {
     ) {
         Text("Subscribed calendars", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
         Text(
-            "These calendars appear on the 10-day planner, same as the Lovelace week-planner card.",
+            "These calendars appear on the 10-day planner. Pick a color for each one.",
             color = overlay.muted,
             fontSize = 14.sp,
         )
@@ -716,22 +717,48 @@ private fun CalendarSubscriptionsCard(viewModel: HaViewModel) {
         available.forEach { calendar ->
             val selected = subscribed ?: defaults.mapNotNull { it.entity }
             val on = calendar.entityId in selected
-            Row(
+            val color = viewModel.calendarColorFor(calendar.entityId, defaults)
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Column(Modifier.weight(1f).padding(end = 12.dp)) {
-                    Text(calendar.name, color = overlay.text, fontSize = 16.sp)
-                    Text(calendar.entityId.removePrefix("calendar."), color = overlay.muted, fontSize = 12.sp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f).padding(end = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .clip(CircleShape)
+                                .background(accentColor(color)),
+                        )
+                        Column {
+                            Text(calendar.name, color = overlay.text, fontSize = 16.sp)
+                            Text(
+                                calendar.entityId.removePrefix("calendar."),
+                                color = overlay.muted,
+                                fontSize = 12.sp,
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = on,
+                        onCheckedChange = { viewModel.setCalendarSubscribed(calendar.entityId, it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.Black,
+                            checkedTrackColor = ActiveYellow,
+                        ),
+                    )
                 }
-                Switch(
-                    checked = on,
-                    onCheckedChange = { viewModel.setCalendarSubscribed(calendar.entityId, it) },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.Black,
-                        checkedTrackColor = ActiveYellow,
-                    ),
+                CalendarColorSwatches(
+                    selected = calendarColors[calendar.entityId] ?: color,
+                    onSelect = { viewModel.setCalendarColor(calendar.entityId, it) },
                 )
             }
         }

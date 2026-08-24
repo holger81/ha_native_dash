@@ -31,6 +31,17 @@ class CredentialsStore(context: Context) {
             persist()
         }
 
+    /** Accent color name per calendar entity (e.g. "blue", "orange"). */
+    var calendarColors: Map<String, String> = emptyMap()
+        set(value) {
+            field = value
+                .mapKeys { normalizeEntityId(it.key) }
+                .filterKeys { it.startsWith("calendar.") }
+                .mapValues { (_, color) -> color.trim().removePrefix("var(--").removeSuffix(")") }
+                .filterValues { it.isNotBlank() }
+            persist()
+        }
+
     /** Seconds of idle time before the panel blanks. 0 keeps the screen on. */
     var screenTimeoutSeconds: Int = 0
         set(value) {
@@ -201,6 +212,15 @@ class CredentialsStore(context: Context) {
             if (calendars != null) {
                 put("subscribed_calendars", JSONArray(calendars))
             }
+            val colors = calendarColors.ifEmpty { readCalendarColors(existing) }
+            if (colors.isNotEmpty()) {
+                put(
+                    "calendar_colors",
+                    JSONObject().apply {
+                        colors.forEach { (entityId, color) -> put(entityId, color) }
+                    },
+                )
+            }
         }.toString()
         runCatching {
             RecoverableFiles.write(
@@ -218,6 +238,18 @@ class CredentialsStore(context: Context) {
         return (0 until arr.length()).mapNotNull { index ->
             arr.optString(index).trim().takeIf { it.startsWith("calendar.") }
         }.distinct()
+    }
+
+    private fun readCalendarColors(obj: JSONObject?): Map<String, String> {
+        if (obj == null || !obj.has("calendar_colors") || obj.isNull("calendar_colors")) return emptyMap()
+        val colors = obj.optJSONObject("calendar_colors") ?: return emptyMap()
+        return colors.keys().asSequence().mapNotNull { key ->
+            val entityId = normalizeEntityId(key)
+            val color = colors.optString(key).trim()
+                .removePrefix("var(--").removeSuffix(")")
+            if (!entityId.startsWith("calendar.") || color.isBlank()) null
+            else entityId to color
+        }.toMap()
     }
 
     private fun readRecoverableObject(): JSONObject? {
@@ -239,6 +271,10 @@ class CredentialsStore(context: Context) {
         }
         if (subscribedCalendars == null) {
             subscribedCalendars = readCalendarList(obj)
+        }
+        if (calendarColors.isEmpty()) {
+            val restored = readCalendarColors(obj)
+            if (restored.isNotEmpty()) calendarColors = restored
         }
         if (!timeoutFromPrefs) {
             when {

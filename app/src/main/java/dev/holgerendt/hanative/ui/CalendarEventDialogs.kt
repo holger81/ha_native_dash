@@ -1,12 +1,20 @@
 package dev.holgerendt.hanative.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -17,7 +25,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -28,10 +38,11 @@ import dev.holgerendt.hanative.ui.theme.ActiveYellow
 import dev.holgerendt.hanative.ui.theme.LocalOverlay
 import dev.holgerendt.hanative.ui.theme.OverlayLightPopup
 import dev.holgerendt.hanative.ui.theme.PopupScrim
+import dev.holgerendt.hanative.ui.theme.accentColor
 import dev.holgerendt.hanative.ui.widgets.PopupSheetChrome
-import dev.holgerendt.hanative.ui.widgets.PopupSheetKind
 import dev.holgerendt.hanative.ui.widgets.popupSheetLook
-import dev.holgerendt.hanative.ui.widgets.popupSheetModifier
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 enum class CalendarManageAction {
     Edit,
@@ -41,25 +52,66 @@ enum class CalendarManageAction {
 @Composable
 fun CalendarEventActionDialog(
     event: HaCalendarEvent,
+    calendarName: String?,
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val overlay = OverlayLightPopup
+    val stripe = accentColor(event.color?.removePrefix("var(--")?.removeSuffix(")"))
+    val whenLabel = remember(event) { calendarEventWhenLabel(event) }
+    val dateLabel = remember(event) { calendarEventDateLabel(event) }
     CalendarPopupSheet(
         title = "Event",
         onDismiss = onDismiss,
     ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(12.dp)
+                    .clip(CircleShape)
+                    .background(stripe),
+            )
+            Text(
+                text = calendarName?.takeIf { it.isNotBlank() }
+                    ?: event.entityId.removePrefix("calendar.").replace('_', ' ')
+                        .ifBlank { "Calendar" },
+                color = overlay.muted,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         Text(
             text = event.summary,
-            color = LocalOverlay.current.text,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 3,
+            color = overlay.text,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 4,
             overflow = TextOverflow.Ellipsis,
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (dateLabel.isNotBlank()) {
+            DetailLine(label = "Date", value = dateLabel)
+        }
+        if (whenLabel.isNotBlank()) {
+            DetailLine(label = "Time", value = whenLabel)
+        }
+        event.location?.takeIf { it.isNotBlank() }?.let {
+            DetailLine(label = "Location", value = it)
+        }
+        event.description?.takeIf { it.isNotBlank() }?.let {
+            DetailLine(label = "Notes", value = it, maxLines = 6)
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = LocalOverlay.current.text)
+                Text("Close", color = overlay.text)
             }
             Button(
                 onClick = onEdit,
@@ -74,6 +126,21 @@ fun CalendarEventActionDialog(
                 Text("Delete")
             }
         }
+    }
+}
+
+@Composable
+private fun DetailLine(label: String, value: String, maxLines: Int = 3) {
+    val overlay = LocalOverlay.current
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, color = overlay.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text(
+            text = value,
+            color = overlay.text,
+            fontSize = 15.sp,
+            maxLines = maxLines,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -165,7 +232,10 @@ private fun CalendarPopupSheet(
             scrim = PopupScrim,
         ) {
             Column(
-                modifier = popupSheetModifier(PopupSheetKind.Detail)
+                modifier = Modifier
+                    .fillMaxWidth(0.52f)
+                    .widthIn(max = 440.dp)
+                    .wrapContentHeight()
                     .padding(horizontal = 10.dp, vertical = 8.dp)
                     .popupSheetLook(overlay.sheet)
                     .clickable(
@@ -174,7 +244,7 @@ private fun CalendarPopupSheet(
                         onClick = {},
                     )
                     .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
                 content = {
                     PopupSheetChrome(
                         title = title,
@@ -183,6 +253,65 @@ private fun CalendarPopupSheet(
                     )
                     content()
                 },
+            )
+        }
+    }
+}
+
+internal fun calendarEventWhenLabel(event: HaCalendarEvent): String {
+    if (event.allDay || (event.startDate != null && event.start == null)) return "All day"
+    val zone = ZoneId.systemDefault()
+    val fmt = DateTimeFormatter.ofPattern("HH:mm")
+    val start = event.start?.atZone(zone)?.format(fmt) ?: return ""
+    val end = event.end?.atZone(zone)?.format(fmt) ?: return start
+    return if (end == start) start else "$start – $end"
+}
+
+internal fun calendarEventDateLabel(event: HaCalendarEvent): String {
+    val zone = ZoneId.systemDefault()
+    val fmt = DateTimeFormatter.ofPattern("EEE, MMM d")
+    return when {
+        event.allDay || event.startDate != null -> {
+            val start = event.startDate ?: return ""
+            val endExclusive = event.endDate
+            if (endExclusive != null && endExclusive.isAfter(start.plusDays(1))) {
+                "${start.format(fmt)} – ${endExclusive.minusDays(1).format(fmt)}"
+            } else {
+                start.format(fmt)
+            }
+        }
+        event.start != null -> event.start.atZone(zone).toLocalDate().format(fmt)
+        else -> ""
+    }
+}
+
+@Composable
+fun CalendarColorSwatches(
+    selected: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        HaViewModel.CalendarColorOptions.forEach { colorName ->
+            val tint = accentColor(colorName)
+            val active = selected == colorName
+            Box(
+                modifier = Modifier
+                    .size(if (active) 26.dp else 22.dp)
+                    .clip(CircleShape)
+                    .background(tint)
+                    .then(
+                        if (active) {
+                            Modifier.border(2.dp, Color.Black.copy(alpha = 0.55f), CircleShape)
+                        } else {
+                            Modifier
+                        },
+                    )
+                    .clickable { onSelect(colorName) },
             )
         }
     }
