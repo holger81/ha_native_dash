@@ -176,6 +176,29 @@
         },
         {
           "type": "status_chip",
+          "name": "Whole House Fan",
+          "icon": "mdi:fan",
+          "entity": "binary_sensor.wholehousefan_running",
+          "layout": "icon|name",
+          "tap": {
+            "type": "call_service",
+            "service": "automation.trigger",
+            "entity_id": "automation.wholehousefan_onoff",
+            "data": null
+          },
+          "visibility": {
+            "kind": "state_in",
+            "entity": "binary_sensor.wholehousefan_running",
+            "states": [
+              "on"
+            ]
+          },
+          "state": null,
+          "emphasize_unlocked": false,
+          "accent": "active"
+        },
+        {
+          "type": "status_chip",
           "name": "Vacuum",
           "icon": "mdi:vacuum",
           "entity": "vacuum.s8_maxv_ultra",
@@ -2269,6 +2292,37 @@
               {
                 "type": "entity_button",
                 "entity": null,
+                "name": "Controls",
+                "icon": null,
+                "label": null,
+                "tap": null,
+                "hold": null,
+                "show_entity_picture": null
+              },
+              {
+                "name": "Whole House Fan",
+                "icon": "mdi:fan",
+                "entity": "binary_sensor.wholehousefan_running",
+                "background": "var(--popupBG)",
+                "type": "button_toggle",
+                "tap": {
+                  "type": "call_service",
+                  "service": "automation.trigger",
+                  "entity_id": "automation.wholehousefan_onoff",
+                  "data": null
+                },
+                "hold": {
+                  "type": "more_info"
+                }
+              }
+            ]
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "entity_button",
+                "entity": null,
                 "name": "Info",
                 "icon": null,
                 "label": null,
@@ -3062,7 +3116,9 @@
     }
   },
   "entities": [
+    "automation.wholehousefan_onoff",
     "binary_sensor.envoy_battery_discharging",
+    "binary_sensor.wholehousefan_running",
     "binary_sensor.volkswagen_id_buzz_charging_cable_plugged_in",
     "calendar.besucherkalender",
     "calendar.calendar",
