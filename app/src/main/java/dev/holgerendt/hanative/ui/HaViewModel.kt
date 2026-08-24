@@ -121,6 +121,8 @@ data class MediaPreview(
     val subtitle: String? = null,
     val description: String? = null,
     val isVideo: Boolean = false,
+    /** Still snapshot / keyframe shown alongside video playback. */
+    val previewPath: String? = null,
 )
 
 class HaViewModel(
@@ -920,10 +922,18 @@ class HaViewModel(
         subtitle: String? = null,
         description: String? = null,
         isVideo: Boolean = false,
+        previewPath: String? = null,
     ) {
         if (path.isNullOrBlank()) return
         _ui.value = _ui.value.copy(
-            mediaPreview = MediaPreview(path, title, subtitle, description, isVideo),
+            mediaPreview = MediaPreview(
+                path = path,
+                title = title,
+                subtitle = subtitle,
+                description = description,
+                isVideo = isVideo,
+                previewPath = previewPath?.trim()?.takeIf { it.isNotBlank() },
+            ),
         )
     }
 
@@ -932,7 +942,15 @@ class HaViewModel(
         title: String? = null,
         subtitle: String? = null,
         description: String? = null,
-    ) = openMedia(path, title, subtitle, description, isVideo = true)
+        previewPath: String? = null,
+    ) = openMedia(
+        path = path,
+        title = title,
+        subtitle = subtitle,
+        description = description,
+        isVideo = true,
+        previewPath = previewPath,
+    )
 
     fun closeMedia() {
         _ui.value = _ui.value.copy(mediaPreview = null)

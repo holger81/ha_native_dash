@@ -976,12 +976,14 @@ fun VisionTimeline(
                             .clickable {
                                 val frame = event.keyFrame
                                 val clip = event.clipPath
+                                val snapshot = timelineSnapshotPath(frame, clip)
                                 when {
                                     !clip.isNullOrBlank() -> viewModel.openVideo(
                                         path = clip,
                                         title = event.summary,
                                         subtitle = subtitle.takeIf { it.isNotBlank() },
                                         description = event.description,
+                                        previewPath = snapshot,
                                     )
                                     !frame.isNullOrBlank() -> viewModel.openMedia(
                                         path = frame,
@@ -1126,10 +1128,23 @@ fun MediaVideoDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
     val context = LocalContext.current
     var videoUrl by remember(preview.path) { mutableStateOf<String?>(null) }
     var loadFailed by remember(preview.path) { mutableStateOf(false) }
+    val snapshotPath = preview.previewPath
+    var snapshotBytes by remember(snapshotPath) { mutableStateOf<ByteArray?>(null) }
+    var snapshotLoaded by remember(snapshotPath) { mutableStateOf(snapshotPath.isNullOrBlank()) }
     LaunchedEffect(preview.path, viewModel.client.currentBaseUrl) {
         loadFailed = false
         videoUrl = runCatching { viewModel.client.authenticatedMediaUrl(preview.path) }.getOrNull()
         if (videoUrl.isNullOrBlank()) loadFailed = true
+    }
+    LaunchedEffect(snapshotPath, viewModel.client.currentBaseUrl) {
+        if (!snapshotPath.isNullOrBlank()) {
+            snapshotBytes = runCatching { viewModel.client.mediaBytes(snapshotPath) }.getOrNull()
+                ?: runCatching { viewModel.client.cameraSnapshot(snapshotPath) }.getOrNull()
+        }
+        snapshotLoaded = true
+    }
+    val snapshotBitmap = remember(snapshotBytes) {
+        snapshotBytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
     }
     val exoPlayer = remember(videoUrl) {
         val url = videoUrl ?: return@remember null
@@ -1150,9 +1165,10 @@ fun MediaVideoDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
     DisposableEffect(exoPlayer) {
         onDispose { exoPlayer?.release() }
     }
+    // Camera-sized sheet: Detail (~600dp wide) made Fit playback look soft; larger surface keeps Fit without crop-zoom.
     Box(
-        modifier = popupSheetModifier(PopupSheetKind.Detail)
-            .padding(horizontal = 10.dp, vertical = 8.dp)
+        modifier = popupSheetModifier(PopupSheetKind.Camera)
+            .padding(horizontal = 8.dp, vertical = 6.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -1166,7 +1182,7 @@ fun MediaVideoDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
                 .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp)
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             PopupSheetChrome(
                 title = preview.title.orEmpty().ifBlank { "Clip" },
@@ -1174,30 +1190,43 @@ fun MediaVideoDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
                 overlay = OverlayLightPopup,
                 subtitle = preview.subtitle,
             )
-            when {
-                exoPlayer != null -> AndroidView(
-                    factory = { ctx ->
-                        (LayoutInflater.from(ctx).inflate(R.layout.camera_player_view, null) as PlayerView).apply {
-                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                            useController = true
-                            player = exoPlayer
-                        }
-                    },
-                    update = { view ->
-                        view.player = exoPlayer
-                        view.useController = true
-                    },
+            MediaVideoPlayerSurface(
+                exoPlayer = exoPlayer,
+                loadFailed = loadFailed,
+                snapshotBitmap = snapshotBitmap,
+            )
+            if (snapshotBitmap != null) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = "Preview",
+                        color = OverlayLightPopup.muted,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Image(
+                        bitmap = snapshotBitmap,
+                        contentDescription = "Event preview",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 220.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(Color.Black.copy(alpha = 0.06f)),
+                        contentScale = ContentScale.Fit,
+                    )
+                }
+            } else if (!snapshotPath.isNullOrBlank() && !snapshotLoaded) {
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .aspectRatio(16f / 9f)
-                        .clip(RoundedCornerShape(22.dp)),
-                )
-                loadFailed -> Text("Can't load video", color = OverlayLightPopup.muted, fontSize = 14.sp)
-                else -> Box(
-                    modifier = Modifier.fillMaxWidth().height(220.dp),
+                        .height(100.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color.Black.copy(alpha = 0.06f)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    LoadingSpinner(color = TextMuted)
+                    LoadingSpinner(color = TextMuted, indicatorSize = 22.dp)
                 }
             }
             if (!preview.description.isNullOrBlank()) {
@@ -1208,6 +1237,55 @@ fun MediaVideoDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 )
             }
+        }
+    }
+}
+
+@androidx.annotation.OptIn(UnstableApi::class)
+@Composable
+private fun MediaVideoPlayerSurface(
+    exoPlayer: ExoPlayer?,
+    loadFailed: Boolean,
+    snapshotBitmap: androidx.compose.ui.graphics.ImageBitmap?,
+) {
+    when {
+        exoPlayer != null -> AndroidView(
+            factory = { ctx ->
+                (LayoutInflater.from(ctx).inflate(R.layout.camera_player_view, null) as PlayerView).apply {
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    useController = true
+                    player = exoPlayer
+                }
+            },
+            update = { view ->
+                view.player = exoPlayer
+                view.useController = true
+                view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(22.dp))
+                .background(Color.Black),
+        )
+        loadFailed -> Text("Can't load video", color = OverlayLightPopup.muted, fontSize = 14.sp)
+        else -> Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(22.dp))
+                .background(Color.Black.copy(alpha = 0.08f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (snapshotBitmap != null) {
+                Image(
+                    bitmap = snapshotBitmap,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit,
+                )
+            }
+            LoadingSpinner(color = TextMuted)
         }
     }
 }
