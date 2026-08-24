@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -45,13 +46,14 @@ fun PinGateDialog(
 ) {
     val overlay = OverlayLightPopup
     androidx.compose.runtime.CompositionLocalProvider(LocalOverlay provides overlay) {
-        InWindowOverlay(
+        FullScreenDialogOverlay(
             onDismiss = onDismiss,
             dismissOnScrim = true,
             scrim = PopupScrim,
         ) {
             Column(
                 modifier = popupSheetModifier(PopupSheetKind.Detail)
+                    .wrapContentHeight()
                     .padding(horizontal = 10.dp, vertical = 8.dp)
                     .popupSheetLook(overlay.sheet)
                     .clickable(

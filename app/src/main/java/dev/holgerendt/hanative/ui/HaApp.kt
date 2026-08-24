@@ -873,6 +873,41 @@ fun InWindowOverlay(
     }
 }
 
+/**
+ * Full-window overlay for dialogs composed inside nested layouts (e.g. WeekPlanner).
+ * [InWindowOverlay] only fills its parent; this covers the entire screen.
+ */
+@Composable
+fun FullScreenDialogOverlay(
+    onDismiss: () -> Unit,
+    dismissOnScrim: Boolean = true,
+    scrim: Color = PopupScrim,
+    content: @Composable () -> Unit,
+) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = dismissOnScrim,
+            usePlatformDefaultWidth = false,
+        ),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(scrim)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = { if (dismissOnScrim) onDismiss() },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            content()
+        }
+    }
+}
+
 @Composable
 fun SetupScreen(viewModel: HaViewModel) {
     val ui by viewModel.ui.collectAsState()

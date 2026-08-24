@@ -226,7 +226,7 @@ private fun CalendarPopupSheet(
 ) {
     val overlay = OverlayLightPopup
     androidx.compose.runtime.CompositionLocalProvider(LocalOverlay provides overlay) {
-        InWindowOverlay(
+        FullScreenDialogOverlay(
             onDismiss = onDismiss,
             dismissOnScrim = true,
             scrim = PopupScrim,
