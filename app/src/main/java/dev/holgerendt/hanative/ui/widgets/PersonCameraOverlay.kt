@@ -14,7 +14,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.holgerendt.hanative.model.WidgetNode
 import dev.holgerendt.hanative.ui.HaViewModel
@@ -23,18 +22,34 @@ import kotlin.math.ceil
 
 internal fun personCameraGridLayout(count: Int): Pair<Int, Int> {
     if (count <= 1) return 1 to 1
-    if (count == 2) return 2 to 1
+    if (count == 2) return 1 to 2
     if (count <= 4) return 2 to 2
     val cols = 3
     return cols to ceil(count / cols.toDouble()).toInt()
 }
 
-internal fun personCameraStripHeight(cameraCount: Int): Dp {
-    val (_, rows) = personCameraGridLayout(cameraCount)
-    val rowHeight = 150.dp
-    val spacing = 6.dp
-    val padding = 12.dp
-    return rowHeight * rows + spacing * (rows - 1).coerceAtLeast(0) + padding
+@Composable
+fun BackyardActivityPanel(
+    cameras: List<WidgetNode>,
+    timeline: WidgetNode,
+    viewModel: HaViewModel,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        VisionTimeline(
+            widget = timeline,
+            viewModel = viewModel,
+        )
+        PersonCameraOverlay(
+            cameras = cameras,
+            viewModel = viewModel,
+            fitContent = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
 }
 
 @Composable
@@ -42,6 +57,7 @@ fun PersonCameraOverlay(
     cameras: List<WidgetNode>,
     viewModel: HaViewModel,
     modifier: Modifier = Modifier,
+    fitContent: Boolean = false,
 ) {
     if (cameras.isEmpty()) return
     val (cols, rows) = personCameraGridLayout(cameras.size)
@@ -51,32 +67,81 @@ fun PersonCameraOverlay(
             .background(ScreenBackground)
             .padding(6.dp),
     ) {
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            var index = 0
-            repeat(rows) {
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    repeat(cols) {
-                        if (index < cameras.size) {
-                            CameraCard(
-                                widget = cameras[index],
-                                viewModel = viewModel,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight(),
-                                fill = true,
-                            )
-                            index++
-                        } else {
-                            Spacer(Modifier.weight(1f))
-                        }
+        if (fitContent) {
+            FitContentCameraGrid(cameras, cols, rows, viewModel)
+        } else {
+            FillCameraGrid(cameras, cols, rows, viewModel)
+        }
+    }
+}
+
+@Composable
+private fun FitContentCameraGrid(
+    cameras: List<WidgetNode>,
+    cols: Int,
+    rows: Int,
+    viewModel: HaViewModel,
+) {
+    var index = 0
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        repeat(rows) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                repeat(cols) {
+                    if (index < cameras.size) {
+                        CameraCard(
+                            widget = cameras[index],
+                            viewModel = viewModel,
+                            modifier = Modifier.weight(1f),
+                            fitContent = true,
+                        )
+                        index++
+                    } else {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FillCameraGrid(
+    cameras: List<WidgetNode>,
+    cols: Int,
+    rows: Int,
+    viewModel: HaViewModel,
+) {
+    var index = 0
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        repeat(rows) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                repeat(cols) {
+                    if (index < cameras.size) {
+                        CameraCard(
+                            widget = cameras[index],
+                            viewModel = viewModel,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                            fill = true,
+                        )
+                        index++
+                    } else {
+                        Spacer(Modifier.weight(1f))
                     }
                 }
             }

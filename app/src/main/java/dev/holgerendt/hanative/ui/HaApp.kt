@@ -85,8 +85,7 @@ import dev.holgerendt.hanative.ui.widgets.ChipRow
 import dev.holgerendt.hanative.ui.widgets.MediaImageDialog
 import dev.holgerendt.hanative.ui.widgets.MediaVideoDialog
 import dev.holgerendt.hanative.ui.widgets.PersonCard
-import dev.holgerendt.hanative.ui.widgets.personCameraStripHeight
-import dev.holgerendt.hanative.ui.widgets.PersonCameraOverlay
+import dev.holgerendt.hanative.ui.widgets.BackyardActivityPanel
 import dev.holgerendt.hanative.ui.widgets.PopupScaffold
 import dev.holgerendt.hanative.ui.widgets.RoomGrid
 import dev.holgerendt.hanative.ui.widgets.VisionTimeline
@@ -285,25 +284,22 @@ private fun HomeScreen(viewModel: HaViewModel) {
         Spacer(Modifier.height(12.dp))
         // Lovelace `(min-width: 1024px)`: 50% rooms | 50% timeline. 1080px portrait qualifies.
         val activePersonCameras by viewModel.activePersonCameras.collectAsState()
-        Column(modifier = Modifier.fillMaxWidth()) {
-            if (activePersonCameras.isNotEmpty()) {
-                PersonCameraOverlay(
-                    cameras = activePersonCameras,
-                    viewModel = viewModel,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(personCameraStripHeight(activePersonCameras.size)),
-                )
-                Spacer(Modifier.height(8.dp))
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.Top,
-            ) {
-                RoomGrid(home.rooms, viewModel, Modifier.weight(1f))
-                home.timeline?.let {
-                    VisionTimeline(it, viewModel, Modifier.weight(1f))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            RoomGrid(home.rooms, viewModel, Modifier.weight(1f))
+            home.timeline?.let { timeline ->
+                if (activePersonCameras.isNotEmpty()) {
+                    BackyardActivityPanel(
+                        cameras = activePersonCameras,
+                        timeline = timeline,
+                        viewModel = viewModel,
+                        modifier = Modifier.weight(1f),
+                    )
+                } else {
+                    VisionTimeline(timeline, viewModel, Modifier.weight(1f))
                 }
             }
         }
