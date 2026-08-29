@@ -159,6 +159,11 @@ class HaClient {
         .callTimeout(60, TimeUnit.SECONDS)
         .build()
 
+    companion object {
+        private const val MASS_COMMAND_MAX_ATTEMPTS = 3
+        private const val MASS_COMMAND_RETRY_BASE_MS = 400L
+    }
+
     private var webSocket: WebSocket? = null
     private var baseUrl: String = ""
     private var token: String = ""
@@ -776,7 +781,6 @@ class HaClient {
 
     private suspend fun massCommand(commandName: String, args: JsonObject? = null): JsonElement =
         withContext(Dispatchers.IO) {
-            val ingress = ensureMassIngress()
             val body = buildJsonObject {
                 put("command", commandName)
                 if (args != null) put("args", args)
@@ -793,20 +797,52 @@ class HaClient {
                     response.code to text
                 }
             }
-            var (code, text) = execute(ingress)
-            if (code == 401 || code == 403) {
-                massIngress = null
-                val refreshed = ensureMassIngress(force = true)
-                val retry = execute(refreshed)
-                code = retry.first
-                text = retry.second
+            var lastFailure: Exception? = null
+            repeat(MASS_COMMAND_MAX_ATTEMPTS) { attempt ->
+                try {
+                    var session = ensureMassIngress()
+                    var (code, text) = execute(session)
+                    if (code == 401 || code == 403) {
+                        massIngress = null
+                        session = ensureMassIngress(force = true)
+                        val retryAuth = execute(session)
+                        code = retryAuth.first
+                        text = retryAuth.second
+                    }
+                    if (code in 200..299) {
+                        if (text.isBlank()) return@withContext JsonNull
+                        return@withContext json.parseToJsonElement(text)
+                    }
+                    val message = massErrorMessage(text, code)
+                    val failure = IllegalStateException(message)
+                    val canRetry = code in 500..599 && attempt < MASS_COMMAND_MAX_ATTEMPTS - 1
+                    if (!canRetry) throw failure
+                    lastFailure = failure
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: IllegalStateException) {
+                    throw error
+                } catch (error: Exception) {
+                    // IO / unexpected: retry a few times.
+                    if (attempt >= MASS_COMMAND_MAX_ATTEMPTS - 1) throw error
+                    lastFailure = error
+                }
+                delay(MASS_COMMAND_RETRY_BASE_MS * (1L shl attempt))
             }
-            if (code !in 200..299) {
-                throw IllegalStateException(text.ifBlank { "Music Assistant request failed ($code)" })
-            }
-            if (text.isBlank()) return@withContext JsonNull
-            json.parseToJsonElement(text)
+            throw lastFailure ?: IllegalStateException("Music Assistant request failed")
         }
+
+    private fun massErrorMessage(body: String, code: Int): String {
+        val trimmed = body.trim()
+        if (trimmed.isBlank()) return "Music Assistant request failed ($code)"
+        runCatching { json.parseToJsonElement(trimmed) }.getOrNull()?.let { element ->
+            val obj = element as? JsonObject ?: return@let
+            obj["message"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
+            obj["error"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
+            obj["detail"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
+        }
+        return trimmed.take(240)
+    }
 
     private suspend fun ensureMassIngress(force: Boolean = false): MassIngressSession {
         val cached = massIngress

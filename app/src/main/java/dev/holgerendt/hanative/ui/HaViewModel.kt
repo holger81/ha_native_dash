@@ -405,6 +405,8 @@ class HaViewModel(
     private var pendingMemberVolume: Pair<String, Float>? = null
     private var volumeRequestSeq = 0
     private var musicGroupJob: Job? = null
+    /** One automatic retry when Discover only got Recently played. */
+    private var musicDiscoveryPartialRetryDone = false
 
     fun selectMusicPlayer(entityId: String) {
         val normalized = CredentialsStore.normalizeEntityId(entityId)
@@ -528,14 +530,15 @@ class HaViewModel(
     fun setMusicWallTab(tab: String) {
         val normalized = if (tab == "discover") "discover" else "now"
         _musicWall.value = _musicWall.value.copy(tab = normalized)
-        if (normalized == "discover" &&
-            !_musicWall.value.discovery.loading &&
-            _musicWall.value.discovery.recentlyPlayed.isEmpty() &&
-            _musicWall.value.discovery.newMusic.isEmpty() &&
-            _musicWall.value.discovery.stationsForYou.isEmpty() &&
-            _musicWall.value.discovery.error == null
-        ) {
-            loadMusicDiscovery()
+        if (normalized == "discover") {
+            val discovery = _musicWall.value.discovery
+            val emptyShelves = discovery.recentlyPlayed.isEmpty() &&
+                discovery.newMusic.isEmpty() &&
+                discovery.stationsForYou.isEmpty()
+            // Retry when last load failed, nothing loaded, or shelves are only partially filled.
+            if (!discovery.loading && (discovery.error != null || emptyShelves || discoveryShelvesIncomplete(discovery))) {
+                loadMusicDiscovery()
+            }
         }
     }
 
@@ -572,29 +575,52 @@ class HaViewModel(
         val discovery = _musicWall.value.discovery
         val trimmed = discovery.searchQuery.trim()
         if (trimmed.length < 2) {
+            val emptyShelves = discovery.recentlyPlayed.isEmpty() &&
+                discovery.newMusic.isEmpty() &&
+                discovery.stationsForYou.isEmpty()
+            val looksPartial = discovery.recentlyPlayed.isNotEmpty() &&
+                discovery.newMusic.isEmpty() &&
+                discovery.stationsForYou.isEmpty()
             _musicWall.value = _musicWall.value.copy(
                 discovery = discovery.copy(
                     searchLoading = false,
                     searchResults = null,
+                    // Search failures must not stick on Discover shelves after clear.
+                    error = null,
                 ),
             )
+            if (!discovery.loading && (emptyShelves || looksPartial)) {
+                musicDiscoveryPartialRetryDone = false
+                loadMusicDiscovery()
+            }
             return
         }
         val types = discovery.searchTypes
         musicSearchJob = viewModelScope.launch {
             _musicWall.value = _musicWall.value.copy(
-                discovery = _musicWall.value.discovery.copy(searchLoading = true),
+                discovery = _musicWall.value.discovery.copy(searchLoading = true, error = null),
             )
             delay(350)
-            val result = runCatching { client.musicSearch(trimmed, mediaTypes = types) }
-            _musicWall.value = _musicWall.value.copy(
-                discovery = _musicWall.value.discovery.copy(
-                    searchLoading = false,
-                    searchResults = result.getOrNull(),
-                    error = result.exceptionOrNull()?.message
-                        ?: _musicWall.value.discovery.error,
-                ),
-            )
+            try {
+                val results = client.musicSearch(trimmed, mediaTypes = types)
+                _musicWall.value = _musicWall.value.copy(
+                    discovery = _musicWall.value.discovery.copy(
+                        searchLoading = false,
+                        searchResults = results,
+                        error = null,
+                    ),
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _musicWall.value = _musicWall.value.copy(
+                    discovery = _musicWall.value.discovery.copy(
+                        searchLoading = false,
+                        searchResults = null,
+                        error = error.message ?: "Search failed",
+                    ),
+                )
+            }
         }
     }
 
@@ -653,21 +679,35 @@ class HaViewModel(
             ),
         )
         musicBrowseJob = viewModelScope.launch {
-            val result = runCatching { client.musicBrowse(path) }
-            val items = result.getOrElse { emptyList() }
-            val error = result.exceptionOrNull()?.message
-            val current = _musicWall.value.discovery.browseStack.toMutableList()
-            if (current.isEmpty()) return@launch
-            val idx = current.indexOfLast { it.path == path }
-            if (idx < 0) return@launch
-            current[idx] = current[idx].copy(
-                items = items,
-                loading = false,
-                error = error ?: if (items.isEmpty()) "Nothing here" else null,
-            )
-            _musicWall.value = _musicWall.value.copy(
-                discovery = _musicWall.value.discovery.copy(browseStack = current),
-            )
+            try {
+                val items = client.musicBrowse(path)
+                val current = _musicWall.value.discovery.browseStack.toMutableList()
+                if (current.isEmpty()) return@launch
+                val idx = current.indexOfLast { it.path == path }
+                if (idx < 0) return@launch
+                current[idx] = current[idx].copy(
+                    items = items,
+                    loading = false,
+                    error = if (items.isEmpty()) "Nothing here" else null,
+                )
+                _musicWall.value = _musicWall.value.copy(
+                    discovery = _musicWall.value.discovery.copy(browseStack = current),
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                val current = _musicWall.value.discovery.browseStack.toMutableList()
+                if (current.isEmpty()) return@launch
+                val idx = current.indexOfLast { it.path == path }
+                if (idx < 0) return@launch
+                current[idx] = current[idx].copy(
+                    loading = false,
+                    error = error.message ?: "Browse failed",
+                )
+                _musicWall.value = _musicWall.value.copy(
+                    discovery = _musicWall.value.discovery.copy(browseStack = current),
+                )
+            }
         }
     }
 
@@ -825,6 +865,7 @@ class HaViewModel(
         musicWallJob?.cancel()
         musicMediaWatchJob?.cancel()
         _musicWall.value = _musicWall.value.copy(loading = true, error = null)
+        musicDiscoveryPartialRetryDone = false
         loadMusicDiscovery()
         musicMediaWatchJob = viewModelScope.launch {
             combine(states, _musicWall) { map, wall ->
@@ -878,7 +919,17 @@ class HaViewModel(
         musicVolumeDebounceJob = null
         musicGroupJob?.cancel()
         musicGroupJob = null
+        musicDiscoveryPartialRetryDone = false
     }
+
+    private fun discoveryShelvesIncomplete(discovery: MusicDiscoveryState): Boolean =
+        // Recently played alone often succeeds while New music / stations fail transiently.
+        !musicDiscoveryPartialRetryDone &&
+            discovery.recentlyPlayed.isNotEmpty() &&
+            discovery.newMusic.isEmpty() &&
+            discovery.stationsForYou.isEmpty() &&
+            discovery.error == null &&
+            !discovery.loading
 
     private fun loadMusicDiscovery() {
         musicDiscoveryJob?.cancel()
@@ -887,9 +938,9 @@ class HaViewModel(
                 discovery = _musicWall.value.discovery.copy(loading = true, error = null),
             )
             try {
-                val recently = runCatching { client.musicDiscoveryRecentlyPlayed() }.getOrElse { emptyList() }
-                val recommendations = runCatching { client.musicDiscoveryRecommendations() }.getOrElse { emptyList() }
-                val newMusic = runCatching { client.musicDiscoveryNewMusicTracks() }.getOrElse { emptyList() }
+                val recently = softMass(emptyList()) { client.musicDiscoveryRecentlyPlayed() }
+                val recommendations = softMass(emptyList()) { client.musicDiscoveryRecommendations() }
+                val newMusicFromBrowse = softMass(emptyList()) { client.musicDiscoveryNewMusicTracks() }
                 val appleRecently = recommendations
                     .firstOrNull {
                         it.name.equals("Recently Played", ignoreCase = true) &&
@@ -903,8 +954,22 @@ class HaViewModel(
                     }
                     ?.items
                     .orEmpty()
+                val newMusicFallback = recommendations
+                    .firstOrNull { section ->
+                        val name = section.name
+                        name.equals("New Music", ignoreCase = true) ||
+                            name.contains("New Music", ignoreCase = true)
+                    }
+                    ?.items
+                    .orEmpty()
+                val newMusic = newMusicFromBrowse.ifEmpty { newMusicFallback }
                 val mergedRecent = (recently + appleRecently)
                     .distinctBy { it.uri }
+                if (mergedRecent.isNotEmpty() && newMusic.isEmpty() && stations.isEmpty()) {
+                    musicDiscoveryPartialRetryDone = true
+                } else if (newMusic.isNotEmpty() || stations.isNotEmpty()) {
+                    musicDiscoveryPartialRetryDone = false
+                }
                 _musicWall.value = _musicWall.value.copy(
                     discovery = _musicWall.value.discovery.copy(
                         loading = false,
@@ -918,7 +983,7 @@ class HaViewModel(
                         },
                     ),
                 )
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 _musicWall.value = _musicWall.value.copy(
@@ -930,6 +995,16 @@ class HaViewModel(
             }
         }
     }
+
+    /** Soft-fail one MASS call without treating cancellation as an empty result. */
+    private suspend fun <T> softMass(fallback: T, block: suspend () -> T): T =
+        try {
+            block()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            fallback
+        }
 
     private fun refreshMusicQueue() {
         viewModelScope.launch { refreshMusicWall(forcePlayers = false) }
