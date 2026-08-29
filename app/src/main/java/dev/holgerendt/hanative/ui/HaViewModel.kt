@@ -71,14 +71,26 @@ data class WeatherPopupContext(
     val initialTab: String? = null,
 )
 
+private val DEFAULT_MUSIC_SEARCH_TYPES = setOf("track", "album", "playlist", "artist")
+
+data class MusicBrowseFrame(
+    val title: String,
+    val path: String,
+    val items: List<MassMediaItem> = emptyList(),
+    val loading: Boolean = false,
+    val error: String? = null,
+)
+
 data class MusicDiscoveryState(
     val loading: Boolean = false,
     val recentlyPlayed: List<MassMediaItem> = emptyList(),
     val newMusic: List<MassMediaItem> = emptyList(),
     val stationsForYou: List<MassMediaItem> = emptyList(),
     val searchQuery: String = "",
+    val searchTypes: Set<String> = DEFAULT_MUSIC_SEARCH_TYPES,
     val searchLoading: Boolean = false,
     val searchResults: MassSearchResults? = null,
+    val browseStack: List<MusicBrowseFrame> = emptyList(),
     val error: String? = null,
     val playingUri: String? = null,
 )
@@ -387,6 +399,7 @@ class HaViewModel(
     private var musicMediaWatchJob: Job? = null
     private var musicDiscoveryJob: Job? = null
     private var musicSearchJob: Job? = null
+    private var musicBrowseJob: Job? = null
     private var musicVolumeDebounceJob: Job? = null
     private var pendingMusicVolume: Pair<Float, String>? = null
     private var pendingMemberVolume: Pair<String, Float>? = null
@@ -530,23 +543,50 @@ class HaViewModel(
         _musicWall.value = _musicWall.value.copy(
             discovery = _musicWall.value.discovery.copy(searchQuery = query),
         )
+        scheduleMusicSearch()
+    }
+
+    fun setMusicSearchTypes(types: Set<String>) {
+        val normalized = types.map { it.lowercase() }.filter { it in DEFAULT_MUSIC_SEARCH_TYPES }.toSet()
+            .ifEmpty { DEFAULT_MUSIC_SEARCH_TYPES }
+        _musicWall.value = _musicWall.value.copy(
+            discovery = _musicWall.value.discovery.copy(searchTypes = normalized),
+        )
+        scheduleMusicSearch()
+    }
+
+    fun toggleMusicSearchType(type: String) {
+        val key = type.lowercase()
+        if (key !in DEFAULT_MUSIC_SEARCH_TYPES) return
+        val current = _musicWall.value.discovery.searchTypes
+        val next = if (key in current) {
+            if (current.size <= 1) current else current - key
+        } else {
+            current + key
+        }
+        setMusicSearchTypes(next)
+    }
+
+    private fun scheduleMusicSearch() {
         musicSearchJob?.cancel()
-        val trimmed = query.trim()
+        val discovery = _musicWall.value.discovery
+        val trimmed = discovery.searchQuery.trim()
         if (trimmed.length < 2) {
             _musicWall.value = _musicWall.value.copy(
-                discovery = _musicWall.value.discovery.copy(
+                discovery = discovery.copy(
                     searchLoading = false,
                     searchResults = null,
                 ),
             )
             return
         }
+        val types = discovery.searchTypes
         musicSearchJob = viewModelScope.launch {
-            delay(350)
             _musicWall.value = _musicWall.value.copy(
                 discovery = _musicWall.value.discovery.copy(searchLoading = true),
             )
-            val result = runCatching { client.musicSearch(trimmed) }
+            delay(350)
+            val result = runCatching { client.musicSearch(trimmed, mediaTypes = types) }
             _musicWall.value = _musicWall.value.copy(
                 discovery = _musicWall.value.discovery.copy(
                     searchLoading = false,
@@ -562,7 +602,112 @@ class HaViewModel(
         loadMusicDiscovery()
     }
 
+    fun openAppleMusicBrowse() {
+        viewModelScope.launch {
+            val path = runCatching { client.musicAppleMusicRootPath() }.getOrElse { "apple_music://" }
+            openMusicBrowse(path = path, title = "Apple Music", replaceStack = true)
+        }
+    }
+
+    fun openAppleMusicSeeAll(shelf: String) {
+        viewModelScope.launch {
+            val root = runCatching { client.musicAppleMusicRootPath() }.getOrElse { "apple_music://" }
+            when (shelf) {
+                "new_music" -> {
+                    val path = runCatching { client.musicAppleMusicChildPath("playlists") }.getOrElse {
+                        massBrowseFallback(root, "playlists")
+                    }
+                    openMusicBrowse(path = path, title = "Playlists", replaceStack = true)
+                }
+                "stations" -> {
+                    val path = runCatching { client.musicAppleMusicChildPath("radio") }.getOrElse {
+                        massBrowseFallback(root, "radio")
+                    }
+                    openMusicBrowse(path = path, title = "Radio", replaceStack = true)
+                }
+                else -> openMusicBrowse(path = root, title = "Apple Music", replaceStack = true)
+            }
+        }
+    }
+
+    private fun massBrowseFallback(root: String, child: String): String = when {
+        root.endsWith("://") -> "$root$child"
+        root.endsWith("/") -> "$root$child"
+        else -> "$root/$child"
+    }
+
+    fun openMusicBrowse(path: String, title: String, replaceStack: Boolean = false) {
+        musicBrowseJob?.cancel()
+        val frame = MusicBrowseFrame(title = title, path = path, loading = true)
+        val stack = if (replaceStack) {
+            listOf(frame)
+        } else {
+            _musicWall.value.discovery.browseStack + frame
+        }
+        _musicWall.value = _musicWall.value.copy(
+            discovery = _musicWall.value.discovery.copy(
+                browseStack = stack,
+                searchResults = null,
+                searchLoading = false,
+                error = null,
+            ),
+        )
+        musicBrowseJob = viewModelScope.launch {
+            val result = runCatching { client.musicBrowse(path) }
+            val items = result.getOrElse { emptyList() }
+            val error = result.exceptionOrNull()?.message
+            val current = _musicWall.value.discovery.browseStack.toMutableList()
+            if (current.isEmpty()) return@launch
+            val idx = current.indexOfLast { it.path == path }
+            if (idx < 0) return@launch
+            current[idx] = current[idx].copy(
+                items = items,
+                loading = false,
+                error = error ?: if (items.isEmpty()) "Nothing here" else null,
+            )
+            _musicWall.value = _musicWall.value.copy(
+                discovery = _musicWall.value.discovery.copy(browseStack = current),
+            )
+        }
+    }
+
+    fun browseMusicBack() {
+        musicBrowseJob?.cancel()
+        val stack = _musicWall.value.discovery.browseStack
+        if (stack.isEmpty()) return
+        _musicWall.value = _musicWall.value.copy(
+            discovery = _musicWall.value.discovery.copy(browseStack = stack.dropLast(1)),
+        )
+    }
+
+    fun clearMusicBrowse() {
+        musicBrowseJob?.cancel()
+        musicBrowseJob = null
+        _musicWall.value = _musicWall.value.copy(
+            discovery = _musicWall.value.discovery.copy(browseStack = emptyList()),
+        )
+    }
+
+    fun onMusicBrowseItem(item: MassMediaItem) {
+        when {
+            item.canBrowse -> {
+                val path = item.browsePath ?: return
+                openMusicBrowse(path = path, title = item.name, replaceStack = false)
+            }
+            item.canPlay -> playMusicDiscoveryItem(item)
+            !item.browsePath.isNullOrBlank() -> {
+                openMusicBrowse(path = item.browsePath, title = item.name, replaceStack = false)
+            }
+        }
+    }
+
     fun playMusicDiscoveryItem(item: MassMediaItem) {
+        if (!item.canPlay) {
+            if (!item.browsePath.isNullOrBlank()) {
+                openMusicBrowse(path = item.browsePath, title = item.name, replaceStack = false)
+            }
+            return
+        }
         val wall = _musicWall.value
         val selected = wall.players.firstOrNull { it.entityId == wall.selectedEntityId }
         val queueId = selected?.massPlayerId
@@ -727,6 +872,8 @@ class HaViewModel(
         musicDiscoveryJob = null
         musicSearchJob?.cancel()
         musicSearchJob = null
+        musicBrowseJob?.cancel()
+        musicBrowseJob = null
         musicVolumeDebounceJob?.cancel()
         musicVolumeDebounceJob = null
         musicGroupJob?.cancel()

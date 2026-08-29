@@ -58,7 +58,19 @@ data class MassMediaItem(
     val subtitle: String? = null,
     val provider: String? = null,
     val itemId: String? = null,
-)
+    /** Browse path for folders / Apple Music directory nodes. */
+    val browsePath: String? = null,
+) {
+    val isFolder: Boolean
+        get() = mediaType.equals("folder", ignoreCase = true) ||
+            mediaType.equals("directory", ignoreCase = true)
+
+    val canBrowse: Boolean
+        get() = !browsePath.isNullOrBlank() && (isFolder || uri.isBlank())
+
+    val canPlay: Boolean
+        get() = uri.isNotBlank() && !isFolder
+}
 
 data class MassRecommendationSection(
     val name: String,
@@ -319,6 +331,42 @@ fun parseMassMediaItem(element: JsonElement?): MassMediaItem? {
         subtitle = subtitle,
         provider = obj["provider"]?.jsonPrimitive?.contentOrNull,
         itemId = obj["item_id"]?.jsonPrimitive?.contentOrNull,
+        browsePath = obj["path"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+    )
+}
+
+/** Includes folders so Apple Music browse can navigate directory nodes. */
+fun parseMassBrowseItem(element: JsonElement?): MassMediaItem? {
+    val obj = element as? JsonObject ?: return null
+    val name = obj["name"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return null
+    val path = obj["path"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+    val uri = obj["uri"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+    if (uri == null && path == null) return null
+    val mediaType = obj["media_type"]?.jsonPrimitive?.contentOrNull
+        ?: if (uri == null) "folder" else "track"
+    val artists = (obj["artists"] as? JsonArray)
+        ?.mapNotNull { (it as? JsonObject)?.get("name")?.jsonPrimitive?.contentOrNull }
+        ?.filter { it.isNotBlank() }
+        ?.joinToString(", ")
+        ?.takeIf { it.isNotBlank() }
+    val owner = obj["owner"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+    val subtitle = when {
+        mediaType.equals("folder", ignoreCase = true) -> "Browse"
+        mediaType == "track" -> artists
+        mediaType == "album" -> artists
+        mediaType == "playlist" -> owner ?: "Playlist"
+        mediaType == "artist" -> "Artist"
+        else -> mediaType.replaceFirstChar { it.uppercase() }
+    }
+    return MassMediaItem(
+        uri = uri ?: path.orEmpty(),
+        name = name,
+        mediaType = mediaType,
+        imageUrl = extractMassImageUrl(obj),
+        subtitle = subtitle,
+        provider = obj["provider"]?.jsonPrimitive?.contentOrNull,
+        itemId = obj["item_id"]?.jsonPrimitive?.contentOrNull,
+        browsePath = path,
     )
 }
 

@@ -711,29 +711,36 @@ class HaClient {
     suspend fun musicSearch(
         query: String,
         limit: Int = 8,
+        mediaTypes: Collection<String> = listOf("track", "album", "playlist", "artist"),
     ): MassSearchResults {
         val trimmed = query.trim()
         if (trimmed.isEmpty()) return MassSearchResults()
+        val types = mediaTypes.map { it.trim().lowercase() }.filter { it.isNotBlank() }.distinct()
+            .ifEmpty { listOf("track", "album", "playlist", "artist") }
         val result = massCommand(
             "music/search",
             buildJsonObject {
                 put("search_query", trimmed)
                 put("limit", limit)
-                put(
-                    "media_types",
-                    JsonArray(
-                        listOf(
-                            JsonPrimitive("track"),
-                            JsonPrimitive("album"),
-                            JsonPrimitive("playlist"),
-                            JsonPrimitive("artist"),
-                        ),
-                    ),
-                )
+                put("media_types", JsonArray(types.map { JsonPrimitive(it) }))
             },
         )
         return parseMassSearchResults(result)
     }
+
+    suspend fun musicBrowse(path: String? = null): List<MassMediaItem> {
+        val result = if (path.isNullOrBlank()) {
+            massCommand("music/browse", buildJsonObject {})
+        } else {
+            massCommand("music/browse", buildJsonObject { put("path", path) })
+        }
+        return (result as? JsonArray)?.mapNotNull(::parseMassBrowseItem).orEmpty()
+    }
+
+    suspend fun musicAppleMusicRootPath(): String = findAppleMusicBrowseRoot()
+
+    suspend fun musicAppleMusicChildPath(child: String): String =
+        massBrowseChildPath(findAppleMusicBrowseRoot(), child)
 
     suspend fun playMassMedia(queueId: String, mediaUri: String, option: String = "replace") {
         massCommand(
@@ -750,7 +757,9 @@ class HaClient {
         val root = massCommand("music/browse", buildJsonObject {}) as? JsonArray ?: return "apple_music://"
         val apple = root.mapNotNull { it as? JsonObject }.firstOrNull {
             it["name"]?.jsonPrimitive?.contentOrNull?.equals("Apple Music", ignoreCase = true) == true ||
-                it["provider"]?.jsonPrimitive?.contentOrNull?.contains("apple_music") == true
+                it["provider"]?.jsonPrimitive?.contentOrNull?.contains("apple_music") == true ||
+                it["path"]?.jsonPrimitive?.contentOrNull?.contains("apple_music") == true ||
+                it["uri"]?.jsonPrimitive?.contentOrNull?.contains("apple_music") == true
         }
         return apple?.get("path")?.jsonPrimitive?.contentOrNull
             ?: apple?.get("uri")?.jsonPrimitive?.contentOrNull

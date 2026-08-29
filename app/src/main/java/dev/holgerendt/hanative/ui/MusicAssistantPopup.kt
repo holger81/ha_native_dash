@@ -59,7 +59,6 @@ import dev.holgerendt.hanative.data.volumeLevel
 import dev.holgerendt.hanative.model.PopupNode
 import dev.holgerendt.hanative.ui.theme.ActiveYellow
 import dev.holgerendt.hanative.ui.theme.LocalOverlay
-import dev.holgerendt.hanative.ui.widgets.EntityPicture
 import kotlinx.coroutines.delay
 
 /**
@@ -303,20 +302,25 @@ private fun NowPlayingPane(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (!art.isNullOrBlank()) {
-                EntityPicture(
+            val artMod = Modifier
+                .size(240.dp)
+                .clip(RoundedCornerShape(28.dp))
+            when {
+                !art.isNullOrBlank() -> MusicCover(
                     path = art,
                     viewModel = viewModel,
-                    modifier = Modifier
-                        .size(240.dp)
-                        .clip(RoundedCornerShape(28.dp)),
+                    modifier = artMod,
+                    spinnerSize = 28.dp,
+                    fallbackIconSize = 72.dp,
                 )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(240.dp)
-                        .clip(RoundedCornerShape(28.dp))
-                        .background(overlay.well),
+                wall.loading -> Box(
+                    modifier = artMod.background(overlay.well),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    LoadingSpinner(indicatorSize = 28.dp)
+                }
+                else -> Box(
+                    modifier = artMod.background(overlay.well),
                     contentAlignment = Alignment.Center,
                 ) {
                     MdiIcon("mdi:music-note", tint = overlay.muted, size = 72.dp)
@@ -550,6 +554,7 @@ private fun DiscoverPane(
     )
     val selected = wall.players.firstOrNull { it.entityId == wall.selectedEntityId }
     val selectedHasMass = !selected?.massPlayerId.isNullOrBlank()
+    val browsing = discovery.browseStack.isNotEmpty()
 
     Column(
         modifier = modifier.verticalScroll(rememberScrollState()),
@@ -581,18 +586,60 @@ private fun DiscoverPane(
             }
         }
 
-        OutlinedTextField(
-            value = discovery.searchQuery,
-            onValueChange = viewModel::setMusicSearchQuery,
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            placeholder = { Text("Search tracks, albums, playlists…") },
-            shape = RoundedCornerShape(18.dp),
-            colors = fieldColors,
-            leadingIcon = {
-                MdiIcon("mdi:magnify", tint = overlay.muted, size = 22.dp)
-            },
-        )
+        if (!browsing) {
+            OutlinedTextField(
+                value = discovery.searchQuery,
+                onValueChange = viewModel::setMusicSearchQuery,
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                placeholder = { Text(searchPlaceholder(discovery.searchTypes)) },
+                shape = RoundedCornerShape(18.dp),
+                colors = fieldColors,
+                leadingIcon = {
+                    MdiIcon("mdi:magnify", tint = overlay.muted, size = 22.dp)
+                },
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                listOf(
+                    "track" to "Tracks",
+                    "album" to "Albums",
+                    "playlist" to "Playlists",
+                    "artist" to "Artists",
+                ).forEach { (type, label) ->
+                    val active = type in discovery.searchTypes
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (active) ActiveYellow else overlay.card)
+                            .clickable { viewModel.toggleMusicSearchType(type) }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            label,
+                            color = if (active) Color.Black else overlay.text,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(overlay.card)
+                    .clickable { viewModel.openAppleMusicBrowse() }
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+            ) {
+                Text("Browse Apple Music", color = overlay.text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            }
+        }
 
         if (!selectedHasMass) {
             Text(
@@ -607,6 +654,9 @@ private fun DiscoverPane(
         }
 
         when {
+            browsing -> {
+                MusicBrowsePane(viewModel = viewModel, discovery = discovery)
+            }
             discovery.searchLoading -> {
                 Box(Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
                     LoadingSpinner()
@@ -614,13 +664,22 @@ private fun DiscoverPane(
             }
             discovery.searchResults != null -> {
                 val results = discovery.searchResults
+                val types = discovery.searchTypes
                 if (results.isEmpty) {
                     Text("No matches for “${discovery.searchQuery.trim()}”.", color = overlay.muted, fontSize = 14.sp)
                 } else {
-                    SearchResultSection("Tracks", results.tracks, discovery.playingUri, viewModel)
-                    SearchResultSection("Albums", results.albums, discovery.playingUri, viewModel)
-                    SearchResultSection("Playlists", results.playlists, discovery.playingUri, viewModel)
-                    SearchResultSection("Artists", results.artists, discovery.playingUri, viewModel)
+                    if ("track" in types) {
+                        SearchResultSection("Tracks", results.tracks, discovery.playingUri, viewModel)
+                    }
+                    if ("album" in types) {
+                        SearchResultSection("Albums", results.albums, discovery.playingUri, viewModel)
+                    }
+                    if ("playlist" in types) {
+                        SearchResultSection("Playlists", results.playlists, discovery.playingUri, viewModel)
+                    }
+                    if ("artist" in types) {
+                        SearchResultSection("Artists", results.artists, discovery.playingUri, viewModel)
+                    }
                 }
             }
             discovery.loading -> {
@@ -635,6 +694,7 @@ private fun DiscoverPane(
                     items = discovery.recentlyPlayed,
                     playingUri = discovery.playingUri,
                     viewModel = viewModel,
+                    onSeeAll = { viewModel.openAppleMusicSeeAll("recent") },
                 )
                 DiscoveryShelf(
                     title = "New music",
@@ -642,6 +702,7 @@ private fun DiscoverPane(
                     items = discovery.newMusic,
                     playingUri = discovery.playingUri,
                     viewModel = viewModel,
+                    onSeeAll = { viewModel.openAppleMusicSeeAll("new_music") },
                 )
                 DiscoveryShelf(
                     title = "Stations for you",
@@ -649,7 +710,62 @@ private fun DiscoverPane(
                     items = discovery.stationsForYou,
                     playingUri = discovery.playingUri,
                     viewModel = viewModel,
+                    onSeeAll = { viewModel.openAppleMusicSeeAll("stations") },
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MusicBrowsePane(viewModel: HaViewModel, discovery: MusicDiscoveryState) {
+    val overlay = LocalOverlay.current
+    val frame = discovery.browseStack.lastOrNull() ?: return
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(overlay.card)
+                    .clickable { viewModel.browseMusicBack() },
+                contentAlignment = Alignment.Center,
+            ) {
+                MdiIcon("mdi:chevron-left", tint = overlay.text, size = 24.dp)
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    frame.title,
+                    color = overlay.text,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text("Apple Music", color = overlay.muted, fontSize = 12.sp)
+            }
+        }
+        when {
+            frame.loading -> Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
+                LoadingSpinner()
+            }
+            frame.error != null && frame.items.isEmpty() -> Text(frame.error, color = Color(0xFFFF8A80), fontSize = 13.sp)
+            frame.items.isEmpty() -> Text("Nothing here", color = overlay.muted, fontSize = 14.sp)
+            else -> {
+                frame.error?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 13.sp) }
+                frame.items.forEach { item ->
+                    DiscoveryListRow(
+                        item = item,
+                        playing = item.uri == discovery.playingUri,
+                        onClick = { viewModel.onMusicBrowseItem(item) },
+                        viewModel = viewModel,
+                        showPlayIcon = item.canPlay,
+                    )
+                }
             }
         }
     }
@@ -662,12 +778,32 @@ private fun DiscoveryShelf(
     items: List<MassMediaItem>,
     playingUri: String?,
     viewModel: HaViewModel,
+    onSeeAll: (() -> Unit)? = null,
 ) {
     val overlay = LocalOverlay.current
     if (items.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(title, color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-        Text(subtitle, color = overlay.muted, fontSize = 13.sp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                Text(subtitle, color = overlay.muted, fontSize = 13.sp)
+            }
+            if (onSeeAll != null) {
+                Text(
+                    "See all",
+                    color = ActiveYellow,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable(onClick = onSeeAll)
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            }
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -725,14 +861,26 @@ private fun DiscoveryTile(
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        val thumb = Modifier
-            .size(128.dp)
-            .clip(RoundedCornerShape(14.dp))
-        if (!item.imageUrl.isNullOrBlank()) {
-            EntityPicture(path = item.imageUrl, viewModel = viewModel, modifier = thumb)
-        } else {
-            Box(modifier = thumb.background(overlay.well), contentAlignment = Alignment.Center) {
-                MdiIcon("mdi:music-note", tint = overlay.muted, size = 36.dp)
+        Box {
+            MusicCover(
+                path = item.imageUrl,
+                viewModel = viewModel,
+                modifier = Modifier
+                    .size(128.dp)
+                    .clip(RoundedCornerShape(14.dp)),
+                spinnerSize = 20.dp,
+                fallbackIconSize = 36.dp,
+            )
+            if (playing) {
+                Box(
+                    modifier = Modifier
+                        .size(128.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color.Black.copy(alpha = 0.35f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    LoadingSpinner(color = Color.White, indicatorSize = 24.dp)
+                }
             }
         }
         Text(
@@ -759,6 +907,7 @@ private fun DiscoveryListRow(
     playing: Boolean,
     onClick: () -> Unit,
     viewModel: HaViewModel,
+    showPlayIcon: Boolean = true,
 ) {
     val overlay = LocalOverlay.current
     Row(
@@ -771,12 +920,24 @@ private fun DiscoveryListRow(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val thumb = Modifier.size(56.dp).clip(RoundedCornerShape(12.dp))
-        if (!item.imageUrl.isNullOrBlank()) {
-            EntityPicture(path = item.imageUrl, viewModel = viewModel, modifier = thumb)
-        } else {
-            Box(modifier = thumb.background(overlay.well), contentAlignment = Alignment.Center) {
-                MdiIcon("mdi:music-note", tint = overlay.muted, size = 22.dp)
+        Box {
+            MusicCover(
+                path = item.imageUrl,
+                viewModel = viewModel,
+                modifier = Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)),
+                spinnerSize = 16.dp,
+                fallbackIconSize = 22.dp,
+            )
+            if (playing) {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.Black.copy(alpha = 0.35f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    LoadingSpinner(color = Color.White, indicatorSize = 18.dp)
+                }
             }
         }
         Column(modifier = Modifier.weight(1f)) {
@@ -796,7 +957,25 @@ private fun DiscoveryListRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        MdiIcon("mdi:play-circle", tint = if (playing) Color.Black else overlay.muted, size = 28.dp)
+        when {
+            playing -> LoadingSpinner(indicatorSize = 22.dp)
+            item.canBrowse -> MdiIcon("mdi:chevron-right", tint = overlay.muted, size = 24.dp)
+            showPlayIcon && item.canPlay -> MdiIcon("mdi:play-circle", tint = overlay.muted, size = 28.dp)
+        }
+    }
+}
+
+private fun searchPlaceholder(types: Set<String>): String {
+    val labels = listOf(
+        "track" to "tracks",
+        "album" to "albums",
+        "playlist" to "playlists",
+        "artist" to "artists",
+    ).filter { it.first in types }.map { it.second }
+    return when {
+        labels.isEmpty() -> "Search…"
+        labels.size == 4 -> "Search tracks, albums, playlists, artists…"
+        else -> "Search ${labels.joinToString(", ")}…"
     }
 }
 
@@ -1184,13 +1363,13 @@ private fun QueueItemRow(item: MusicAssistantQueueItem, viewModel: HaViewModel, 
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val thumbMod = Modifier.size(64.dp).clip(RoundedCornerShape(14.dp))
-        if (!item.imageUrl.isNullOrBlank()) {
-            EntityPicture(path = item.imageUrl, viewModel = viewModel, modifier = thumbMod)
-        } else {
-            Box(modifier = thumbMod.background(overlay.card), contentAlignment = Alignment.Center) {
-                MdiIcon("mdi:music-note", tint = overlay.muted, size = 24.dp)
-            }
-        }
+        MusicCover(
+            path = item.imageUrl,
+            viewModel = viewModel,
+            modifier = thumbMod,
+            spinnerSize = 18.dp,
+            fallbackIconSize = 24.dp,
+        )
         Box(modifier = Modifier.weight(1f)) {
             Column {
                 Text(
