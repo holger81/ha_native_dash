@@ -137,6 +137,7 @@ class HaViewModel(
     private val _debugPersonCamerasEnabled = MutableStateFlow(false)
     val debugPersonCamerasEnabled: StateFlow<Boolean> = _debugPersonCamerasEnabled
     private var personCameraCooldownJob: Job? = null
+    private var popupAutoDismissJob: Job? = null
 
     private var lastActivityMs = System.currentTimeMillis()
     private var sleptAtMs = 0L
@@ -393,6 +394,7 @@ class HaViewModel(
             drawerOpen = false,
             weatherPopupContext = null,
         )
+        schedulePopupAutoDismiss(hash)
     }
 
     fun openWeatherPopup(
@@ -405,10 +407,26 @@ class HaViewModel(
             drawerOpen = false,
             weatherPopupContext = WeatherPopupContext(focusDate, entityId, initialTab),
         )
+        schedulePopupAutoDismiss("#weather")
     }
 
     fun closePopup() {
+        popupAutoDismissJob?.cancel()
+        popupAutoDismissJob = null
         _ui.value = _ui.value.copy(popupHash = null, weatherPopupContext = null)
+    }
+
+    /** Auto-close dock/drawer popups after idle; camera stays open until dismissed. */
+    private fun schedulePopupAutoDismiss(hash: String?) {
+        popupAutoDismissJob?.cancel()
+        popupAutoDismissJob = null
+        if (hash.isNullOrBlank() || hash == CAMERA_POPUP_HASH) return
+        popupAutoDismissJob = viewModelScope.launch {
+            delay(POPUP_AUTO_DISMISS_MS)
+            if (_ui.value.popupHash == hash) {
+                closePopup()
+            }
+        }
     }
 
     fun openMoreInfo(entityId: String?) {
@@ -1163,6 +1181,8 @@ class HaViewModel(
 
     companion object {
         private const val AUTO_BRIGHTNESS_RAMP_MS = 90L
+        private const val POPUP_AUTO_DISMISS_MS = 120_000L
+        private const val CAMERA_POPUP_HASH = "#camerafront_view"
         private const val MMWAVE_OCCUPANCY_ENTITY = "binary_sensor.secondary_living_room_switch_occupancy"
         private const val MMWAVE_TARGET_COUNT_ENTITY = "input_number.secondary_living_room_mmwave_target_count"
 
