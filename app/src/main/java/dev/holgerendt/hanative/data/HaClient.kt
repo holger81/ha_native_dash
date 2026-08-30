@@ -4,6 +4,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -162,6 +163,7 @@ class HaClient {
     companion object {
         private const val MASS_COMMAND_MAX_ATTEMPTS = 3
         private const val MASS_COMMAND_RETRY_BASE_MS = 400L
+        private const val COMMAND_TIMEOUT_MS = 30_000L
     }
 
     private var webSocket: WebSocket? = null
@@ -220,14 +222,18 @@ class HaClient {
     fun disconnect() {
         webSocket?.close(1000, "bye")
         webSocket = null
-        pending.values.forEach { it(Result.failure(IllegalStateException("Disconnected"))) }
-        pending.clear()
-        forecastSubscriptions.values.forEach { it(emptyList()) }
-        forecastSubscriptions.clear()
+        drainPending(IllegalStateException("Disconnected"))
         massIngress = null
         massAddonSlug = null
         massPlayersCache = null
         _connection.value = ConnectionState.Disconnected
+    }
+
+    private fun drainPending(error: Throwable) {
+        pending.values.forEach { it(Result.failure(error)) }
+        pending.clear()
+        forecastSubscriptions.values.forEach { it(emptyList()) }
+        forecastSubscriptions.clear()
     }
 
     private fun openSocket() {
@@ -241,10 +247,16 @@ class HaClient {
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (this@HaClient.webSocket !== webSocket) return
+                this@HaClient.webSocket = null
+                drainPending(t)
                 _connection.value = ConnectionState.Error(t.message ?: "WebSocket failed")
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (this@HaClient.webSocket !== webSocket) return
+                this@HaClient.webSocket = null
+                drainPending(IllegalStateException("Connection closed ($code: $reason)"))
                 if (_connection.value is ConnectionState.Connected) {
                     _connection.value = ConnectionState.Disconnected
                 }
@@ -253,6 +265,7 @@ class HaClient {
     }
 
     private fun handleMessage(ws: WebSocket, text: String) {
+        if (ws !== webSocket) return
         val obj = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
         when (obj["type"]?.jsonPrimitive?.contentOrNull) {
             "auth_required" -> {
@@ -284,6 +297,9 @@ class HaClient {
                 })
             }
             "auth_invalid" -> {
+                webSocket?.close(4001, "auth_invalid")
+                webSocket = null
+                drainPending(IllegalStateException("Invalid access token"))
                 _connection.value = ConnectionState.Error("Invalid access token")
             }
             "result" -> {
@@ -393,23 +409,26 @@ class HaClient {
 
     private suspend fun command(builder: JsonObjectBuilder.(Int) -> Unit): JsonElement {
         val id = nextId.getAndIncrement()
-        return suspendCancellableCoroutine { cont ->
-            pending[id] = { result ->
-                result.fold(
-                    onSuccess = { cont.resume(it) },
-                    onFailure = { cont.resumeWithException(it) },
-                )
+        val result = withTimeoutOrNull(COMMAND_TIMEOUT_MS) {
+            suspendCancellableCoroutine<JsonElement> { cont ->
+                pending[id] = { r ->
+                    r.fold(
+                        onSuccess = { cont.resume(it) },
+                        onFailure = { cont.resumeWithException(it) },
+                    )
+                }
+                val payload = buildJsonObject {
+                    put("id", id)
+                    builder(id)
+                }
+                if (webSocket?.send(payload.toString()) != true) {
+                    pending.remove(id)
+                    cont.resumeWithException(IllegalStateException("Not connected"))
+                }
+                cont.invokeOnCancellation { pending.remove(id) }
             }
-            val payload = buildJsonObject {
-                put("id", id)
-                builder(id)
-            }
-            if (webSocket?.send(payload.toString()) != true) {
-                pending.remove(id)
-                cont.resumeWithException(IllegalStateException("Not connected"))
-            }
-            cont.invokeOnCancellation { pending.remove(id) }
         }
+        return result ?: throw IllegalStateException("Command timed out after ${COMMAND_TIMEOUT_MS}ms")
     }
 
     suspend fun callService(
@@ -1595,24 +1614,4 @@ class HaClient {
         }
     }
 
-    suspend fun reconnectLoop() {
-        var attempt = 0
-        while (true) {
-            try {
-                if (_connection.value !is ConnectionState.Connected && baseUrl.isNotBlank() && token.isNotBlank()) {
-                    openSocket()
-                }
-                delay(if (_connection.value is ConnectionState.Connected) 15_000 else (2000L * (attempt + 1)).coerceAtMost(15_000))
-                if (_connection.value is ConnectionState.Connected) {
-                    attempt = 0
-                } else {
-                    attempt++
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                delay(3000)
-            }
-        }
-    }
 }
