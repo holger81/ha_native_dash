@@ -215,6 +215,13 @@ class HaClient {
         disconnect()
         baseUrl = url.trim().trimEnd('/')
         token = accessToken.trim()
+        val host = NetworkGuard.hostOf(baseUrl)
+        if (host == null || !NetworkGuard.isPrivateHost(host)) {
+            _connection.value = ConnectionState.Error(
+                "Home Assistant must be on the local network (private IP or .local name), not '$host'",
+            )
+            return
+        }
         _connection.value = ConnectionState.Connecting
         openSocket()
     }

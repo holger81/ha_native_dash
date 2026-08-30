@@ -86,6 +86,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.holgerendt.hanative.data.EntityState
 import dev.holgerendt.hanative.data.HaCalendarEvent
+import dev.holgerendt.hanative.data.NetworkGuard
 import dev.holgerendt.hanative.R
 import dev.holgerendt.hanative.data.timelineSnapshotPath
 import dev.holgerendt.hanative.data.hasLiveCameraSource
@@ -1102,7 +1103,9 @@ fun MediaVideoDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
     var loadFailed by remember(preview.path) { mutableStateOf(false) }
     LaunchedEffect(preview.path, viewModel.client.currentBaseUrl) {
         loadFailed = false
-        videoUrl = runCatching { viewModel.client.authenticatedMediaUrl(preview.path) }.getOrNull()
+        videoUrl = runCatching { viewModel.client.authenticatedMediaUrl(preview.path) }
+            .getOrNull()
+            ?.takeIf { NetworkGuard.hostOf(it)?.let(NetworkGuard::isPrivateHost) == true }
         if (videoUrl.isNullOrBlank()) loadFailed = true
     }
     val exoPlayer = remember(videoUrl) {

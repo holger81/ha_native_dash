@@ -160,6 +160,7 @@ object CameraStreams {
                 }
             }
             out.distinctBy { it.url }
+                .filter { candidate -> NetworkGuard.hostOf(candidate.url)?.let(NetworkGuard::isPrivateHost) == true }
         }
 
     suspend fun readJpeg(url: String, headers: Map<String, String>): Bitmap? = withContext(Dispatchers.IO) {

@@ -5,7 +5,6 @@ import java.io.ByteArrayInputStream
 import java.net.URLDecoder
 import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
 import javax.net.ssl.SSLServerSocketFactory
 
 class ManagementServer(
@@ -21,8 +20,13 @@ class ManagementServer(
 
     private data class AdminSession(val expiresAt: Long, val pin: String)
 
-    private val failures = AtomicInteger(0)
-    @Volatile private var lockedUntil = 0L
+    private class FailureState {
+        var count = 0
+        var lockedUntil = 0L
+        var lastAttempt = 0L
+    }
+
+    private val failures = ConcurrentHashMap<String, FailureState>()
     private val random = SecureRandom()
     private val sessions = ConcurrentHashMap<String, AdminSession>()
 
@@ -38,7 +42,8 @@ class ManagementServer(
             session.method == Method.GET && uri == "/logout" -> handleLogout(session)
             session.method == Method.POST && uri == "/logout" -> handleLogout(session)
             session.method == Method.GET && uri == "/screenshot" -> handleScreenshot(session)
-            session.method == Method.OPTIONS && (uri == "/api/command" || uri == "/api/state") -> corsPreflight()
+            session.method == Method.OPTIONS && (uri == "/api/command" || uri == "/api/state") ->
+                corsPreflight(session)
             session.method == Method.GET && uri == "/api/state" -> handleKioskState(session)
             (session.method == Method.GET || session.method == Method.POST) && uri == "/api/command" ->
                 handleKioskCommand(session)
@@ -59,8 +64,8 @@ class ManagementServer(
     private fun handleLogin(session: IHTTPSession): Response {
         val files = HashMap<String, String>()
         runCatching { session.parseBody(files) }
-        val pin = formParams(session, files)["pin"].orEmpty().replace(" ", "")
-        pinError(pin)?.let { message ->
+        val pin = pinFromBody(files["postData"].orEmpty()).orEmpty().replace(" ", "")
+        pinError(pin, clientKey(session))?.let { message ->
             return html(loginPage(message), Response.Status.FORBIDDEN)
         }
         val token = newSessionToken()
@@ -92,8 +97,8 @@ class ManagementServer(
     }
 
     private fun handleKioskState(session: IHTTPSession): Response {
-        authorizeApi(session)?.let { return json(Response.Status.UNAUTHORIZED, """{"ok":false,"error":"${escape(it)}"}""") }
-        return json(Response.Status.OK, snapshotJson())
+        authorizeApi(session)?.let { return json(session, Response.Status.UNAUTHORIZED, """{"ok":false,"error":"${escape(it)}"}""") }
+        return json(session, Response.Status.OK, snapshotJson())
     }
 
     private fun handleKioskCommand(session: IHTTPSession): Response {
@@ -112,11 +117,11 @@ class ManagementServer(
         if (body.trimStart().startsWith("{")) {
             params.putAll(flattenBody(body))
         }
-        authorizeApi(session, params["pin"])?.let {
-            return json(Response.Status.UNAUTHORIZED, """{"ok":false,"error":"${escape(it)}"}""")
+        authorizeApi(session, pinFromBody(body))?.let {
+            return json(session, Response.Status.UNAUTHORIZED, """{"ok":false,"error":"${escape(it)}"}""")
         }
         if (!KioskCommands.panelAllowed(params)) {
-            return json(Response.Status.OK, """{"ok":true,"ignored":true,"reason":"panel mismatch"}""")
+            return json(session, Response.Status.OK, """{"ok":true,"ignored":true,"reason":"panel mismatch"}""")
         }
         val command = if (body.trimStart().startsWith("{")) {
             KioskCommands.fromJson(body) ?: KioskCommands.fromParams(params)
@@ -125,12 +130,13 @@ class ManagementServer(
         }
         if (command == null) {
             return json(
+                session,
                 Response.Status.BAD_REQUEST,
                 """{"ok":false,"error":"Unknown command. Use cmd=wake, cmd=sleep, cmd=camera, cmd=navigate&path=#camerafront_view, or cmd=home."}""",
             )
         }
         onCommand(command)
-        return json(Response.Status.OK, snapshotJson())
+        return json(session, Response.Status.OK, snapshotJson())
     }
 
     private fun handleWake(session: IHTTPSession): Response {
@@ -172,28 +178,55 @@ class ManagementServer(
     private fun apiPinError(session: IHTTPSession, bodyPin: String? = null): String? {
         val headerPin = session.headers["x-ha-pin"]
             ?: session.headers["authorization"]?.removePrefix("Bearer ")?.trim()
-        val queryPin = session.parameters["pin"]?.firstOrNull()
-        val pin = (headerPin ?: queryPin ?: bodyPin).orEmpty().replace(" ", "")
-        return pinError(pin)
+        val pin = (headerPin ?: bodyPin).orEmpty().replace(" ", "")
+        return pinError(pin, clientKey(session))
     }
 
-    private fun corsPreflight(): Response {
+    private fun pinFromBody(body: String): String? {
+        if (body.isBlank()) return null
+        return if (body.trimStart().startsWith("{")) {
+            flattenBody(body)["pin"]
+        } else {
+            body.split("&").firstNotNullOfOrNull { part ->
+                val idx = part.indexOf('=')
+                if (idx < 0) return@firstNotNullOfOrNull null
+                val key = URLDecoder.decode(part.substring(0, idx), Charsets.UTF_8.name())
+                if (key != "pin") return@firstNotNullOfOrNull null
+                URLDecoder.decode(part.substring(idx + 1), Charsets.UTF_8.name())
+            }
+        }
+    }
+
+    private fun clientKey(session: IHTTPSession): String = session.remoteIpAddress ?: "unknown"
+
+    private fun corsPreflight(session: IHTTPSession): Response {
         val response = newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "")
-        addCors(response)
-        response.addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        response.addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-HA-PIN")
+        addCors(response, session)
+        if (corsAllowed(session)) {
+            response.addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            response.addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-HA-PIN")
+        }
         return response
     }
 
-    private fun json(status: Response.Status, body: String): Response {
+    private fun json(session: IHTTPSession, status: Response.Status, body: String): Response {
         val response = newFixedLengthResponse(status, "application/json", body)
         response.addHeader("Cache-Control", "no-store")
-        addCors(response)
+        addCors(response, session)
         return response
     }
 
-    private fun addCors(response: Response) {
-        response.addHeader("Access-Control-Allow-Origin", "*")
+    private fun addCors(response: Response, session: IHTTPSession) {
+        if (!corsAllowed(session)) return
+        response.addHeader("Access-Control-Allow-Origin", session.headers["origin"])
+        response.addHeader("Vary", "Origin")
+    }
+
+    private fun corsAllowed(session: IHTTPSession): Boolean {
+        val origin = session.headers["origin"] ?: return false
+        val host = session.headers["host"] ?: return false
+        val sep = origin.indexOf("://")
+        return sep > 0 && origin.substring(sep + 3).trimEnd('/') == host
     }
 
     private fun handleSetup(session: IHTTPSession): Response {
@@ -253,21 +286,32 @@ class ManagementServer(
         sessions.entries.removeIf { now >= it.value.expiresAt || it.value.pin != currentPin }
     }
 
-    private fun pinError(pin: String): String? {
+    private fun pinError(pin: String, client: String): String? {
         val now = System.currentTimeMillis()
-        if (now < lockedUntil) {
-            return "Too many attempts. Wait a moment and try again."
+        if (pin == pinProvider()) {
+            failures.remove(client)
+            return null
         }
-        if (pin != pinProvider()) {
-            val count = failures.incrementAndGet()
-            if (count >= 5) {
-                lockedUntil = now + 30_000
-                failures.set(0)
+        if (failures.size > MAX_TRACKED_CLIENTS) {
+            failures.entries.removeIf {
+                it.value.lockedUntil < now && now - it.value.lastAttempt > FAILURE_EXPIRY_MS
             }
-            return "PIN does not match the wall panel."
         }
-        failures.set(0)
-        return null
+        val state = failures.computeIfAbsent(client) { FailureState() }
+        synchronized(state) {
+            if (now < state.lockedUntil) {
+                return LOCKOUT_MESSAGE
+            }
+            state.lastAttempt = now
+            state.count += 1
+            return if (state.count >= MAX_FAILURES) {
+                state.count = 0
+                state.lockedUntil = now + LOCKOUT_MS
+                LOCKOUT_MESSAGE
+            } else {
+                "PIN does not match the wall panel."
+            }
+        }
     }
 
     private fun formParams(session: IHTTPSession, files: Map<String, String>): Map<String, String> {
@@ -475,6 +519,11 @@ class ManagementServer(
         const val PORT = 8765
         private const val COOKIE_NAME = "mgmt_session"
         private const val SESSION_TTL_MS = 12 * 60 * 60 * 1000L
+        private const val MAX_FAILURES = 5
+        private const val LOCKOUT_MS = 30_000L
+        private const val FAILURE_EXPIRY_MS = 10 * 60_000L
+        private const val MAX_TRACKED_CLIENTS = 256
+        private const val LOCKOUT_MESSAGE = "Too many attempts. Wait a moment and try again."
         private const val CSS = """
                 :root { color-scheme: dark; }
                 body { font-family: -apple-system, system-ui, sans-serif; background:#111; color:#f3f1ec;

@@ -9,8 +9,10 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import coil.request.CachePolicy
 import dev.holgerendt.hanative.data.HaClient
+import dev.holgerendt.hanative.data.NetworkGuard
 import okhttp3.OkHttpClient
 import java.io.File
+import java.io.IOException
 
 private const val DISK_CACHE_DIR = "ha_image_cache"
 private const val DISK_CACHE_MAX_BYTES = 64L * 1024L * 1024L
@@ -37,9 +39,15 @@ fun haImageLoader(context: Context, client: HaClient): ImageLoader {
             OkHttpClient.Builder()
                 .addInterceptor { chain ->
                     val request = chain.request()
-                    val url = request.url.toString()
+                    val url = request.url
+                    if (url.scheme == "http" || url.scheme == "https") {
+                        if (!NetworkGuard.isPrivateHost(url.host)) {
+                            throw IOException("Blocked: image host '${url.host}' is not on the local network")
+                        }
+                    }
+                    val urlText = request.url.toString()
                     val base = client.currentBaseUrl.trimEnd('/')
-                    val needsAuth = base.isNotBlank() && url.startsWith(base)
+                    val needsAuth = base.isNotBlank() && urlText.startsWith(base)
                     val builder = request.newBuilder()
                     if (needsAuth) {
                         client.bearerHeaders().forEach { (key, value) ->

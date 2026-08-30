@@ -86,7 +86,7 @@ actions:
 
 ### REST (Fully / WallPanel style)
 
-HTTPS on port **8765**, authenticated with the wall **PIN** (`pin` query, JSON field, `X-HA-PIN` header, or `Authorization: Bearer <PIN>`).
+HTTPS on port **8765**, authenticated with the wall **PIN** (JSON field, form field, `X-HA-PIN` header, or `Authorization: Bearer <PIN>`). The PIN is never accepted in the query string.
 
 ```yaml
 rest_command:
@@ -99,7 +99,7 @@ rest_command:
     payload: '{"cmd":"{{ cmd }}","path":"{{ path }}","pin":"YOUR_PIN"}'
 ```
 
-Then `action: rest_command.greatroom_wall` with `cmd: camera` (or `navigate` and `path: "#camerafront_view"`). `GET /api/state?pin=PIN` returns the current popup.
+Then `action: rest_command.greatroom_wall` with `cmd: camera` (or `navigate` and `path: "#camerafront_view"`). `GET /api/state` with an `X-HA-PIN: PIN` header returns the current popup.
 
 Dashboard layout is generated from `~/Projects/ha_dashboards/greatroom-wall.yaml` into `app/src/main/assets/dashboard.json`. Re-run:
 

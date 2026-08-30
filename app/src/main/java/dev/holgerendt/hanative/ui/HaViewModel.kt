@@ -26,6 +26,7 @@ import dev.holgerendt.hanative.data.MassMediaItem
 import dev.holgerendt.hanative.data.MassSearchResults
 import dev.holgerendt.hanative.data.MmWaveLiveTargets
 import dev.holgerendt.hanative.data.MmWaveLiveTracker
+import dev.holgerendt.hanative.data.NetworkGuard
 import dev.holgerendt.hanative.data.isShuffleOn
 import dev.holgerendt.hanative.data.mediaArtist
 import dev.holgerendt.hanative.data.mediaPositionSec
@@ -349,6 +350,12 @@ class HaViewModel(
 
     suspend fun connect(url: String, token: String): Result<Unit> {
         _ui.value = _ui.value.copy(setupBusy = true, setupError = null)
+        val host = NetworkGuard.hostOf(url.trim())
+        if (host == null || !NetworkGuard.isPrivateHost(host)) {
+            val message = "Home Assistant must be on the local network (private IP or .local name), not '$host'"
+            _ui.value = _ui.value.copy(setupBusy = false, setupError = message)
+            return Result.failure(IllegalStateException(message))
+        }
         val result = withContext(Dispatchers.IO) { client.testRest(url, token) }
         if (result.isFailure) {
             val message = result.exceptionOrNull()?.message ?: "Connection failed"

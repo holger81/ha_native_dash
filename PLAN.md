@@ -37,14 +37,17 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
     existing devices.
   - Legacy plaintext files are read transparently (no magic → parse as-is) and
     re-sealed on the next persist.
-- [ ] **1.4 Management API hardening** (`data/ManagementServer.kt`)
+- [x] **1.4 Management API hardening** (`data/ManagementServer.kt`)
   - Per-IP lockout (replace single global counter).
   - PIN only in request body, never query string.
   - CORS from `*` to same-origin + panel UI origin.
-- [ ] **1.5 Scope network trust** (`res/xml/network_security_config.xml`) —
+- [x] **1.5 Scope network trust** (`res/xml/network_security_config.xml`) —
   keep cleartext + user CAs (needed for `http://` HA and self-signed HTTPS) but
   only for private ranges: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
   `*.local`, localhost.
+  - Android XML can't scope to IP ranges, so `NetworkGuard` enforces the private
+    policy in code at every egress point: WS connect, setup connect, image
+    loader, go2rtc candidates, media video URLs.
 - [ ] **1.6 MoreInfo history polling** (`ui/MoreInfo.kt`) — fixed 45s loop;
   entity/lastChanged changes do a debounced one-shot refetch instead of restart.
 - [ ] **1.7 dashboard.json regeneration safety** (`scripts/extract_dashboard.py`)
