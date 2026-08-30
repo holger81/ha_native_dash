@@ -130,10 +130,8 @@ private val ToggleDomains = setOf(
 @Composable
 fun MoreInfoDialog(entityId: String, viewModel: HaViewModel) {
     val overlay = OverlayLightPopup
-    val states by viewModel.states.collectAsState()
-    val entity = states[entityId]
+    val entity by viewModel.entityFlow(entityId).collectAsState()
     val domain = entityId.substringBefore('.')
-    val now = rememberNowTick()
     CompositionLocalProvider(LocalOverlay provides overlay) {
         InWindowOverlay(
             onDismiss = { viewModel.closeMoreInfo() },
@@ -154,10 +152,10 @@ fun MoreInfoDialog(entityId: String, viewModel: HaViewModel) {
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 MoreInfoChrome(entityId, entity, viewModel, overlay)
-                MoreInfoStateRow(entityId, entity, domain, viewModel, now)
+                MoreInfoStateRow(entityId, entity, domain, viewModel)
                 MoreInfoControls(entityId, entity, domain, viewModel)
                 if (domain in HistoryDomains) {
-                    MoreInfoHistory(entityId, entity, viewModel, now)
+                    MoreInfoHistory(entityId, entity, viewModel)
                 }
                 MoreInfoExtras(entityId, entity, domain, viewModel)
                 MoreInfoAttributes(entity)
@@ -186,9 +184,9 @@ private fun MoreInfoStateRow(
     entity: EntityState?,
     domain: String,
     viewModel: HaViewModel,
-    now: Instant,
 ) {
     val overlay = LocalOverlay.current
+    val now = rememberNowTick()
     val unit = entity?.attrString("unit_of_measurement").orEmpty()
     val numeric = domain in setOf("sensor", "number", "input_number") && entity?.state?.toDoubleOrNull() != null
     val display = when {
@@ -246,8 +244,7 @@ private fun MoreInfoControls(entityId: String, entity: EntityState?, domain: Str
     val yellow = ButtonDefaults.buttonColors(ActiveYellow)
     when (domain) {
         "light" -> {
-            val states by viewModel.states.collectAsState()
-            val pct = states.brightnessPct(entityId).toFloat()
+            val pct = entity.brightnessPct().toFloat()
             var value by remember(pct) { mutableFloatStateOf(pct) }
             Slider(
                 value = value,
@@ -305,9 +302,8 @@ private fun MoreInfoControls(entityId: String, entity: EntityState?, domain: Str
 }
 
 @Composable
-private fun MoreInfoHistory(entityId: String, entity: EntityState?, viewModel: HaViewModel, now: Instant) {
-    val states by viewModel.states.collectAsState()
-    val live = states[entityId] ?: entity
+private fun MoreInfoHistory(entityId: String, entity: EntityState?, viewModel: HaViewModel) {
+    val now = rememberNowTick()
     var buckets by remember(entityId) { mutableStateOf(listOf<HistoryBucket>()) }
     var loaded by remember(entityId) { mutableStateOf(false) }
     suspend fun refresh() {
@@ -326,13 +322,13 @@ private fun MoreInfoHistory(entityId: String, entity: EntityState?, viewModel: H
             delay(45_000)
         }
     }
-    LaunchedEffect(live?.state, live?.lastChanged) {
-        if (live == null) return@LaunchedEffect
+    LaunchedEffect(entity?.state, entity?.lastChanged) {
+        if (entity == null) return@LaunchedEffect
         delay(1_000)
         refresh()
     }
-    val plotted = remember(buckets, live?.state, live?.lastChanged, now) {
-        withLiveSample(buckets, live, now.toEpochMilli())
+    val plotted = remember(buckets, entity?.state, entity?.lastChanged, now) {
+        withLiveSample(buckets, entity, now.toEpochMilli())
     }
     Spacer(Modifier.height(8.dp))
     val overlay = LocalOverlay.current
@@ -353,7 +349,7 @@ private fun MoreInfoHistory(entityId: String, entity: EntityState?, viewModel: H
         )
         else -> HistoryGraphChart(
             buckets = plotted,
-            unit = live?.attrString("unit_of_measurement").orEmpty(),
+            unit = entity?.attrString("unit_of_measurement").orEmpty(),
             nowMs = now.toEpochMilli(),
         )
     }

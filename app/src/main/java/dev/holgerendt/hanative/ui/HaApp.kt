@@ -368,10 +368,10 @@ private fun PopupHost(popup: PopupNode, viewModel: HaViewModel) {
     val musicPopup = popup.hash == "#music"
     val weatherPopup = popup.hash == "#weather"
     val ui by viewModel.ui.collectAsState()
-    val states by viewModel.states.collectAsState()
     val weatherEntity = ui.weatherPopupContext?.entityId ?: "weather.forecast_tankerland_ct"
+    val weatherState by viewModel.entityFlow(if (weatherPopup) weatherEntity else null).collectAsState()
     val weatherSubtitle = if (weatherPopup) {
-        states[weatherEntity]?.friendlyName?.takeIf { it.isNotBlank() }
+        weatherState?.friendlyName?.takeIf { it.isNotBlank() }
     } else {
         null
     }
@@ -407,7 +407,8 @@ private fun SettingsPopup(popup: PopupNode, viewModel: HaViewModel) {
 private fun ScreenTimeoutCard(viewModel: HaViewModel) {
     val overlay = LocalOverlay.current
     val ui by viewModel.ui.collectAsState()
-    val states by viewModel.states.collectAsState()
+    val brightnessEntity = ui.displayBrightnessEntity.takeIf { it.isNotBlank() }
+    val brightnessState by viewModel.entityFlow(brightnessEntity).collectAsState()
     var secondsText by remember { mutableStateOf(ui.screenTimeoutSeconds.toString()) }
     var timeoutError by remember { mutableStateOf<String?>(null) }
     var timeoutMessage by remember { mutableStateOf<String?>(null) }
@@ -496,12 +497,11 @@ private fun ScreenTimeoutCard(viewModel: HaViewModel) {
             fieldColors = fieldColors,
             onSelect = viewModel::setDisplayIlluminanceEntity,
         )
-        val brightnessEntity = ui.displayBrightnessEntity.takeIf { it.isNotBlank() }
         if (brightnessEntity != null) {
-            val entity = states[brightnessEntity]
+            val entity = brightnessState
             val domain = brightnessEntity.substringBefore('.')
             val (rawMin, rawMax, rawLive) = when (domain) {
-                "light" -> Triple(0f, 100f, states.brightnessPct(brightnessEntity).toFloat())
+                "light" -> Triple(0f, 100f, entity.brightnessPct().toFloat())
                 else -> Triple(
                     entity?.attrDouble("min")?.toFloat() ?: 0f,
                     entity?.attrDouble("max")?.toFloat() ?: 255f,

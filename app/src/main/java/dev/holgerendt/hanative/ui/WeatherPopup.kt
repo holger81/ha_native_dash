@@ -75,9 +75,9 @@ private fun WeatherPopupBody(
     initialTab: String?,
 ) {
     val overlay = LocalOverlay.current
-    val states by viewModel.states.collectAsState()
-    val weather = states[weatherEntity]
-    val sunAbove = states["sun.sun"]?.state == "above_horizon"
+    val weather by viewModel.entityFlow(weatherEntity).collectAsState()
+    val sunState by viewModel.entityFlow("sun.sun").collectAsState()
+    val sunAbove = sunState?.state == "above_horizon"
     val today = LocalDate.now()
 
     var tab by remember(weatherEntity, focusDate, initialTab) {
@@ -107,7 +107,8 @@ private fun WeatherPopupBody(
     }
     val showingFocusedDay = focusDate != null && focusDate != today && focusedDayForecast != null
 
-    val currentTemp = states[tempEntity]?.state?.toDoubleOrNull()
+    val tempSensor by viewModel.entityFlow(tempEntity).collectAsState()
+    val currentTemp = tempSensor?.state?.toDoubleOrNull()
         ?: weather?.attrDouble("temperature")
     val temp = if (showingFocusedDay) {
         forecastNumber(focusedDayForecast?.get("temperature")) ?: currentTemp

@@ -60,6 +60,7 @@ import dev.holgerendt.hanative.model.PopupNode
 import dev.holgerendt.hanative.ui.theme.ActiveYellow
 import dev.holgerendt.hanative.ui.theme.LocalOverlay
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Native wall Music Assistant player: now playing / grouping / volumes,
@@ -68,7 +69,6 @@ import kotlinx.coroutines.delay
 @Composable
 fun MusicAssistantPopup(popup: PopupNode, viewModel: HaViewModel) {
     val wall by viewModel.musicWall.collectAsState()
-    val states by viewModel.states.collectAsState()
     val overlay = LocalOverlay.current
 
     if (wall.loading && wall.players.isEmpty()) {
@@ -117,8 +117,8 @@ fun MusicAssistantPopup(popup: PopupNode, viewModel: HaViewModel) {
                     .fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                PlayersSidebar(viewModel = viewModel, wall = wall, states = states)
-                NowPlayingPane(viewModel = viewModel, wall = wall, states = states)
+                PlayersSidebar(viewModel = viewModel, wall = wall)
+                NowPlayingPane(viewModel = viewModel, wall = wall)
             }
         }
     }
@@ -128,7 +128,6 @@ fun MusicAssistantPopup(popup: PopupNode, viewModel: HaViewModel) {
 private fun PlayersSidebar(
     viewModel: HaViewModel,
     wall: MusicWallState,
-    states: Map<String, EntityState>,
 ) {
     val overlay = LocalOverlay.current
     val selected = wall.players.firstOrNull { it.entityId == wall.selectedEntityId }
@@ -165,12 +164,12 @@ private fun PlayersSidebar(
             )
             groupSections.forEach { section ->
                 PlayerGroupBlock(
+                    viewModel = viewModel,
                     section = section,
                     selectedEntityId = wall.selectedEntityId,
                     selectedRootId = rootId,
                     groupedIds = groupedIds,
                     groupableIds = groupableIds,
-                    states = states,
                     onSelect = viewModel::selectMusicPlayer,
                     onGroupChange = { massId, checked -> viewModel.setPlayerGrouped(massId, checked) },
                 )
@@ -188,7 +187,7 @@ private fun PlayersSidebar(
             standalonePlayers.forEach { player ->
                 SidebarPlayerChip(
                     player = player,
-                    state = states[player.entityId],
+                    stateFlow = viewModel.entityFlow(player.entityId),
                     selectedEntityId = wall.selectedEntityId,
                     selectedRootId = rootId,
                     groupedIds = groupedIds,
@@ -200,7 +199,7 @@ private fun PlayersSidebar(
             }
         }
         val playingElsewhere = wall.players.firstOrNull {
-            it.entityId != wall.selectedEntityId && states[it.entityId]?.state == "playing"
+            it.entityId != wall.selectedEntityId && it.massPlaybackState.equals("playing", ignoreCase = true)
         }
         if (playingElsewhere != null && wall.selectedEntityId != null) {
             Spacer(Modifier.height(8.dp))
@@ -260,12 +259,11 @@ private fun MusicTabRow(selected: String, onSelect: (String) -> Unit) {
 private fun NowPlayingPane(
     viewModel: HaViewModel,
     wall: MusicWallState,
-    states: Map<String, EntityState>,
 ) {
     val overlay = LocalOverlay.current
     val selectedId = wall.selectedEntityId
     val selected = wall.players.firstOrNull { it.entityId == selectedId }
-    val entity = selectedId?.let { states[it] }
+    val entity by viewModel.entityFlow(selectedId).collectAsState()
     val playing = entity?.state == "playing" ||
         entity?.state == "paused" ||
         selected?.massPlaybackState.equals("playing", ignoreCase = true) ||
@@ -1026,12 +1024,12 @@ private fun resolveGroupMembers(
 
 @Composable
 private fun PlayerGroupBlock(
+    viewModel: HaViewModel,
     section: PlayerGroupSection,
     selectedEntityId: String?,
     selectedRootId: String?,
     groupedIds: Set<String>,
     groupableIds: Set<String>,
-    states: Map<String, EntityState>,
     onSelect: (String) -> Unit,
     onGroupChange: (String, Boolean) -> Unit,
 ) {
@@ -1083,7 +1081,7 @@ private fun PlayerGroupBlock(
             }
             SidebarPlayerChip(
                 player = player,
-                state = states[player.entityId],
+                stateFlow = viewModel.entityFlow(player.entityId),
                 selectedEntityId = selectedEntityId,
                 selectedRootId = selectedRootId,
                 groupedIds = groupedIds,
@@ -1099,7 +1097,7 @@ private fun PlayerGroupBlock(
 @Composable
 private fun SidebarPlayerChip(
     player: MusicAssistantPlayer,
-    state: EntityState?,
+    stateFlow: StateFlow<EntityState?>,
     selectedEntityId: String?,
     selectedRootId: String?,
     groupedIds: Set<String>,
@@ -1108,6 +1106,7 @@ private fun SidebarPlayerChip(
     onSelect: () -> Unit,
     onGroupChange: (String, Boolean) -> Unit,
 ) {
+    val state by stateFlow.collectAsState()
     val massId = player.massPlayerId
     val inGroup = massId != null && massId in groupedIds
     val canToggle = massId != null && (

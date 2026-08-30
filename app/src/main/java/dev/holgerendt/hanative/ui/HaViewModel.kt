@@ -47,6 +47,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -145,6 +146,17 @@ class HaViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
     val connection: StateFlow<ConnectionState> = client.connection
         .stateIn(viewModelScope, SharingStarted.Eagerly, ConnectionState.Disconnected)
+
+    private val entityFlows = HashMap<String, StateFlow<EntityState?>>()
+    fun entityFlow(entityId: String?): StateFlow<EntityState?> {
+        if (entityId == null) return flowOf(null).stateIn(viewModelScope, SharingStarted.Eagerly, null)
+        return entityFlows.getOrPut(entityId) {
+            client.states
+                .map { it[entityId] }
+                .distinctUntilChanged()
+                .stateIn(viewModelScope, SharingStarted.Lazily, null)
+        }
+    }
 
     private val _ui = MutableStateFlow(
         UiState(showSetup = !credentials.isConfigured),
