@@ -71,9 +71,13 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   - **Done (2026-08-30):** `rememberNowTick()` moved into `MoreInfoStateRow`
     and `MoreInfoHistory` individually; music 250ms tick already scoped to
     `liveMediaPosition` inside `NowPlayingPane`.
-- [ ] **2.3 WS off the reader thread + batching** (`HaClient.kt`) — single
+- [x] **2.3 WS off the reader thread + batching** (`HaClient.kt`) — single
   collector coroutine for JSON handling; coalesce `state_changed` into one
   `_states.update` per ~60–100ms.
+  - **Done (2026-08-30):** `onMessage` now just `trySend`s to a buffered
+    `Channel`; a single collector coroutine on `Dispatchers.Default` parses
+    JSON and dispatches events. `state_changed` entities are buffered in a
+    `ConcurrentHashMap` and flushed to `_states` in one `update` every 80ms.
 - [ ] **2.4 Camera comes up immediately on door detection**
   - Start `CameraStreams.prefetch()` + `liveCameras.ensureRunning(wallPanelCameras)`
     as soon as credentials exist (go2rtc URLs need no HA token) — before WS auth.

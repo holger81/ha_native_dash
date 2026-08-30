@@ -1,8 +1,13 @@
 package dev.holgerendt.hanative.data
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -173,6 +178,11 @@ class HaClient {
     private val pending = ConcurrentHashMap<Int, (Result<JsonElement>) -> Unit>()
     private val forecastSubscriptions = ConcurrentHashMap<Int, (List<JsonObject>) -> Unit>()
 
+    private val messageChannel = Channel<String>(Channel.BUFFERED)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val stateBatch = ConcurrentHashMap<String, EntityState>()
+    @Volatile private var batchScheduled = false
+
     private val _states = MutableStateFlow<Map<String, EntityState>>(emptyMap())
     val states: StateFlow<Map<String, EntityState>> = _states
 
@@ -233,6 +243,8 @@ class HaClient {
         massIngress = null
         massAddonSlug = null
         massPlayersCache = null
+        stateBatch.clear()
+        batchScheduled = false
         _connection.value = ConnectionState.Disconnected
     }
 
@@ -250,7 +262,8 @@ class HaClient {
         val request = Request.Builder().url(wsUrl).build()
         webSocket = http.newWebSocket(request, object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
-                handleMessage(webSocket, text)
+                if (webSocket !== this@HaClient.webSocket) return
+                messageChannel.trySend(text)
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -269,17 +282,26 @@ class HaClient {
                 }
             }
         })
+        startMessageCollector()
     }
 
-    private fun handleMessage(ws: WebSocket, text: String) {
-        if (ws !== webSocket) return
+    private fun startMessageCollector() {
+        scope.launch {
+            while (true) {
+                val text = messageChannel.receive()
+                handleMessage(text)
+            }
+        }
+    }
+
+    private fun handleMessage(text: String) {
         val obj = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
         when (obj["type"]?.jsonPrimitive?.contentOrNull) {
             "auth_required" -> {
-                ws.send(buildJsonObject {
+                send(buildJsonObject {
                     put("type", "auth")
                     put("access_token", token)
-                }.toString())
+                })
             }
             "auth_ok" -> {
                 _connection.value = ConnectionState.Connected
@@ -350,7 +372,8 @@ class HaClient {
                         val newState = data["new_state"]
                         if (newState is JsonObject) {
                             parseEntity(newState)?.let { entity ->
-                                _states.update { it + (entity.entityId to entity) }
+                                stateBatch[entity.entityId] = entity
+                                scheduleBatchFlush()
                             }
                         }
                     }
@@ -365,6 +388,23 @@ class HaClient {
                 }
             }
         }
+    }
+
+    private fun scheduleBatchFlush() {
+        if (batchScheduled) return
+        batchScheduled = true
+        scope.launch {
+            delay(80)
+            batchScheduled = false
+            flushStateBatch()
+        }
+    }
+
+    private fun flushStateBatch() {
+        if (stateBatch.isEmpty()) return
+        val batch = stateBatch.toMap()
+        stateBatch.clear()
+        _states.update { current -> current + batch }
     }
 
     private fun maybeLoadStates(result: JsonElement) {
