@@ -48,7 +48,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
   - Android XML can't scope to IP ranges, so `NetworkGuard` enforces the private
     policy in code at every egress point: WS connect, setup connect, image
     loader, go2rtc candidates, media video URLs.
-- [ ] **1.6 MoreInfo history polling** (`ui/MoreInfo.kt`) — fixed 45s loop;
+- [x] **1.6 MoreInfo history polling** (`ui/MoreInfo.kt`) — fixed 45s loop;
   entity/lastChanged changes do a debounced one-shot refetch instead of restart.
 - [ ] **1.7 dashboard.json regeneration safety** (`scripts/extract_dashboard.py`)
   - Hand-added widgets (`mmwave_targets`, `battery_runtime`) move to

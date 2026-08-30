@@ -310,18 +310,26 @@ private fun MoreInfoHistory(entityId: String, entity: EntityState?, viewModel: H
     val live = states[entityId] ?: entity
     var buckets by remember(entityId) { mutableStateOf(listOf<HistoryBucket>()) }
     var loaded by remember(entityId) { mutableStateOf(false) }
-    LaunchedEffect(entityId, viewModel.client.currentBaseUrl, live?.state, live?.lastChanged) {
+    suspend fun refresh() {
+        buckets = try {
+            viewModel.client.historyBuckets(entityId, 24)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            buckets
+        }
+        loaded = true
+    }
+    LaunchedEffect(entityId, viewModel.client.currentBaseUrl) {
         while (true) {
-            buckets = try {
-                viewModel.client.historyBuckets(entityId, 24)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                buckets
-            }
-            loaded = true
+            refresh()
             delay(45_000)
         }
+    }
+    LaunchedEffect(live?.state, live?.lastChanged) {
+        if (live == null) return@LaunchedEffect
+        delay(1_000)
+        refresh()
     }
     val plotted = remember(buckets, live?.state, live?.lastChanged, now) {
         withLiveSample(buckets, live, now.toEpochMilli())
