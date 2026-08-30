@@ -29,30 +29,6 @@ internal fun personCameraGridLayout(count: Int): Pair<Int, Int> {
 }
 
 @Composable
-fun BackyardActivityPanel(
-    cameras: List<WidgetNode>,
-    timeline: WidgetNode,
-    viewModel: HaViewModel,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        VisionTimeline(
-            widget = timeline,
-            viewModel = viewModel,
-        )
-        PersonCameraOverlay(
-            cameras = cameras,
-            viewModel = viewModel,
-            fitContent = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-}
-
-@Composable
 fun PersonCameraOverlay(
     cameras: List<WidgetNode>,
     viewModel: HaViewModel,

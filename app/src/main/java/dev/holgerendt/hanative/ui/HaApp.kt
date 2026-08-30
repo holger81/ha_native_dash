@@ -85,7 +85,7 @@ import dev.holgerendt.hanative.ui.widgets.ChipRow
 import dev.holgerendt.hanative.ui.widgets.MediaImageDialog
 import dev.holgerendt.hanative.ui.widgets.MediaVideoDialog
 import dev.holgerendt.hanative.ui.widgets.PersonCard
-import dev.holgerendt.hanative.ui.widgets.BackyardActivityPanel
+import dev.holgerendt.hanative.ui.widgets.PersonCameraOverlay
 import dev.holgerendt.hanative.ui.widgets.PopupScaffold
 import dev.holgerendt.hanative.ui.widgets.RoomGrid
 import dev.holgerendt.hanative.ui.widgets.VisionTimeline
@@ -283,6 +283,8 @@ private fun HomeScreen(viewModel: HaViewModel) {
         }
         Spacer(Modifier.height(12.dp))
         // Lovelace `(min-width: 1024px)`: 50% rooms | 50% timeline. 1080px portrait qualifies.
+        // When backyard person cams are active they take the right column (timeline slot), not a
+        // full-width strip above rooms.
         val activePersonCameras by viewModel.activePersonCameras.collectAsState()
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -290,16 +292,17 @@ private fun HomeScreen(viewModel: HaViewModel) {
             verticalAlignment = Alignment.Top,
         ) {
             RoomGrid(home.rooms, viewModel, Modifier.weight(1f))
-            home.timeline?.let { timeline ->
-                if (activePersonCameras.isNotEmpty()) {
-                    BackyardActivityPanel(
+            when {
+                activePersonCameras.isNotEmpty() -> {
+                    PersonCameraOverlay(
                         cameras = activePersonCameras,
-                        timeline = timeline,
                         viewModel = viewModel,
+                        fitContent = true,
                         modifier = Modifier.weight(1f),
                     )
-                } else {
-                    VisionTimeline(timeline, viewModel, Modifier.weight(1f))
+                }
+                home.timeline != null -> {
+                    VisionTimeline(home.timeline, viewModel, Modifier.weight(1f))
                 }
             }
         }
