@@ -106,3 +106,9 @@ Dashboard layout is generated from `~/Projects/ha_dashboards/greatroom-wall.yaml
 ```bash
 python3 scripts/extract_dashboard.py ~/Projects/ha_dashboards/greatroom-wall.yaml app/src/main/assets/dashboard.json
 ```
+
+Site-specific hand-added content (the `#presence` popup with its
+`mmwave_targets` widget, the Power popup battery card wired to
+`sensor.battery_runtime_remaining`, room/entity ordering, and extra entities)
+lives in `scripts/local_overrides.json`, which the extractor merges into the
+output. Regenerating is safe and reproduces the committed asset exactly.

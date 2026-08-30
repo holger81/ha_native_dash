@@ -848,6 +848,89 @@ def convert_home(view: dict) -> dict:
     return home
 
 
+def load_overrides(dest: Path) -> dict:
+    overrides_path = dest.parent.parent.parent.parent / "scripts" / "local_overrides.json"
+    if not overrides_path.exists():
+        overrides_path = Path(__file__).parent / "local_overrides.json"
+    if not overrides_path.exists():
+        return {}
+    return json.loads(overrides_path.read_text())
+
+
+def merge_overrides(home: dict, overrides: dict) -> None:
+    if not overrides:
+        return
+
+    # Reorder rooms
+    room_order = overrides.get("room_order")
+    if room_order:
+        order = {name: i for i, name in enumerate(room_order)}
+        home["rooms"].sort(key=lambda r: order.get(r.get("name"), 999))
+
+    # Add extra popups
+    for popup in overrides.get("popups", []):
+        existing = [p for p in home["popups"] if p.get("hash") == popup.get("hash")]
+        if existing:
+            home["popups"].remove(existing[0])
+        insert_after = popup.pop("insert_after_hash", None)
+        if insert_after:
+            idx = next((i for i, p in enumerate(home["popups"]) if p.get("hash") == insert_after), None)
+            if idx is not None:
+                home["popups"].insert(idx + 1, popup)
+                continue
+        home["popups"].append(popup)
+
+    # Insert tabs into existing popups
+    for insert in overrides.get("popup_tab_inserts", []):
+        popup_hash = insert["popup_hash"]
+        tab_title = insert["tab_title"]
+        tab = insert["tab"]
+        insert_before = insert.get("insert_before_tab")
+        popup = next((p for p in home["popups"] if p.get("hash") == popup_hash), None)
+        if popup is None:
+            continue
+        tabs_card = next((c for c in popup.get("cards", []) if c.get("type") == "tabs"), None)
+        if tabs_card is None:
+            continue
+        tabs = tabs_card.get("tabs", [])
+        # Remove existing tab with same title
+        tabs[:] = [t for t in tabs if t.get("title") != tab_title]
+        if insert_before:
+            idx = next((i for i, t in enumerate(tabs) if t.get("title") == insert_before), len(tabs))
+        else:
+            idx = len(tabs)
+        tabs.insert(idx, tab)
+
+    # Override chips
+    for override in overrides.get("chip_overrides", []):
+        match_entity = override.get("match_entity")
+        chip = override.get("chip")
+        if not match_entity or not chip:
+            continue
+        chips = home.get("chips", {}).get("chips", [])
+        for i, c in enumerate(chips):
+            if c.get("entity") == match_entity:
+                chips[i] = chip
+                break
+
+    # Add person_cameras (insert before timeline to match committed key order)
+    person_cameras = overrides.get("person_cameras")
+    if person_cameras:
+        # Remove existing if present, then re-insert before timeline
+        if "person_cameras" in home:
+            del home["person_cameras"]
+        if "timeline" in home:
+            new_home = {}
+            for k, v in home.items():
+                if k == "timeline":
+                    new_home["person_cameras"] = person_cameras
+                new_home[k] = v
+            home.clear()
+            home.update(new_home)
+        else:
+            home["person_cameras"] = person_cameras
+
+
 def main() -> int:
     src = Path(sys.argv[1] if len(sys.argv) > 1 else Path.home() / "Projects/ha_dashboards/greatroom-wall.yaml")
     dest = Path(sys.argv[2] if len(sys.argv) > 2 else "app/src/main/assets/dashboard.json")
@@ -855,16 +938,31 @@ def main() -> int:
     views = data.get("views") or []
     home = convert_home(views[0])
 
+    overrides = load_overrides(dest)
+    merge_overrides(home, overrides)
+
     entities: set[str] = set()
     icons: set[str] = set()
     collect_entities(home, entities)
     collect_icons(home, icons)
+    for e in overrides.get("extra_entities", []):
+        entities.add(e)
+
+    entity_order = overrides.get("entity_order")
+    if entity_order:
+        ordered = [e for e in entity_order if e in entities]
+        for e in sorted(entities):
+            if e not in ordered:
+                ordered.append(e)
+        entities_list = ordered
+    else:
+        entities_list = sorted(entities)
 
     model = {
         "version": 1,
         "source": str(src.name),
         "home": home,
-        "entities": sorted(entities),
+        "entities": entities_list,
         "icons": sorted(icons),
     }
     dest.parent.mkdir(parents=True, exist_ok=True)

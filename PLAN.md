@@ -50,10 +50,14 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
     loader, go2rtc candidates, media video URLs.
 - [x] **1.6 MoreInfo history polling** (`ui/MoreInfo.kt`) — fixed 45s loop;
   entity/lastChanged changes do a debounced one-shot refetch instead of restart.
-- [ ] **1.7 dashboard.json regeneration safety** (`scripts/extract_dashboard.py`)
+- [x] **1.7 dashboard.json regeneration safety** (`scripts/extract_dashboard.py`)
   - Hand-added widgets (`mmwave_targets`, `battery_runtime`) move to
     `local_overrides.json` merged by the extractor (or preserved marker section).
   - Check that regenerated output matches committed asset.
+  - **Done (2026-08-30):** `scripts/local_overrides.json` holds the `#presence`
+    popup, Power battery card/tab, room order, entity order, and extra entities;
+    `merge_overrides()` applies them. Regenerated output is byte-identical to
+    the committed `dashboard.json`.
 
 ## Phase 2 — Performance + camera immediacy
 
