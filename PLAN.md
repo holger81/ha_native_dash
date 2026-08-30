@@ -61,10 +61,16 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ## Phase 2 — Performance + camera immediacy
 
-- [ ] **2.1 Remove `states` collection from `PopupHost`** (`ui/HaApp.kt`) —
+- [x] **2.1 Remove `states` collection from `PopupHost`** (`ui/HaApp.kt`) —
   `WeatherPopup` collects only its weather entity.
-- [ ] **2.2 Scope timer ticks** — music 250ms tick → current-time row only;
+  - **Done (2026-08-30):** `HaViewModel.entityFlow()` added; `PopupHost`,
+    `WeatherPopup`, `MoreInfoDialog`, `MusicAssistantPopup`, and
+    `ScreenTimeoutCard` all collect per-entity flows instead of the whole map.
+- [x] **2.2 Scope timer ticks** — music 250ms tick → current-time row only;
   MoreInfo 1s tick → clock row only.
+  - **Done (2026-08-30):** `rememberNowTick()` moved into `MoreInfoStateRow`
+    and `MoreInfoHistory` individually; music 250ms tick already scoped to
+    `liveMediaPosition` inside `NowPlayingPane`.
 - [ ] **2.3 WS off the reader thread + batching** (`HaClient.kt`) — single
   collector coroutine for JSON handling; coalesce `state_changed` into one
   `_states.update` per ~60–100ms.
