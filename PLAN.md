@@ -9,17 +9,34 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ## Phase 1 — Reliability & security
 
-- [ ] **1.1 WS command lifecycle** (`data/HaClient.kt`)
-  - `onFailure()` / `auth_invalid`: close socket, drain `pending` with an error.
-  - `reconnectLoop()`: disconnect the old socket before opening a new one.
-  - `command()`: per-command timeout (~30s) so a dropped socket can't hang callers.
-- [ ] **1.2 De-duplicate subscriptions** (`HaClient.kt`) — track subscription IDs;
-  `unsubscribe_events` for prior IDs on `auth_ok` before re-subscribing.
-- [ ] **1.3 Encrypt credentials at rest, keep restore**
-  - `EncryptedSharedPreferences` (already imported, unused).
-  - `Documents/HA Native/` recovery JSON: AES-GCM with Keystore-bound key.
-  - Copy of management PKCS#12 keystore: encrypt; drop hardcoded password.
-  - One-time legacy plaintext → encrypted migration; wipe plaintext.
+- [x] **1.1 WS command lifecycle** (`data/HaClient.kt`)
+  - `onFailure()` / `onClosed()` / `auth_invalid`: close socket, drain `pending`
+    + forecast subscriptions with an error (gated on socket identity so a stale
+    socket's late callback can't clobber the current one).
+  - `reconnectLoop()`: removed — dead code; reconnect is driven by
+    `HaViewModel.reconnectJob` → `connect()` → `disconnect()` (which drains).
+  - `command()`: 30s `withTimeoutOrNull` → `IllegalStateException` on timeout.
+- [x] **1.2 De-duplicate subscriptions** (`HaClient.kt`) — fixed at the source:
+  `handleMessage()` ignores messages from superseded sockets (`ws !== webSocket`),
+  so a zombie socket can no longer re-`auth_ok`/re-subscribe or double-deliver
+  kiosk/mmWave events. Per-socket HA subscriptions mean unsubscribing on the new
+  socket for old IDs would be a no-op; the identity guard is the real fix.
+- [x] **1.3 Encrypt credentials at rest, keep restore**
+  - Live prefs: `EncryptedSharedPreferences` (`ha_native_setup_secure`);
+    one-time copy from old plaintext `ha_native_setup`, then the plaintext file
+    is deleted. Falls back to plaintext prefs if ESP creation fails.
+  - Recovery JSON + management PKCS#12 copy in `Documents/HA Native/`:
+    AES-256-GCM, blob = `magic(4) || iv(12) || ciphertext` (magics `HNC1`/`HNT1`).
+    Key is PBKDF2-SHA256 over `Settings.Secure.ANDROID_ID` — deliberately **not**
+    Keystore-bound: Keystore keys are wiped on uninstall, which would break
+    restore-after-reinstall. ANDROID_ID is stable across reinstalls of the same
+    signed app but differs per app, so other apps on the device can't read the
+    files. Factory reset breaks recovery (re-setup required).
+  - Keystore now uses a random per-install password (blob = `password(44) || p12`);
+    the hardcoded password remains only as a legacy-migration constant for
+    existing devices.
+  - Legacy plaintext files are read transparently (no magic → parse as-is) and
+    re-sealed on the next persist.
 - [ ] **1.4 Management API hardening** (`data/ManagementServer.kt`)
   - Per-IP lockout (replace single global counter).
   - PIN only in request body, never query string.

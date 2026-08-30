@@ -1,6 +1,7 @@
 package dev.holgerendt.hanative.data
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import org.json.JSONArray
@@ -8,7 +9,41 @@ import org.json.JSONObject
 
 class CredentialsStore(context: Context) {
     private val app = context.applicationContext
-    private val prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val prefs: SharedPreferences = createSecurePrefs()
+
+    private fun createSecurePrefs(): SharedPreferences {
+        val secure = runCatching {
+            EncryptedSharedPreferences.create(
+                app,
+                SECURE_PREFS_NAME,
+                MasterKey.Builder(app).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+            )
+        }.getOrNull() ?: return app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        migratePlaintextInto(secure)
+        return secure
+    }
+
+    private fun migratePlaintextInto(secure: SharedPreferences) {
+        val plain = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (plain.all.isEmpty()) return
+        val edit = secure.edit()
+        for ((key, value) in plain.all) {
+            if (secure.contains(key)) continue
+            when (value) {
+                is String -> edit.putString(key, value)
+                is Int -> edit.putInt(key, value)
+                is Long -> edit.putLong(key, value)
+                is Boolean -> edit.putBoolean(key, value)
+                is Float -> edit.putFloat(key, value)
+                else -> continue
+            }
+        }
+        edit.commit()
+        runCatching { app.deleteSharedPreferences(PREFS_NAME) }
+    }
+
     private var persistEnabled = false
     private var generatedThisProcess = false
 
@@ -140,6 +175,7 @@ class CredentialsStore(context: Context) {
         generatedThisProcess = false
         persistEnabled = true
         prefs.edit().clear().apply()
+        runCatching { app.deleteSharedPreferences(PREFS_NAME) }
         runCatching { RecoverableFiles.delete(app, RecoverableFiles.CREDENTIALS_NAME) }
     }
 
@@ -203,10 +239,11 @@ class CredentialsStore(context: Context) {
             }
         }.toString()
         runCatching {
-            RecoverableFiles.write(
+            SecureRecovery.writeSealed(
                 app,
                 RecoverableFiles.CREDENTIALS_NAME,
                 "application/json",
+                SecureRecovery.CREDENTIALS_MAGIC,
                 body.toByteArray(Charsets.UTF_8),
             )
         }
@@ -222,9 +259,11 @@ class CredentialsStore(context: Context) {
 
     private fun readRecoverableObject(): JSONObject? {
         val raw = runCatching {
-            RecoverableFiles.read(app, RecoverableFiles.CREDENTIALS_NAME)?.toString(Charsets.UTF_8)
-        }.getOrNull() ?: return null
-        return runCatching { JSONObject(raw) }.getOrNull()
+            SecureRecovery.readRaw(app, RecoverableFiles.CREDENTIALS_NAME)
+        }.getOrNull()?.let { bytes ->
+            SecureRecovery.decryptIfSealed(app, SecureRecovery.CREDENTIALS_MAGIC, bytes) ?: bytes
+        } ?: return null
+        return runCatching { JSONObject(raw.toString(Charsets.UTF_8)) }.getOrNull()
     }
 
     private fun restoreFromDocuments(overwriteGeneratedPin: Boolean = false) {
@@ -300,6 +339,7 @@ class CredentialsStore(context: Context) {
 
     companion object {
         private const val PREFS_NAME = "ha_native_setup"
+        private const val SECURE_PREFS_NAME = "ha_native_setup_secure"
         private const val LEGACY_ENCRYPTED_PREFS = "ha_native_credentials"
         private const val LEGACY_PLAIN_PREFS = "ha_native_credentials_plain"
         private const val KEY_URL = "ha_url"
