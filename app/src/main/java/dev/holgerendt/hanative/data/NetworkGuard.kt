@@ -1,9 +1,14 @@
 package dev.holgerendt.hanative.data
 
+import java.net.InetAddress
+
 /**
  * The app only talks to the local network: Home Assistant, go2rtc, and HA-provided media URLs.
  * Android's network-security XML cannot express IP ranges, so the "private networks only"
  * policy from network_security_config is enforced here at every egress point instead.
+ *
+ * Hostnames are allowed when DNS resolves to a private address (so LAN names that are not
+ * `*.local` still work). Public / unresolved hosts are rejected.
  */
 object NetworkGuard {
 
@@ -27,8 +32,20 @@ object NetworkGuard {
         if (host == "localhost") return true
         if (host.endsWith(".local", ignoreCase = true)) return true
         if (host.contains(':')) return isPrivateIpv6(host)
-        if (host.any { it !in '0'..'9' && it != '.' }) return false
-        return isPrivateIpv4(host)
+        if (host.all { it in '0'..'9' || it == '.' }) return isPrivateIpv4(host)
+        return resolvesToPrivateAddress(host)
+    }
+
+    private fun resolvesToPrivateAddress(host: String): Boolean =
+        runCatching {
+            InetAddress.getAllByName(host).any(::isPrivateInetAddress)
+        }.getOrDefault(false)
+
+    private fun isPrivateInetAddress(address: InetAddress): Boolean {
+        if (address.isLoopbackAddress || address.isAnyLocalAddress) return true
+        if (address.isLinkLocalAddress || address.isSiteLocalAddress) return true
+        val host = address.hostAddress ?: return false
+        return if (':' in host) isPrivateIpv6(host.substringBefore('%')) else isPrivateIpv4(host)
     }
 
     private fun isPrivateIpv4(host: String): Boolean {

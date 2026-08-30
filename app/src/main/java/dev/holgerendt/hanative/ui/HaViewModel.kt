@@ -375,26 +375,40 @@ class HaViewModel(
 
     suspend fun connect(url: String, token: String): Result<Unit> {
         _ui.value = _ui.value.copy(setupBusy = true, setupError = null)
-        val host = NetworkGuard.hostOf(url.trim())
-        if (host == null || !NetworkGuard.isPrivateHost(host)) {
-            val message = "Home Assistant must be on the local network (private IP or .local name), not '$host'"
+        val trimmedUrl = url.trim().trimEnd('/')
+        val trimmedToken = token.trim()
+        val host = withContext(Dispatchers.IO) { NetworkGuard.hostOf(trimmedUrl) }
+        val privateHost = withContext(Dispatchers.IO) {
+            host != null && NetworkGuard.isPrivateHost(host)
+        }
+        if (!privateHost) {
+            val message = "Home Assistant must be on the local network (private IP or LAN name), not '$host'"
             _ui.value = _ui.value.copy(setupBusy = false, setupError = message)
             return Result.failure(IllegalStateException(message))
         }
-        val result = withContext(Dispatchers.IO) { client.testRest(url, token) }
-        if (result.isFailure) {
-            val message = result.exceptionOrNull()?.message ?: "Connection failed"
-            _ui.value = _ui.value.copy(setupBusy = false, setupError = message)
-            return Result.failure(IllegalStateException(message))
-        }
-        credentials.baseUrl = url
-        credentials.token = token
+        val result = withContext(Dispatchers.IO) { client.testRest(trimmedUrl, trimmedToken) }
+        // Always keep URL/token and retry — HA may be briefly unreachable at boot (VLAN/DNS).
+        credentials.baseUrl = trimmedUrl
+        credentials.token = trimmedToken
         if (credentials.managementPin.isBlank()) {
             credentials.managementPin = currentPin
         } else {
             currentPin = credentials.managementPin
         }
-        client.connect(url, token)
+        runCatching { client.connect(trimmedUrl, trimmedToken) }
+        ensureReconnectLoop()
+        if (result.isFailure) {
+            val message = result.exceptionOrNull()?.message ?: "Connection failed"
+            _ui.value = _ui.value.copy(
+                showSetup = false,
+                setupBusy = false,
+                setupError = message,
+                remotePin = currentPin,
+                pinIsUserSet = credentials.managementPin.isNotBlank(),
+                drawerOpen = false,
+            )
+            return Result.failure(IllegalStateException(message))
+        }
         refreshCalendars()
         _ui.value = _ui.value.copy(
             showSetup = false,
@@ -404,17 +418,24 @@ class HaViewModel(
             pinIsUserSet = credentials.managementPin.isNotBlank(),
             drawerOpen = false,
         )
+        return Result.success(Unit)
+    }
+
+    private fun ensureReconnectLoop() {
+        if (reconnectJob?.isActive == true) return
         reconnectJob?.cancel()
         reconnectJob = viewModelScope.launch {
             while (true) {
                 delay(4000)
                 val state = client.connection.value
                 if (state is ConnectionState.Disconnected || state is ConnectionState.Error) {
-                    runCatching { client.connect(credentials.baseUrl, credentials.token) }
+                    val url = credentials.baseUrl
+                    val token = credentials.token
+                    if (url.isBlank() || token.isBlank()) continue
+                    runCatching { client.connect(url, token) }
                 }
             }
         }
-        return Result.success(Unit)
     }
 
     fun connectFromUi(url: String, token: String) {

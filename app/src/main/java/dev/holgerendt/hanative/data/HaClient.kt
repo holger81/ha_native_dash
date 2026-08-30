@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -178,10 +179,11 @@ class HaClient {
     private val pending = ConcurrentHashMap<Int, (Result<JsonElement>) -> Unit>()
     private val forecastSubscriptions = ConcurrentHashMap<Int, (List<JsonObject>) -> Unit>()
 
-    private val messageChannel = Channel<String>(Channel.BUFFERED)
+    private val messageChannel = Channel<String>(capacity = 2_048, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val stateBatch = ConcurrentHashMap<String, EntityState>()
     @Volatile private var batchScheduled = false
+    @Volatile private var messageCollectorStarted = false
 
     private val _states = MutableStateFlow<Map<String, EntityState>>(emptyMap())
     val states: StateFlow<Map<String, EntityState>> = _states
@@ -226,9 +228,12 @@ class HaClient {
         baseUrl = url.trim().trimEnd('/')
         token = accessToken.trim()
         val host = NetworkGuard.hostOf(baseUrl)
-        if (host == null || !NetworkGuard.isPrivateHost(host)) {
+        val allowed = withContext(Dispatchers.IO) {
+            host != null && NetworkGuard.isPrivateHost(host)
+        }
+        if (!allowed) {
             _connection.value = ConnectionState.Error(
-                "Home Assistant must be on the local network (private IP or .local name), not '$host'",
+                "Home Assistant must be on the local network (private IP or LAN name), not '$host'",
             )
             return
         }
@@ -245,6 +250,9 @@ class HaClient {
         massPlayersCache = null
         stateBatch.clear()
         batchScheduled = false
+        while (true) {
+            if (!messageChannel.tryReceive().isSuccess) break
+        }
         _connection.value = ConnectionState.Disconnected
     }
 
@@ -263,6 +271,7 @@ class HaClient {
         webSocket = http.newWebSocket(request, object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (webSocket !== this@HaClient.webSocket) return
+                // DROP_OLDEST keeps the channel moving under bursty state_changed traffic.
                 messageChannel.trySend(text)
             }
 
@@ -282,14 +291,16 @@ class HaClient {
                 }
             }
         })
-        startMessageCollector()
+        ensureMessageCollector()
     }
 
-    private fun startMessageCollector() {
+    private fun ensureMessageCollector() {
+        if (messageCollectorStarted) return
+        messageCollectorStarted = true
         scope.launch {
             while (true) {
                 val text = messageChannel.receive()
-                handleMessage(text)
+                runCatching { handleMessage(text) }
             }
         }
     }

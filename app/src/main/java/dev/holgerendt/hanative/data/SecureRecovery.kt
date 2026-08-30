@@ -42,14 +42,18 @@ internal object SecureRecovery {
 
     /** Returns the plaintext if [raw] is a sealed blob for [magic]; null otherwise. */
     fun decryptIfSealed(context: Context, magic: String, raw: ByteArray): ByteArray? {
-        if (raw.size < MAGIC_LENGTH + IV_LENGTH + TAG_BITS / 8) return null
-        if (String(raw, 0, MAGIC_LENGTH, Charsets.US_ASCII) != magic) return null
+        if (!looksSealed(raw, magic)) return null
         val key = keyFor(context, magic) ?: return null
         val iv = raw.copyOfRange(MAGIC_LENGTH, MAGIC_LENGTH + IV_LENGTH)
         val ciphertext = raw.copyOfRange(MAGIC_LENGTH + IV_LENGTH, raw.size)
         return runCatching {
             cipher("AES/GCM/NoPadding", Cipher.DECRYPT_MODE, key, iv).doFinal(ciphertext)
         }.getOrNull()
+    }
+
+    fun looksSealed(raw: ByteArray, magic: String): Boolean {
+        if (raw.size < MAGIC_LENGTH + IV_LENGTH + TAG_BITS / 8) return false
+        return String(raw, 0, MAGIC_LENGTH, Charsets.US_ASCII) == magic
     }
 
     private fun seal(context: Context, magic: String, plaintext: ByteArray): ByteArray? {

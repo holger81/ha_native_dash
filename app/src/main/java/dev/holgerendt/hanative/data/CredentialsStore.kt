@@ -238,12 +238,13 @@ class CredentialsStore(context: Context) {
                 put("subscribed_calendars", JSONArray(calendars))
             }
         }.toString()
+        // Keep Documents recovery as plaintext JSON. Sealing with ANDROID_ID breaks across
+        // UniFi Connect re-signs / data wipes even though that file is the restore path.
         runCatching {
-            SecureRecovery.writeSealed(
+            RecoverableFiles.write(
                 app,
                 RecoverableFiles.CREDENTIALS_NAME,
                 "application/json",
-                SecureRecovery.CREDENTIALS_MAGIC,
                 body.toByteArray(Charsets.UTF_8),
             )
         }
@@ -260,10 +261,13 @@ class CredentialsStore(context: Context) {
     private fun readRecoverableObject(): JSONObject? {
         val raw = runCatching {
             SecureRecovery.readRaw(app, RecoverableFiles.CREDENTIALS_NAME)
-        }.getOrNull()?.let { bytes ->
-            SecureRecovery.decryptIfSealed(app, SecureRecovery.CREDENTIALS_MAGIC, bytes) ?: bytes
+        }.getOrNull() ?: return null
+        val plaintext = when {
+            SecureRecovery.looksSealed(raw, SecureRecovery.CREDENTIALS_MAGIC) ->
+                SecureRecovery.decryptIfSealed(app, SecureRecovery.CREDENTIALS_MAGIC, raw)
+            else -> raw
         } ?: return null
-        return runCatching { JSONObject(raw.toString(Charsets.UTF_8)) }.getOrNull()
+        return runCatching { JSONObject(plaintext.toString(Charsets.UTF_8)) }.getOrNull()
     }
 
     private fun restoreFromDocuments(overwriteGeneratedPin: Boolean = false) {
