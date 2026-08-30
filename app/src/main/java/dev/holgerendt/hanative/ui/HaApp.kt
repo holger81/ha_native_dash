@@ -56,6 +56,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -64,6 +65,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.holgerendt.hanative.data.Changelog
 import dev.holgerendt.hanative.data.ConnectionState
 import dev.holgerendt.hanative.data.QrCodes
 import dev.holgerendt.hanative.model.PopupNode
@@ -204,6 +206,7 @@ private fun DrawerMenu(viewModel: HaViewModel) {
         "Staubinator" to "#staubinator",
         "Camera" to "#camerafront_view",
         "Music" to "#music",
+        "Changelog" to "#changelog",
         "Settings" to "#settings",
     )
     Column(Modifier.fillMaxHeight().width(280.dp).padding(20.dp)) {
@@ -390,7 +393,76 @@ private fun PopupHost(popup: PopupNode, viewModel: HaViewModel) {
             "#camerafront_view" -> CameraPopup(popup, viewModel)
             "#music" -> MusicAssistantPopup(popup, viewModel)
             "#settings" -> SettingsPopup(popup, viewModel)
+            "#changelog" -> ChangelogPopup()
             else -> WidgetTree(popup.cards, viewModel)
+        }
+    }
+}
+
+@Composable
+private fun ChangelogPopup() {
+    val context = LocalContext.current
+    val overlay = LocalOverlay.current
+    val entries = remember(context) { Changelog.load(context, limit = 5) }
+    val installedVersion = remember(context) {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull().orEmpty()
+    }
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (installedVersion.isNotBlank()) {
+            Text(
+                text = "Installed $installedVersion",
+                color = TextMuted,
+                fontSize = 13.sp,
+            )
+        }
+        if (entries.isEmpty()) {
+            Text("No changelog entries yet.", color = TextMuted, fontSize = 14.sp)
+        } else {
+            entries.forEach { entry ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(overlay.card)
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = entry.version,
+                            color = TextDark,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        entry.date?.takeIf { it.isNotBlank() }?.let { date ->
+                            Text(date, color = TextMuted, fontSize = 13.sp)
+                        }
+                    }
+                    entry.notes.forEach { note ->
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("•", color = TextDark, fontSize = 14.sp)
+                            Text(
+                                text = note,
+                                color = TextDark,
+                                fontSize = 14.sp,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

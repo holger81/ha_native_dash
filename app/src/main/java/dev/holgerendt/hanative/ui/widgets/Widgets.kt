@@ -2157,7 +2157,7 @@ enum class PopupSheetKind { Room, Camera, Utility, Settings, Detail }
 
 fun popupSheetKind(hash: String?): PopupSheetKind = when (hash) {
     "#camerafront_view", "#music" -> PopupSheetKind.Camera
-    "#settings" -> PopupSheetKind.Settings
+    "#settings", "#changelog" -> PopupSheetKind.Settings
     "#weather", "#power", "#bil", "#staubinator" -> PopupSheetKind.Utility
     else -> PopupSheetKind.Room
 }

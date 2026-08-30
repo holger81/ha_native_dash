@@ -357,6 +357,13 @@ class HaViewModel(
                 hash = "#music",
             )
         }
+        if (hash == "#changelog") {
+            return PopupNode(
+                name = "Changelog",
+                icon = "mdi:information",
+                hash = "#changelog",
+            )
+        }
         return _ui.value.dashboard?.home?.popups?.firstOrNull { it.hash == hash }
     }
 

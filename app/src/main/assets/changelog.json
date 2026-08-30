@@ -1,0 +1,42 @@
+{
+  "versions": [
+    {
+      "version": "1.0.92",
+      "date": "2026-08-30",
+      "notes": [
+        "Backyard person cameras use the timeline column only (half-width, 16:9) instead of a strip above the rooms.",
+        "Timeline returns when no backyard cameras are active."
+      ]
+    },
+    {
+      "version": "1.0.91",
+      "date": "2026-08-29",
+      "notes": [
+        "Music Discover recovers after search errors and transient Music Assistant failures.",
+        "MASS requests retry on HTTP 5xx; incomplete Discover shelves reload on tab re-entry.",
+        "Backyard cameras moved into the right-hand activity column under the timeline."
+      ]
+    },
+    {
+      "version": "1.0.90",
+      "date": "2026-08-29",
+      "notes": [
+        "Music Discover: cached cover art, media-type search chips, and Apple Music browse with See all."
+      ]
+    },
+    {
+      "version": "1.0.89",
+      "date": "2026-08-23",
+      "notes": [
+        "Whole-house fan toggle on the hallway popup and home chip."
+      ]
+    },
+    {
+      "version": "1.0.88",
+      "date": "2026-08-23",
+      "notes": [
+        "Larger vision clip popup with keyframe preview."
+      ]
+    }
+  ]
+}
