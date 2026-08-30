@@ -199,22 +199,33 @@ class LiveCameraHub(
             }
             session.listener = listener
             player.addListener(listener)
-            dataSourceFactory.setDefaultRequestProperties(candidate.headers)
             player.volume = 0f
-            player.playWhenReady = true
-            val mime = when (candidate.kind) {
-                StreamKind.HLS -> MimeTypes.APPLICATION_M3U8
-                StreamKind.MP4 -> MimeTypes.VIDEO_MP4
-                else -> null
+            val state = player.playbackState
+            val sameItem = player.currentMediaItem?.uri?.toString() == candidate.url &&
+                state != Player.STATE_IDLE &&
+                state != Player.STATE_ENDED &&
+                state != Player.STATE_ERROR
+            if (sameItem) {
+                player.playWhenReady = true
+                session.publish()
+                firstFrame.complete(Unit)
+            } else {
+                dataSourceFactory.setDefaultRequestProperties(candidate.headers)
+                val mime = when (candidate.kind) {
+                    StreamKind.HLS -> MimeTypes.APPLICATION_M3U8
+                    StreamKind.MP4 -> MimeTypes.VIDEO_MP4
+                    else -> null
+                }
+                player.setMediaItem(
+                    MediaItem.Builder()
+                        .setUri(candidate.url)
+                        .setMimeType(mime)
+                        .build(),
+                )
+                player.prepare()
+                player.playWhenReady = true
+                session.publish()
             }
-            player.setMediaItem(
-                MediaItem.Builder()
-                    .setUri(candidate.url)
-                    .setMimeType(mime)
-                    .build(),
-            )
-            player.prepare()
-            session.publish()
         }
         val gotFrame = withTimeoutOrNull(10_000) { firstFrame.await() } != null
         if (!gotFrame) {

@@ -51,12 +51,15 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -164,6 +167,7 @@ class HaViewModel(
     val ui: StateFlow<UiState> = _ui
 
     private var reconnectJob: Job? = null
+    private var displayWakeJob: Job? = null
     private var managementServer: ManagementServer? = null
     private val random = SecureRandom()
     @Volatile private var currentPin: String = credentials.adoptOrCreatePin { newPin() }
@@ -231,7 +235,9 @@ class HaViewModel(
         watchDisplayPower()
         watchAutoDisplayBrightness()
         watchPresenceScreen()
+        watchWallCamerasOnReconnect()
         if (credentials.isConfigured) {
+            prefetchWallCameras()
             viewModelScope.launch { connect(credentials.baseUrl, credentials.token) }
         }
     }
@@ -390,7 +396,6 @@ class HaViewModel(
         }
         client.connect(url, token)
         refreshCalendars()
-        prefetchWallCameras()
         _ui.value = _ui.value.copy(
             showSetup = false,
             setupBusy = false,
@@ -1231,6 +1236,7 @@ class HaViewModel(
     fun sleepScreen(commandDisplay: Boolean = true) {
         if (_ui.value.screenAsleep || _ui.value.showSetup) return
         sleptAtMs = System.currentTimeMillis()
+        displayWakeJob?.cancel()
         if (commandDisplay && connection.value is ConnectionState.Connected) {
             _ui.value.displayOffEntity.takeIf { it.isNotBlank() }?.let { entityId ->
                 viewModelScope.launch { runCatching { client.setEntityPower(entityId, on = false) } }
@@ -1244,12 +1250,27 @@ class HaViewModel(
         lastActivityMs = System.currentTimeMillis()
         if (commandDisplay && connection.value is ConnectionState.Connected) {
             _ui.value.displayOffEntity.takeIf { it.isNotBlank() }?.let { entityId ->
-                viewModelScope.launch { runCatching { client.setEntityPower(entityId, on = true) } }
+                commandDisplayOnWithRetry(entityId)
             }
         }
         if (_ui.value.screenAsleep) {
             _ui.value = _ui.value.copy(screenAsleep = false)
             liveCameras.resume()
+        }
+    }
+
+    private fun commandDisplayOnWithRetry(entityId: String) {
+        displayWakeJob?.cancel()
+        displayWakeJob = viewModelScope.launch {
+            repeat(3) { attempt ->
+                if (states.value[entityId]?.state == "on") return@launch
+                runCatching { client.setEntityPower(entityId, on = true) }
+                if (attempt == 2) return@launch
+                val flipped = withTimeoutOrNull(3_000) {
+                    states.filter { all -> all[entityId]?.state == "on" }.first()
+                } != null
+                if (flipped) return@launch
+            }
         }
     }
 
@@ -1307,15 +1328,30 @@ class HaViewModel(
             .sortedBy { it.second.lowercase() }
             .toList()
 
+    private fun wallCameraWidgets(): List<WidgetNode> =
+        _ui.value.dashboard?.home?.popups
+            ?.firstOrNull { it.hash == KioskCommands.CAMERA_POPUP }
+            ?.let { popup -> CameraStreams.camerasForPopup(popup) }
+            ?: CameraStreams.wallPanelCameras
+
     private fun prefetchWallCameras() {
         viewModelScope.launch {
-            if (client.currentBaseUrl.isBlank()) return@launch
-            val widgets = _ui.value.dashboard?.home?.popups
-                ?.firstOrNull { it.hash == KioskCommands.CAMERA_POPUP }
-                ?.let { popup -> CameraStreams.camerasForPopup(popup) }
-                ?: CameraStreams.wallPanelCameras
-            runCatching { client.prefetchCameraSnapshots(widgets.mapNotNull { it.entity }) }
+            val widgets = wallCameraWidgets()
             liveCameras.ensureRunning(widgets.map { CameraStreams.fromWidget(it) })
+            if (client.currentBaseUrl.isBlank()) return@launch
+            runCatching { client.prefetchCameraSnapshots(widgets.mapNotNull { it.entity }) }
+            runCatching { CameraStreams.prefetch(client, widgets.map { CameraStreams.fromWidget(it) }) }
+        }
+    }
+
+    private fun watchWallCamerasOnReconnect() {
+        viewModelScope.launch {
+            var wasConnected = connection.value is ConnectionState.Connected
+            connection.collect { state ->
+                val connected = state is ConnectionState.Connected
+                if (connected && !wasConnected) prefetchWallCameras()
+                wasConnected = connected
+            }
         }
     }
 
