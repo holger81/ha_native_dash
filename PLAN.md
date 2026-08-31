@@ -31,7 +31,8 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
     Keystore-bound: Keystore keys are wiped on uninstall, which would break
     restore-after-reinstall. ANDROID_ID is stable across reinstalls of the same
     signed app but differs per app, so other apps on the device can't read the
-    files. Factory reset breaks recovery (re-setup required).
+    files. Factory reset or UniFi re-sign that changes ANDROID_ID breaks recovery
+    (unreadable seal is deleted; re-setup required).
   - Keystore now uses a random per-install password (blob = `password(44) || p12`);
     the hardcoded password remains only as a legacy-migration constant for
     existing devices.

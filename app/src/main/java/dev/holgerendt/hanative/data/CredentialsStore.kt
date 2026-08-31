@@ -247,13 +247,14 @@ class CredentialsStore(context: Context) {
                 put("subscribed_calendars", JSONArray(calendars))
             }
         }.toString()
-        // Keep Documents recovery as plaintext JSON. Sealing with ANDROID_ID breaks across
-        // UniFi Connect re-signs / data wipes even though that file is the restore path.
+        // Seal with ANDROID_ID-derived AES-GCM so other apps can't read Documents/HA Native.
+        // Legacy plaintext files are still read and re-sealed on the next persist.
         runCatching {
-            RecoverableFiles.write(
+            SecureRecovery.writeSealed(
                 app,
                 RecoverableFiles.CREDENTIALS_NAME,
                 "application/json",
+                SecureRecovery.CREDENTIALS_MAGIC,
                 body.toByteArray(Charsets.UTF_8),
             )
         }
@@ -276,10 +277,11 @@ class CredentialsStore(context: Context) {
             if (decrypted != null) {
                 return runCatching { JSONObject(decrypted.toString(Charsets.UTF_8)) }.getOrNull()
             }
-            // Unreadable after UniFi re-sign / ANDROID_ID change — remove so setup can rewrite plaintext.
+            // Unreadable after UniFi re-sign / ANDROID_ID change — remove so setup can rewrite a new seal.
             runCatching { RecoverableFiles.delete(app, RecoverableFiles.CREDENTIALS_NAME) }
             return null
         }
+        // Legacy plaintext recovery file (pre-seal or temporary revert).
         return runCatching { JSONObject(raw.toString(Charsets.UTF_8)) }.getOrNull()
     }
 
