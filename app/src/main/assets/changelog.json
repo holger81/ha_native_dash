@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "1.0.96",
+      "date": "2026-08-30",
+      "notes": [
+        "Door-triggered camera popup opens faster: streams stay pre-warmed and the display wake is retried if it doesn't flip on.",
+        "Resuming a warm camera no longer re-prepares the player, so the first frame is quicker.",
+        "Camera streams nobody is viewing are released after a minute; wall cameras stay warm for instant door popups."
+      ]
+    },
+    {
       "version": "1.0.92",
       "date": "2026-08-30",
       "notes": [

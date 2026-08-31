@@ -34,6 +34,11 @@ class ManagementServer(
         makeSecure(sslSocketFactory, null)
     }
 
+    fun onPinChanged() {
+        failures.clear()
+        sessions.clear()
+    }
+
     override fun serve(session: IHTTPSession): Response {
         val uri = session.uri.trimEnd('/').ifBlank { "/" }
         return when {
@@ -64,7 +69,11 @@ class ManagementServer(
     private fun handleLogin(session: IHTTPSession): Response {
         val files = HashMap<String, String>()
         runCatching { session.parseBody(files) }
-        val pin = pinFromBody(files["postData"].orEmpty()).orEmpty().replace(" ", "")
+        val params = formParams(session, files)
+        val pin = (params["pin"] ?: pinFromBody(files["postData"].orEmpty())).orEmpty().replace(" ", "")
+        if (pin.isBlank()) {
+            return html(loginPage("Enter the PIN shown on the wall panel."), Response.Status.BAD_REQUEST)
+        }
         pinError(pin, clientKey(session))?.let { message ->
             return html(loginPage(message), Response.Status.FORBIDDEN)
         }

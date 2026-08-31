@@ -51,7 +51,8 @@ private val CameraShape = RoundedCornerShape(24.dp)
 
 @Composable
 fun CameraPopup(popup: PopupNode, viewModel: HaViewModel) {
-    val cameras = remember(popup) { CameraStreams.camerasForPopup(popup) }
+    val go2rtcUrl = viewModel.savedGo2rtcUrl
+    val cameras = remember(popup, go2rtcUrl) { CameraStreams.camerasForPopup(popup, go2rtcUrl) }
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp),

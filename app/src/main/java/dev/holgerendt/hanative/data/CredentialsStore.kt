@@ -59,6 +59,12 @@ class CredentialsStore(context: Context) {
             persist()
         }
 
+    var go2rtcUrl: String = readPref(KEY_GO2RTC_URL)
+        set(value) {
+            field = value.trim().trimEnd('/')
+            persist()
+        }
+
     /** Null means follow Lovelace week-planner calendars; empty means none. */
     var subscribedCalendars: List<String>? = null
         set(value) {
@@ -115,6 +121,9 @@ class CredentialsStore(context: Context) {
         get() = pinValue
         set(value) = writePin(value, generated = false)
 
+    val isGeneratedPin: Boolean
+        get() = generatedThisProcess && managementPin.isNotBlank()
+
     val isConfigured: Boolean
         get() = baseUrl.isNotBlank() && token.isNotBlank()
 
@@ -157,6 +166,8 @@ class CredentialsStore(context: Context) {
         val created = create().trim()
         if (pinError(created) != null) return created
         writePin(created, generated = true)
+        // Prefer a PIN already in Documents over a fresh random one (e.g. after storage grant).
+        restoreFromDocuments(overwriteGeneratedPin = true)
         return managementPin
     }
 
@@ -165,6 +176,11 @@ class CredentialsStore(context: Context) {
         restoreFromDocuments(overwriteGeneratedPin = generatedThisProcess)
         persistEnabled = true
         if (isConfigured || managementPin.isNotBlank()) persist()
+    }
+
+    /** Drops a stale Documents PIN so a freshly saved or generated PIN wins. */
+    fun commitPinToRecovery() {
+        persist()
     }
 
     fun clear() {
@@ -192,6 +208,7 @@ class CredentialsStore(context: Context) {
         prefs.edit()
             .putString(KEY_URL, baseUrl)
             .putString(KEY_TOKEN, token)
+            .putString(KEY_GO2RTC_URL, go2rtcUrl)
             .putString(KEY_PIN, managementPin)
             .putInt(KEY_TIMEOUT_SECONDS, screenTimeoutSeconds)
             .putString(KEY_DISPLAY_OFF, displayOffEntity)
@@ -207,11 +224,7 @@ class CredentialsStore(context: Context) {
         val url = baseUrl.ifBlank { existing?.optString("ha_url").orEmpty() }.trim().trimEnd('/')
         val accessToken = token.ifBlank { existing?.optString("ha_token").orEmpty() }.trim()
         val existingPin = existing?.optString("management_pin").orEmpty().trim()
-        val pin = when {
-            generatedThisProcess && PIN_PATTERN.matches(existingPin) -> existingPin
-            managementPin.isNotBlank() -> managementPin
-            else -> existingPin
-        }
+        val pin = managementPin.ifBlank { existingPin }
         if (url.isBlank() && accessToken.isBlank() && pin.isBlank()) return
         if (existing == null && url.isBlank() && accessToken.isBlank() &&
             RecoverableFiles.exists(app, RecoverableFiles.CREDENTIALS_NAME)
@@ -219,14 +232,10 @@ class CredentialsStore(context: Context) {
             // PIN-only and credentials.json exists but was unread: do not overwrite.
             return
         }
-        if (generatedThisProcess && PIN_PATTERN.matches(existingPin)) {
-            pinValue = existingPin
-            generatedThisProcess = false
-            prefs.edit().putString(KEY_PIN, pinValue).apply()
-        }
         val body = JSONObject().apply {
             put("ha_url", url)
             put("ha_token", accessToken)
+            put("go2rtc_url", go2rtcUrl)
             put("management_pin", pin)
             put("screen_timeout_seconds", screenTimeoutSeconds)
             if (displayOffEntity.isNotBlank()) put("display_off_entity", displayOffEntity)
@@ -262,12 +271,16 @@ class CredentialsStore(context: Context) {
         val raw = runCatching {
             SecureRecovery.readRaw(app, RecoverableFiles.CREDENTIALS_NAME)
         }.getOrNull() ?: return null
-        val plaintext = when {
-            SecureRecovery.looksSealed(raw, SecureRecovery.CREDENTIALS_MAGIC) ->
-                SecureRecovery.decryptIfSealed(app, SecureRecovery.CREDENTIALS_MAGIC, raw)
-            else -> raw
-        } ?: return null
-        return runCatching { JSONObject(plaintext.toString(Charsets.UTF_8)) }.getOrNull()
+        if (SecureRecovery.looksSealed(raw, SecureRecovery.CREDENTIALS_MAGIC)) {
+            val decrypted = SecureRecovery.decryptIfSealed(app, SecureRecovery.CREDENTIALS_MAGIC, raw)
+            if (decrypted != null) {
+                return runCatching { JSONObject(decrypted.toString(Charsets.UTF_8)) }.getOrNull()
+            }
+            // Unreadable after UniFi re-sign / ANDROID_ID change — remove so setup can rewrite plaintext.
+            runCatching { RecoverableFiles.delete(app, RecoverableFiles.CREDENTIALS_NAME) }
+            return null
+        }
+        return runCatching { JSONObject(raw.toString(Charsets.UTF_8)) }.getOrNull()
     }
 
     private fun restoreFromDocuments(overwriteGeneratedPin: Boolean = false) {
@@ -275,6 +288,10 @@ class CredentialsStore(context: Context) {
         if (baseUrl.isBlank()) {
             val url = obj.optString("ha_url").trim().trimEnd('/')
             if (url.isNotBlank()) baseUrl = url
+        }
+        if (go2rtcUrl.isBlank()) {
+            val url = obj.optString("go2rtc_url").trim().trimEnd('/')
+            if (url.isNotBlank()) go2rtcUrl = url
         }
         if (token.isBlank()) {
             val value = obj.optString("ha_token").trim()
@@ -306,7 +323,9 @@ class CredentialsStore(context: Context) {
             musicPlayerEntity = normalizeEntityId(obj.optString("music_player_entity"))
         }
         val pin = obj.optString("management_pin").trim()
+        val prefsPin = readPref(KEY_PIN)
         val takeRestoredPin = PIN_PATTERN.matches(pin) &&
+            prefsPin.isBlank() &&
             (managementPin.isBlank() || (overwriteGeneratedPin && generatedThisProcess))
         if (takeRestoredPin) {
             writePin(pin, generated = false)
@@ -348,6 +367,7 @@ class CredentialsStore(context: Context) {
         private const val LEGACY_PLAIN_PREFS = "ha_native_credentials_plain"
         private const val KEY_URL = "ha_url"
         private const val KEY_TOKEN = "ha_token"
+        private const val KEY_GO2RTC_URL = "go2rtc_url"
         private const val KEY_PIN = "management_pin"
         private const val KEY_TIMEOUT_SECONDS = "screen_timeout_seconds"
         private const val KEY_TIMEOUT_MINUTES_LEGACY = "screen_timeout_minutes"

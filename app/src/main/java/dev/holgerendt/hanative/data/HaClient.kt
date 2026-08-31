@@ -232,9 +232,7 @@ class HaClient {
             host != null && NetworkGuard.isPrivateHost(host)
         }
         if (!allowed) {
-            _connection.value = ConnectionState.Error(
-                "Home Assistant must be on the local network (private IP or LAN name), not '$host'",
-            )
+            _connection.value = ConnectionState.Error(NetworkGuard.hostRejectionReason(host))
             return
         }
         _connection.value = ConnectionState.Connecting

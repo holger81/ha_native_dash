@@ -895,6 +895,23 @@ private fun ManagementPinCard(viewModel: HaViewModel) {
         ) {
             Text(if (ui.pinIsUserSet) "Change PIN" else "Save PIN", color = Color.Black)
         }
+        TextButton(
+            onClick = {
+                val result = viewModel.resetManagementPin()
+                result.onSuccess { fresh ->
+                    error = null
+                    message = "New PIN $fresh — use this on the admin page"
+                    pin = ""
+                    confirm = ""
+                }.onFailure {
+                    message = null
+                    error = it.message ?: "Could not reset PIN"
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Generate new PIN", color = overlay.text)
+        }
     }
 }
 

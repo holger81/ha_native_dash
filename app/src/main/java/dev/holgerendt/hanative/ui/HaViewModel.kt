@@ -170,7 +170,6 @@ class HaViewModel(
     private var displayWakeJob: Job? = null
     private var managementServer: ManagementServer? = null
     private val random = SecureRandom()
-    @Volatile private var currentPin: String = credentials.adoptOrCreatePin { newPin() }
 
     private val _subscribedCalendars = MutableStateFlow(credentials.subscribedCalendars)
     val subscribedCalendars: StateFlow<List<String>?> = _subscribedCalendars
@@ -206,14 +205,21 @@ class HaViewModel(
         "var(--yellow)",
     )
 
+    private fun syncPinToUi() {
+        _ui.value = _ui.value.copy(
+            remotePin = credentials.managementPin,
+            pinIsUserSet = credentials.managementPin.isNotBlank() && !credentials.isGeneratedPin,
+        )
+    }
+
     init {
+        credentials.adoptOrCreatePin { newPin() }
+        syncPinToUi()
         val (dashboard, loadError) = DashboardLoader.loadOrNull(app)
         _ui.value = _ui.value.copy(
             dashboard = dashboard,
             showSetup = !credentials.isConfigured,
             setupError = loadError,
-            remotePin = currentPin,
-            pinIsUserSet = credentials.managementPin.isNotBlank(),
             screenTimeoutSeconds = credentials.screenTimeoutSeconds,
             displayOffEntity = credentials.displayOffEntity,
             displayBrightnessEntity = credentials.displayBrightnessEntity,
@@ -270,9 +276,22 @@ class HaViewModel(
         }
         val normalized = pin.trim()
         credentials.managementPin = normalized
-        currentPin = normalized
-        _ui.value = _ui.value.copy(remotePin = currentPin, pinIsUserSet = true)
+        credentials.commitPinToRecovery()
+        managementServer?.onPinChanged()
+        syncPinToUi()
         return Result.success(Unit)
+    }
+
+    fun resetManagementPin(): Result<String> {
+        val fresh = newPin()
+        CredentialsStore.pinError(fresh)?.let {
+            return Result.failure(IllegalArgumentException(it))
+        }
+        credentials.managementPin = fresh
+        credentials.commitPinToRecovery()
+        managementServer?.onPinChanged()
+        syncPinToUi()
+        return Result.success(fresh)
     }
 
     fun verifyManagementPin(pin: String): Boolean {
@@ -290,16 +309,21 @@ class HaViewModel(
     }
 
     fun retryRestoreIfNeeded() {
-        if (credentials.isConfigured && credentials.managementPin.isNotBlank()) return
+        val wasConfigured = credentials.isConfigured
         credentials.reloadFromExternal()
-        currentPin = credentials.adoptOrCreatePin { currentPin.ifBlank { newPin() } }
-        if (currentPin != _ui.value.remotePin || credentials.managementPin.isNotBlank() != _ui.value.pinIsUserSet) {
-            _ui.value = _ui.value.copy(
-                remotePin = currentPin,
-                pinIsUserSet = credentials.managementPin.isNotBlank(),
-            )
+        credentials.adoptOrCreatePin { newPin() }
+        syncPinToUi()
+        if (!credentials.isConfigured) return
+        if (_ui.value.showSetup) {
+            viewModelScope.launch { connect(credentials.baseUrl, credentials.token) }
+            return
         }
-        if (credentials.isConfigured && _ui.value.showSetup) {
+        if (!wasConfigured) {
+            viewModelScope.launch { connect(credentials.baseUrl, credentials.token) }
+            return
+        }
+        val state = connection.value
+        if (state !is ConnectionState.Connected && state !is ConnectionState.Connecting) {
             viewModelScope.launch { connect(credentials.baseUrl, credentials.token) }
         }
     }
@@ -315,7 +339,7 @@ class HaViewModel(
             return
         }
         val server = ManagementServer(
-            pinProvider = { currentPin },
+            pinProvider = { credentials.managementPin },
             savedUrlProvider = { credentials.baseUrl },
             screenshotProvider = { capture.captureJpeg() },
             onSubmit = { _, url, token ->
@@ -382,7 +406,7 @@ class HaViewModel(
             host != null && NetworkGuard.isPrivateHost(host)
         }
         if (!privateHost) {
-            val message = "Home Assistant must be on the local network (private IP or LAN name), not '$host'"
+            val message = NetworkGuard.hostRejectionReason(host)
             _ui.value = _ui.value.copy(setupBusy = false, setupError = message)
             return Result.failure(IllegalStateException(message))
         }
@@ -391,11 +415,10 @@ class HaViewModel(
         credentials.baseUrl = trimmedUrl
         credentials.token = trimmedToken
         if (credentials.managementPin.isBlank()) {
-            credentials.managementPin = currentPin
-        } else {
-            currentPin = credentials.managementPin
+            credentials.adoptOrCreatePin { newPin() }
         }
-        runCatching { client.connect(trimmedUrl, trimmedToken) }
+        syncPinToUi()
+        client.connect(trimmedUrl, trimmedToken)
         ensureReconnectLoop()
         if (result.isFailure) {
             val message = result.exceptionOrNull()?.message ?: "Connection failed"
@@ -403,10 +426,9 @@ class HaViewModel(
                 showSetup = false,
                 setupBusy = false,
                 setupError = message,
-                remotePin = currentPin,
-                pinIsUserSet = credentials.managementPin.isNotBlank(),
                 drawerOpen = false,
             )
+            syncPinToUi()
             return Result.failure(IllegalStateException(message))
         }
         refreshCalendars()
@@ -414,10 +436,9 @@ class HaViewModel(
             showSetup = false,
             setupBusy = false,
             setupError = null,
-            remotePin = currentPin,
-            pinIsUserSet = credentials.managementPin.isNotBlank(),
             drawerOpen = false,
         )
+        syncPinToUi()
         return Result.success(Unit)
     }
 
@@ -432,7 +453,13 @@ class HaViewModel(
                     val url = credentials.baseUrl
                     val token = credentials.token
                     if (url.isBlank() || token.isBlank()) continue
-                    runCatching { client.connect(url, token) }
+                    try {
+                        client.connect(url, token)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // retry on next tick
+                    }
                 }
             }
         }
@@ -444,6 +471,7 @@ class HaViewModel(
 
     val savedUrl: String get() = credentials.baseUrl
     val savedToken: String get() = credentials.token
+    val savedGo2rtcUrl: String get() = credentials.go2rtcUrl
 
     private val _musicWall = MutableStateFlow(MusicWallState(selectedEntityId = credentials.musicPlayerEntity.ifBlank { null }))
     val musicWall: StateFlow<MusicWallState> = _musicWall
@@ -1352,12 +1380,15 @@ class HaViewModel(
     private fun wallCameraWidgets(): List<WidgetNode> =
         _ui.value.dashboard?.home?.popups
             ?.firstOrNull { it.hash == KioskCommands.CAMERA_POPUP }
-            ?.let { popup -> CameraStreams.camerasForPopup(popup) }
-            ?: CameraStreams.wallPanelCameras
+            ?.let { popup -> CameraStreams.camerasForPopup(popup, credentials.go2rtcUrl) }
+            ?: CameraStreams.wallPanelCameras(credentials.go2rtcUrl)
 
     private fun prefetchWallCameras() {
         viewModelScope.launch {
             val widgets = wallCameraWidgets()
+            // Wall cameras stay warm (placeholder) after the last viewer leaves
+            // so a door-triggered popup opens instantly.
+            liveCameras.setWarmTargets(widgets.map { CameraStreams.fromWidget(it) })
             liveCameras.ensureRunning(widgets.map { CameraStreams.fromWidget(it) })
             if (client.currentBaseUrl.isBlank()) return@launch
             runCatching { client.prefetchCameraSnapshots(widgets.mapNotNull { it.entity }) }

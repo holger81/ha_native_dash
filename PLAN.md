@@ -78,7 +78,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
     `Channel`; a single collector coroutine on `Dispatchers.Default` parses
     JSON and dispatches events. `state_changed` entities are buffered in a
     `ConcurrentHashMap` and flushed to `_states` in one `update` every 80ms.
-- [ ] **2.4 Camera comes up immediately on door detection**
+- [x] **2.4 Camera comes up immediately on door detection**
   - Start `CameraStreams.prefetch()` + `liveCameras.ensureRunning(wallPanelCameras)`
     as soon as credentials exist (go2rtc URLs need no HA token) — before WS auth.
   - Re-ensure camera sessions when the WS reconnects.
@@ -86,11 +86,37 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done
     `turn_on` up to 2× (display state already watched).
   - Verify warm resume: players paused-not-released on sleep, `resume()` flips
     playWhenReady, BEHIND_LIVE_WINDOW auto-recovery keeps first frame <1s.
-- [ ] **2.5 Camera hygiene** (`LiveCameraHub.kt`, `CameraStreams.kt`)
+  - **Done (2026-08-30):** `prefetchWallCameras()` runs in `init` (gated on
+    `credentials.isConfigured`) and re-fires on every WS reconnect via
+     `watchWallCamerasOnReconnect()`; `ensureRunning` runs before the base-URL
+    check so go2rtc sessions start pre-auth. `playHls` takes a warm-resume
+    fast path (same media item, same `localConfiguration` URI, healthy state →
+    `playWhenReady = true` only, no re-prepare); a session that hit a fatal
+    `onPlayerError` sets `errored` and always re-prepares, since Media3 has no
+    error playback state and playWhenReady alone can't recover one.
+    `wakeScreen` uses `commandDisplayOnWithRetry` (3 attempts, 3s state-flip
+    window each, job cancelled on sleep). Remaining: on-device check that the
+    first frame stays <1s on door-triggered resume.
+- [x] **2.5 Camera hygiene** (`LiveCameraHub.kt`, `CameraStreams.kt`)
   - Per-session `DefaultHttpDataSource.Factory` (shared factory is a header race).
   - Refcounted release: no-viewer sessions released after idle timeout;
     wall cameras stay warm.
   - TTL + size cap on stream-URL cache.
+  - **Done (2026-08-30):** each `Session` owns its
+    `DefaultHttpDataSource.Factory` (player built from it; headers set on the
+    session's factory at `prepare`), so one stream's auth headers can no longer
+    clobber another's. `LiveCameraHub.setWarmTargets()` (fed by
+    `HaViewModel.prefetchWallCameras()` on init + every WS reconnect) marks wall
+    cameras warm; when the last viewer leaves a non-warm session it gets a
+    60s idle timer (`armIdleRelease`); on fire the timer atomically takes the
+    map slot (`ConcurrentHashMap.remove(key) !== session`) and `closeSession`
+    cancels jobs, releases player/placeholder on main, and resets the view
+    flows. Timers are
+    cancelled by `view()`/`markAttached`/`ensureRunning` and re-armed by
+    `resume()` after sleep so the clock restarts post-wake; warm sessions and
+    sessions that never had a viewer are untouched. `resolveCache` entries now
+    carry a 5-minute TTL and the map is capped at 64 entries (clear-all on
+    overflow).
 - [ ] **2.6 go2rtc base URL configurable** — settings field, default
   `http://192.168.10.31:1984/`; remove hardcoded IP.
 

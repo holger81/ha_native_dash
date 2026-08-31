@@ -52,7 +52,8 @@ class CameraStreamException(message: String) : Exception(message)
 object CameraStreams {
     private val jpegStart = byteArrayOf(0xFF.toByte(), 0xD8.toByte())
     private val jpegEnd = byteArrayOf(0xFF.toByte(), 0xD9.toByte())
-    private val resolveCache = ConcurrentHashMap<String, List<StreamCandidate>>()
+    private class ResolveCacheEntry(val value: List<StreamCandidate>, val expiresAtMs: Long)
+    private val resolveCache = ConcurrentHashMap<String, ResolveCacheEntry>()
 
     private val streamClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -61,12 +62,12 @@ object CameraStreams {
         .followRedirects(true)
         .build()
 
-    val wallPanelCameras: List<WidgetNode> = listOf(
+    fun wallPanelCameras(go2rtcUrl: String): List<WidgetNode> = listOf(
         WidgetNode(
             type = "camera",
             name = "Front door",
             entity = "camera.reolink_video_doorbell_poe_fluent",
-            streamServer = "http://192.168.10.31:1984/",
+            streamServer = go2rtcUrl,
             streamName = "frontdoor_sub",
             muted = true,
         ),
@@ -74,15 +75,15 @@ object CameraStreams {
             type = "camera",
             name = "Garage",
             entity = "camera.garagefront_2",
-            streamServer = "http://192.168.10.31:1984/",
+            streamServer = go2rtcUrl,
             streamName = "garagefront_sub",
             muted = true,
         ),
     )
 
-    fun camerasForPopup(popup: PopupNode): List<WidgetNode> {
+    fun camerasForPopup(popup: PopupNode, go2rtcUrl: String): List<WidgetNode> {
         val found = popup.cards.flatMap { collectCameras(it) }
-        return if (found.any { fromWidget(it).hasLiveSource() }) found else wallPanelCameras
+        return if (found.any { fromWidget(it).hasLiveSource() }) found else wallPanelCameras(go2rtcUrl)
     }
 
     fun collectCameras(widget: WidgetNode): List<WidgetNode> {
@@ -111,9 +112,16 @@ object CameraStreams {
             target.entityId.orEmpty(),
             client.currentBaseUrl,
         ).joinToString("|")
-        resolveCache[key]?.let { return it }
+        val now = System.currentTimeMillis()
+        resolveCache[key]?.let { entry ->
+            if (entry.expiresAtMs > now) return entry.value
+            resolveCache.remove(key)
+        }
         val result = resolveUncached(client, target)
-        if (result.isNotEmpty()) resolveCache[key] = result
+        if (result.isNotEmpty()) {
+            if (resolveCache.size >= RESOLVE_CACHE_MAX_ENTRIES) resolveCache.clear()
+            resolveCache[key] = ResolveCacheEntry(result, now + RESOLVE_TTL_MS)
+        }
         return result
     }
 
@@ -253,6 +261,11 @@ object CameraStreams {
             .joinToString("")
         return start.startsWith("<") || start.startsWith("{") || start.startsWith("[")
     }
+
+    // HA stream URLs and go2rtc layouts can change (token rotation, camera
+    // renames); never trust a cached candidate for more than 5 minutes.
+    private const val RESOLVE_TTL_MS = 5 * 60_000L
+    private const val RESOLVE_CACHE_MAX_ENTRIES = 64
 
     private fun indexOf(data: ByteArray, pattern: ByteArray, start: Int): Int {
         val last = data.size - pattern.size
