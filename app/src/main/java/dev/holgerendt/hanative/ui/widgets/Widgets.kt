@@ -874,13 +874,14 @@ private fun WeekPlannerDay(
 @Composable
 fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val states by viewModel.states.collectAsState()
+    val timelineRevision by viewModel.visionTimelineRevision.collectAsState()
     val limit = widget.numberOfEvents ?: 5
     val hours = widget.numberOfHours ?: widget.hours
     val days = widget.days
     val entityId = widget.entity ?: "calendar.llm_vision_timeline"
     var events by remember { mutableStateOf(listOf<HaCalendarEvent>()) }
     var loaded by remember { mutableStateOf(false) }
-    LaunchedEffect(entityId, limit, hours, days, viewModel.client.currentBaseUrl) {
+    LaunchedEffect(entityId, limit, hours, days, timelineRevision, viewModel.client.currentBaseUrl) {
         loaded = false
         while (true) {
             if (viewModel.client.currentBaseUrl.isBlank()) {
@@ -892,7 +893,7 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
             }.getOrDefault(emptyList())
             events = fetched.sortedByDescending { it.start ?: Instant.EPOCH }.take(limit)
             loaded = true
-            delay(20_000)
+            delay(15_000)
         }
     }
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {

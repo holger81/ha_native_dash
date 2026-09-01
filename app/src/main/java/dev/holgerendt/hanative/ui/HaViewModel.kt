@@ -64,6 +64,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import java.security.SecureRandom
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
@@ -183,6 +184,9 @@ class HaViewModel(
     private val _calendarEventsRevision = MutableStateFlow(0)
     val calendarEventsRevision: StateFlow<Int> = _calendarEventsRevision
 
+    private val _visionTimelineRevision = MutableStateFlow(0)
+    val visionTimelineRevision: StateFlow<Int> = _visionTimelineRevision
+
     private val _activePersonCameras = MutableStateFlow<List<WidgetNode>>(emptyList())
     val activePersonCameras: StateFlow<List<WidgetNode>> = _activePersonCameras
     private val _debugPersonCamerasEnabled = MutableStateFlow(false)
@@ -242,6 +246,7 @@ class HaViewModel(
         watchAutoDisplayBrightness()
         watchPresenceScreen()
         watchWallCamerasOnReconnect()
+        watchVisionTimelineRefresh()
         if (credentials.isConfigured) {
             prefetchWallCameras()
             viewModelScope.launch { connect(credentials.baseUrl, credentials.token) }
@@ -1401,8 +1406,43 @@ class HaViewModel(
             var wasConnected = connection.value is ConnectionState.Connected
             connection.collect { state ->
                 val connected = state is ConnectionState.Connected
-                if (connected && !wasConnected) prefetchWallCameras()
+                if (connected && !wasConnected) {
+                    prefetchWallCameras()
+                    bumpVisionTimelineRevision()
+                }
                 wasConnected = connected
+            }
+        }
+    }
+
+    private fun bumpVisionTimelineRevision() {
+        _visionTimelineRevision.value++
+    }
+
+    private fun watchVisionTimelineRefresh() {
+        viewModelScope.launch {
+            var previousCalendarUpdated: Instant? = null
+            val previousSensorStates = mutableMapOf<String, String>()
+            combine(
+                states,
+                _ui.map { it.dashboard?.home?.personCameras?.bindings.orEmpty() }.distinctUntilChanged(),
+            ) { allStates, bindings ->
+                allStates to bindings
+            }.collect { (allStates, bindings) ->
+                val calendar = allStates["calendar.llm_vision_timeline"]
+                val calendarUpdated = calendar?.lastUpdated
+                if (calendarUpdated != null && calendarUpdated != previousCalendarUpdated) {
+                    if (previousCalendarUpdated != null) bumpVisionTimelineRevision()
+                    previousCalendarUpdated = calendarUpdated
+                }
+                bindings.forEach { binding ->
+                    val sensor = binding.sensor ?: return@forEach
+                    val state = allStates[sensor]?.state ?: return@forEach
+                    val previous = previousSensorStates.put(sensor, state)
+                    if (previous != null && previous != state && personSensorActive(binding, allStates)) {
+                        bumpVisionTimelineRevision()
+                    }
+                }
             }
         }
     }
@@ -1659,6 +1699,7 @@ class HaViewModel(
         val previous = _activePersonCameras.value
         if (previous.isEmpty()) return
         _activePersonCameras.value = emptyList()
+        bumpVisionTimelineRevision()
         viewModelScope.launch {
             liveCameras.stopTargets(previous.map { CameraStreams.fromWidget(it) })
         }
