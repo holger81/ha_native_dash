@@ -1424,17 +1424,23 @@ class HaViewModel(
             var previousCalendarUpdated: Instant? = null
             val previousSensorStates = mutableMapOf<String, String>()
             combine(
-                states,
+                states.map { it["calendar.llm_vision_timeline"]?.lastUpdated }.distinctUntilChanged(),
                 _ui.map { it.dashboard?.home?.personCameras?.bindings.orEmpty() }.distinctUntilChanged(),
-            ) { allStates, bindings ->
-                allStates to bindings
-            }.collect { (allStates, bindings) ->
-                val calendar = allStates["calendar.llm_vision_timeline"]
-                val calendarUpdated = calendar?.lastUpdated
+                states,
+            ) { calendarUpdated, bindings, allStates ->
+                Triple(
+                    calendarUpdated,
+                    bindings,
+                    bindings.mapNotNull { binding ->
+                        binding.sensor?.let { sensor -> sensor to allStates[sensor]?.state }
+                    },
+                )
+            }.distinctUntilChanged().collect { (calendarUpdated, bindings, _) ->
                 if (calendarUpdated != null && calendarUpdated != previousCalendarUpdated) {
                     if (previousCalendarUpdated != null) bumpVisionTimelineRevision()
                     previousCalendarUpdated = calendarUpdated
                 }
+                val allStates = states.value
                 bindings.forEach { binding ->
                     val sensor = binding.sensor ?: return@forEach
                     val state = allStates[sensor]?.state ?: return@forEach

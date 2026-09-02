@@ -303,7 +303,6 @@ private fun MoreInfoControls(entityId: String, entity: EntityState?, domain: Str
 
 @Composable
 private fun MoreInfoHistory(entityId: String, entity: EntityState?, viewModel: HaViewModel) {
-    val now = rememberNowTick()
     var buckets by remember(entityId) { mutableStateOf(listOf<HistoryBucket>()) }
     var loaded by remember(entityId) { mutableStateOf(false) }
     suspend fun refresh() {
@@ -327,8 +326,8 @@ private fun MoreInfoHistory(entityId: String, entity: EntityState?, viewModel: H
         delay(1_000)
         refresh()
     }
-    val plotted = remember(buckets, entity?.state, entity?.lastChanged, now) {
-        withLiveSample(buckets, entity, now.toEpochMilli())
+    val plotted = remember(buckets, entity?.state, entity?.lastChanged) {
+        withLiveSample(buckets, entity, System.currentTimeMillis())
     }
     Spacer(Modifier.height(8.dp))
     val overlay = LocalOverlay.current
@@ -350,7 +349,7 @@ private fun MoreInfoHistory(entityId: String, entity: EntityState?, viewModel: H
         else -> HistoryGraphChart(
             buckets = plotted,
             unit = entity?.attrString("unit_of_measurement").orEmpty(),
-            nowMs = now.toEpochMilli(),
+            nowMs = System.currentTimeMillis(),
         )
     }
 }

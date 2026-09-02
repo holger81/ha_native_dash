@@ -881,8 +881,10 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
     val entityId = widget.entity ?: "calendar.llm_vision_timeline"
     var events by remember { mutableStateOf(listOf<HaCalendarEvent>()) }
     var loaded by remember { mutableStateOf(false) }
-    LaunchedEffect(entityId, limit, hours, days, timelineRevision, viewModel.client.currentBaseUrl) {
+    LaunchedEffect(entityId, limit, hours, days) {
         loaded = false
+    }
+    LaunchedEffect(entityId, limit, hours, days, timelineRevision, viewModel.client.currentBaseUrl) {
         while (true) {
             if (viewModel.client.currentBaseUrl.isBlank()) {
                 delay(400)

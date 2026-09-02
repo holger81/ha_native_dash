@@ -285,9 +285,8 @@ private fun HomeScreen(viewModel: HaViewModel) {
             WeekPlanner(it, viewModel, Modifier.fillMaxWidth())
         }
         Spacer(Modifier.height(12.dp))
-        // Lovelace `(min-width: 1024px)`: 50% rooms | 50% timeline. 1080px portrait qualifies.
-        // When backyard person cams are active they take the right column (timeline slot), not a
-        // full-width strip above rooms.
+        // Lovelace `(min-width: 1024px)`: 50% rooms | 50% timeline. Backyard person cams stack
+        // below the vision timeline in the right column instead of replacing it.
         val activePersonCameras by viewModel.activePersonCameras.collectAsState()
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -295,17 +294,20 @@ private fun HomeScreen(viewModel: HaViewModel) {
             verticalAlignment = Alignment.Top,
         ) {
             RoomGrid(home.rooms, viewModel, Modifier.weight(1f))
-            when {
-                activePersonCameras.isNotEmpty() -> {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                home.timeline?.let {
+                    VisionTimeline(it, viewModel, Modifier.fillMaxWidth())
+                }
+                if (activePersonCameras.isNotEmpty()) {
                     PersonCameraOverlay(
                         cameras = activePersonCameras,
                         viewModel = viewModel,
                         fitContent = true,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.fillMaxWidth(),
                     )
-                }
-                home.timeline != null -> {
-                    VisionTimeline(home.timeline, viewModel, Modifier.weight(1f))
                 }
             }
         }

@@ -1275,6 +1275,8 @@ class HaClient {
     suspend fun authenticatedBytes(path: String): ByteArray? = withContext(Dispatchers.IO) {
         if (!path.startsWith("http") && (baseUrl.isBlank() || token.isBlank())) return@withContext null
         val url = if (path.startsWith("http")) path else baseUrl + path
+        val host = NetworkGuard.hostOf(url) ?: return@withContext null
+        if (!NetworkGuard.isPrivateHost(host)) return@withContext null
         val isHaUrl = !path.startsWith("http") || url.startsWith(baseUrl)
         runCatching {
             val builder = Request.Builder().url(url)
