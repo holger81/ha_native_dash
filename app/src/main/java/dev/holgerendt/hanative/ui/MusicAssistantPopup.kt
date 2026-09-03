@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,7 +30,9 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -279,7 +284,7 @@ private fun NowPlayingPane(
     val album = wall.queue?.current?.album ?: entity?.mediaAlbum().orEmpty()
     val art = wall.queue?.current?.imageUrl ?: entity?.entityPicture
     val duration = wall.queue?.current?.durationSec?.toDouble() ?: entity?.mediaDurationSec()
-    val position = liveMediaPosition(
+    val position = rememberLiveMediaPosition(
         entity = entity,
         queueElapsed = wall.queue?.elapsedSec,
         queueElapsedUpdatedAtMs = wall.queue?.elapsedUpdatedAtMs,
@@ -553,173 +558,204 @@ private fun DiscoverPane(
     val selected = wall.players.firstOrNull { it.entityId == wall.selectedEntityId }
     val selectedHasMass = !selected?.massPlayerId.isNullOrBlank()
     val browsing = discovery.browseStack.isNotEmpty()
+    val playTargets = wall.players.filter { !it.massPlayerId.isNullOrBlank() }.ifEmpty { wall.players }
 
-    Column(
-        modifier = modifier.verticalScroll(rememberScrollState()),
+    LazyColumn(
+        modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text("Play on", color = overlay.muted, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            wall.players.filter { !it.massPlayerId.isNullOrBlank() }.ifEmpty { wall.players }.forEach { player ->
-                val active = player.entityId == wall.selectedEntityId
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(if (active) ActiveYellow else overlay.card)
-                        .clickable { viewModel.selectMusicPlayer(player.entityId) }
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                ) {
-                    Text(
-                        player.name,
-                        color = if (active) Color.Black else overlay.text,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-            }
+        item(key = "play-on-label") {
+            Text("Play on", color = overlay.muted, fontSize = 13.sp, fontWeight = FontWeight.Medium)
         }
-
-        if (!browsing) {
-            OutlinedTextField(
-                value = discovery.searchQuery,
-                onValueChange = viewModel::setMusicSearchQuery,
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                placeholder = { Text(searchPlaceholder(discovery.searchTypes)) },
-                shape = RoundedCornerShape(18.dp),
-                colors = fieldColors,
-                leadingIcon = {
-                    MdiIcon("mdi:magnify", tint = overlay.muted, size = 22.dp)
-                },
-            )
-
+        item(key = "play-on-players") {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                listOf(
-                    "track" to "Tracks",
-                    "album" to "Albums",
-                    "playlist" to "Playlists",
-                    "artist" to "Artists",
-                ).forEach { (type, label) ->
-                    val active = type in discovery.searchTypes
+                playTargets.forEach { player ->
+                    val active = player.entityId == wall.selectedEntityId
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(16.dp))
                             .background(if (active) ActiveYellow else overlay.card)
-                            .clickable { viewModel.toggleMusicSearchType(type) }
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                            .clickable { viewModel.selectMusicPlayer(player.entityId) }
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
                     ) {
                         Text(
-                            label,
+                            player.name,
                             color = if (active) Color.Black else overlay.text,
-                            fontSize = 13.sp,
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.Medium,
                         )
                     }
                 }
             }
+        }
 
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(overlay.card)
-                    .clickable { viewModel.openAppleMusicBrowse() }
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-            ) {
-                Text("Browse Apple Music", color = overlay.text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        if (!browsing) {
+            item(key = "search-field") {
+                OutlinedTextField(
+                    value = discovery.searchQuery,
+                    onValueChange = viewModel::setMusicSearchQuery,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text(searchPlaceholder(discovery.searchTypes)) },
+                    shape = RoundedCornerShape(18.dp),
+                    colors = fieldColors,
+                    leadingIcon = {
+                        MdiIcon("mdi:magnify", tint = overlay.muted, size = 22.dp)
+                    },
+                )
+            }
+            item(key = "search-types") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    listOf(
+                        "track" to "Tracks",
+                        "album" to "Albums",
+                        "playlist" to "Playlists",
+                        "artist" to "Artists",
+                    ).forEach { (type, label) ->
+                        val active = type in discovery.searchTypes
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(if (active) ActiveYellow else overlay.card)
+                                .clickable { viewModel.toggleMusicSearchType(type) }
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                        ) {
+                            Text(
+                                label,
+                                color = if (active) Color.Black else overlay.text,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    }
+                }
+            }
+            item(key = "browse-apple") {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(overlay.card)
+                        .clickable { viewModel.openAppleMusicBrowse() }
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                ) {
+                    Text("Browse Apple Music", color = overlay.text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                }
             }
         }
 
         if (!selectedHasMass) {
-            Text(
-                "Pick a Music Assistant player above so Discover can play to it.",
-                color = overlay.muted,
-                fontSize = 13.sp,
-            )
+            item(key = "pick-player-hint") {
+                Text(
+                    "Pick a Music Assistant player above so Discover can play to it.",
+                    color = overlay.muted,
+                    fontSize = 13.sp,
+                )
+            }
         }
 
-        discovery.error?.let {
-            Text(it, color = Color(0xFFFF8A80), fontSize = 13.sp)
+        discovery.error?.let { err ->
+            item(key = "discovery-error") {
+                Text(err, color = Color(0xFFFF8A80), fontSize = 13.sp)
+            }
         }
 
         when {
             browsing -> {
-                MusicBrowsePane(viewModel = viewModel, discovery = discovery)
+                musicBrowseItems(viewModel = viewModel, discovery = discovery)
             }
             discovery.searchLoading -> {
-                Box(Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
-                    LoadingSpinner()
+                item(key = "search-loading") {
+                    Box(Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
+                        LoadingSpinner()
+                    }
                 }
             }
             discovery.searchResults != null -> {
                 val results = discovery.searchResults
                 val types = discovery.searchTypes
                 if (results.isEmpty) {
-                    Text("No matches for “${discovery.searchQuery.trim()}”.", color = overlay.muted, fontSize = 14.sp)
+                    item(key = "search-empty") {
+                        Text(
+                            "No matches for “${discovery.searchQuery.trim()}”.",
+                            color = overlay.muted,
+                            fontSize = 14.sp,
+                        )
+                    }
                 } else {
                     if ("track" in types) {
-                        SearchResultSection("Tracks", results.tracks, discovery.playingUri, viewModel)
+                        searchResultItems("Tracks", "track", results.tracks, discovery.playingUri, viewModel)
                     }
                     if ("album" in types) {
-                        SearchResultSection("Albums", results.albums, discovery.playingUri, viewModel)
+                        searchResultItems("Albums", "album", results.albums, discovery.playingUri, viewModel)
                     }
                     if ("playlist" in types) {
-                        SearchResultSection("Playlists", results.playlists, discovery.playingUri, viewModel)
+                        searchResultItems("Playlists", "playlist", results.playlists, discovery.playingUri, viewModel)
                     }
                     if ("artist" in types) {
-                        SearchResultSection("Artists", results.artists, discovery.playingUri, viewModel)
+                        searchResultItems("Artists", "artist", results.artists, discovery.playingUri, viewModel)
                     }
                 }
             }
             discovery.loading -> {
-                Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
-                    LoadingSpinner()
+                item(key = "discovery-loading") {
+                    Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
+                        LoadingSpinner()
+                    }
                 }
             }
             else -> {
-                DiscoveryShelf(
-                    title = "Recently played",
-                    subtitle = "Apple Music & last queues",
-                    items = discovery.recentlyPlayed,
-                    playingUri = discovery.playingUri,
-                    viewModel = viewModel,
-                    onSeeAll = { viewModel.openAppleMusicSeeAll("recent") },
-                )
-                DiscoveryShelf(
-                    title = "New music",
-                    subtitle = "Apple Music Friday refresh",
-                    items = discovery.newMusic,
-                    playingUri = discovery.playingUri,
-                    viewModel = viewModel,
-                    onSeeAll = { viewModel.openAppleMusicSeeAll("new_music") },
-                )
-                DiscoveryShelf(
-                    title = "Stations for you",
-                    subtitle = "Apple Music radio",
-                    items = discovery.stationsForYou,
-                    playingUri = discovery.playingUri,
-                    viewModel = viewModel,
-                    onSeeAll = { viewModel.openAppleMusicSeeAll("stations") },
-                )
+                item(key = "shelf-recent") {
+                    DiscoveryShelf(
+                        title = "Recently played",
+                        subtitle = "Apple Music & last queues",
+                        items = discovery.recentlyPlayed,
+                        playingUri = discovery.playingUri,
+                        viewModel = viewModel,
+                        onSeeAll = { viewModel.openAppleMusicSeeAll("recent") },
+                    )
+                }
+                item(key = "shelf-new") {
+                    DiscoveryShelf(
+                        title = "New music",
+                        subtitle = "Apple Music Friday refresh",
+                        items = discovery.newMusic,
+                        playingUri = discovery.playingUri,
+                        viewModel = viewModel,
+                        onSeeAll = { viewModel.openAppleMusicSeeAll("new_music") },
+                    )
+                }
+                item(key = "shelf-stations") {
+                    DiscoveryShelf(
+                        title = "Stations for you",
+                        subtitle = "Apple Music radio",
+                        items = discovery.stationsForYou,
+                        playingUri = discovery.playingUri,
+                        viewModel = viewModel,
+                        onSeeAll = { viewModel.openAppleMusicSeeAll("stations") },
+                    )
+                }
             }
         }
     }
 }
 
-@Composable
-private fun MusicBrowsePane(viewModel: HaViewModel, discovery: MusicDiscoveryState) {
-    val overlay = LocalOverlay.current
+private fun LazyListScope.musicBrowseItems(
+    viewModel: HaViewModel,
+    discovery: MusicDiscoveryState,
+) {
     val frame = discovery.browseStack.lastOrNull() ?: return
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    item(key = "browse-header") {
+        val overlay = LocalOverlay.current
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -747,27 +783,70 @@ private fun MusicBrowsePane(viewModel: HaViewModel, discovery: MusicDiscoverySta
                 Text("Apple Music", color = overlay.muted, fontSize = 12.sp)
             }
         }
-        when {
-            frame.loading -> Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
+    }
+    when {
+        frame.loading -> item(key = "browse-loading") {
+            Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
                 LoadingSpinner()
             }
-            frame.error != null && frame.items.isEmpty() -> Text(frame.error, color = Color(0xFFFF8A80), fontSize = 13.sp)
-            frame.items.isEmpty() -> Text("Nothing here", color = overlay.muted, fontSize = 14.sp)
-            else -> {
-                frame.error?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 13.sp) }
-                frame.items.forEach { item ->
-                    DiscoveryListRow(
-                        item = item,
-                        playing = item.uri == discovery.playingUri,
-                        onClick = { viewModel.onMusicBrowseItem(item) },
-                        viewModel = viewModel,
-                        showPlayIcon = item.canPlay,
-                    )
+        }
+        frame.error != null && frame.items.isEmpty() -> item(key = "browse-error") {
+            Text(frame.error, color = Color(0xFFFF8A80), fontSize = 13.sp)
+        }
+        frame.items.isEmpty() -> item(key = "browse-empty") {
+            Text("Nothing here", color = LocalOverlay.current.muted, fontSize = 14.sp)
+        }
+        else -> {
+            frame.error?.let { err ->
+                item(key = "browse-soft-error") {
+                    Text(err, color = Color(0xFFFF8A80), fontSize = 13.sp)
                 }
+            }
+            items(
+                items = frame.items,
+                key = { item -> "browse:${mediaItemKey(item)}" },
+            ) { item ->
+                DiscoveryListRow(
+                    item = item,
+                    playing = item.uri == discovery.playingUri,
+                    onClick = { viewModel.onMusicBrowseItem(item) },
+                    viewModel = viewModel,
+                    showPlayIcon = item.canPlay,
+                )
             }
         }
     }
 }
+
+private fun LazyListScope.searchResultItems(
+    title: String,
+    typeKey: String,
+    items: List<MassMediaItem>,
+    playingUri: String?,
+    viewModel: HaViewModel,
+) {
+    if (items.isEmpty()) return
+    item(key = "search-title-$typeKey") {
+        Text(title, color = LocalOverlay.current.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+    }
+    items(
+        items = items,
+        key = { item -> "search:$typeKey:${mediaItemKey(item)}" },
+    ) { item ->
+        DiscoveryListRow(
+            item = item,
+            playing = item.uri == playingUri,
+            onClick = { viewModel.playMusicDiscoveryItem(item) },
+            viewModel = viewModel,
+        )
+    }
+}
+
+private fun mediaItemKey(item: MassMediaItem): String =
+    item.uri.takeIf { it.isNotBlank() }
+        ?: item.browsePath?.takeIf { it.isNotBlank() }
+        ?: item.itemId?.takeIf { it.isNotBlank() }
+        ?: "${item.mediaType}:${item.name}"
 
 @Composable
 private fun DiscoveryShelf(
@@ -816,28 +895,6 @@ private fun DiscoveryShelf(
                     viewModel = viewModel,
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun SearchResultSection(
-    title: String,
-    items: List<MassMediaItem>,
-    playingUri: String?,
-    viewModel: HaViewModel,
-) {
-    val overlay = LocalOverlay.current
-    if (items.isEmpty()) return
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(title, color = overlay.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-        items.forEach { item ->
-            DiscoveryListRow(
-                item = item,
-                playing = item.uri == playingUri,
-                onClick = { viewModel.playMusicDiscoveryItem(item) },
-                viewModel = viewModel,
-            )
         }
     }
 }
@@ -1398,13 +1455,14 @@ private fun QueueItemRow(item: MusicAssistantQueueItem, viewModel: HaViewModel, 
 
 @Composable
 private fun ProgressRow(
-    position: Double?,
+    position: State<Double?>,
     duration: Double?,
     onSeek: (Double) -> Unit,
 ) {
     val overlay = LocalOverlay.current
     val max = (duration ?: 0.0).coerceAtLeast(0.0)
-    val live = (position ?: 0.0).coerceIn(0.0, if (max > 0) max else Double.MAX_VALUE)
+    // Read the ticking position here so only this row recomposes four times a second.
+    val live = (position.value ?: 0.0).coerceIn(0.0, if (max > 0) max else Double.MAX_VALUE)
     var dragging by remember { mutableStateOf(false) }
     var slider by remember(max) { mutableFloatStateOf(live.toFloat()) }
     LaunchedEffect(live, dragging) {
@@ -1525,24 +1583,59 @@ private fun TransportIconButton(
 
 private data class PlaybackAnchor(val base: Double, val updatedAtMs: Long)
 
+/**
+ * The 250 ms tick lives behind a [State] so that reading it invalidates only the progress row.
+ * Returning a plain `Double?` made this non-restartable, which pushed every tick's recomposition
+ * up into the caller — cover art, metadata, volume sliders and the queue column included.
+ */
 @Composable
-private fun liveMediaPosition(
+private fun rememberLiveMediaPosition(
     entity: EntityState?,
     queueElapsed: Double?,
     queueElapsedUpdatedAtMs: Long?,
     playerElapsed: Double?,
     playerElapsedUpdatedAtMs: Long?,
     playing: Boolean,
-): Double? {
-    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+): State<Double?> {
+    val nowMs = remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(playing, entity?.entityId, queueElapsed, playerElapsed) {
         while (playing) {
-            nowMs = System.currentTimeMillis()
+            nowMs.longValue = System.currentTimeMillis()
             delay(250)
         }
-        nowMs = System.currentTimeMillis()
+        nowMs.longValue = System.currentTimeMillis()
     }
+    return remember(
+        entity,
+        queueElapsed,
+        queueElapsedUpdatedAtMs,
+        playerElapsed,
+        playerElapsedUpdatedAtMs,
+        playing,
+    ) {
+        derivedStateOf {
+            mediaPositionAt(
+                entity = entity,
+                queueElapsed = queueElapsed,
+                queueElapsedUpdatedAtMs = queueElapsedUpdatedAtMs,
+                playerElapsed = playerElapsed,
+                playerElapsedUpdatedAtMs = playerElapsedUpdatedAtMs,
+                playing = playing,
+                nowMs = nowMs.longValue,
+            )
+        }
+    }
+}
 
+private fun mediaPositionAt(
+    entity: EntityState?,
+    queueElapsed: Double?,
+    queueElapsedUpdatedAtMs: Long?,
+    playerElapsed: Double?,
+    playerElapsedUpdatedAtMs: Long?,
+    playing: Boolean,
+    nowMs: Long,
+): Double? {
     val massAnchor = when {
         playerElapsed != null && playerElapsedUpdatedAtMs != null ->
             PlaybackAnchor(playerElapsed, playerElapsedUpdatedAtMs)
