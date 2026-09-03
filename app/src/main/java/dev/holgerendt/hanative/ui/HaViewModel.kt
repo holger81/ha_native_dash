@@ -47,11 +47,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -68,6 +68,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -78,6 +79,18 @@ data class WeatherPopupContext(
 )
 
 private val DEFAULT_MUSIC_SEARCH_TYPES = setOf("track", "album", "playlist", "artist")
+
+private val MUSIC_POPUP = PopupNode(
+    name = "Music Assistant",
+    icon = "mdi:music-note",
+    hash = "#music",
+)
+
+private val CHANGELOG_POPUP = PopupNode(
+    name = "Changelog",
+    icon = "mdi:information",
+    hash = "#changelog",
+)
 
 data class MusicBrowseFrame(
     val title: String,
@@ -130,6 +143,8 @@ data class UiState(
     val displayOffEntity: String = "",
     val displayBrightnessEntity: String = "",
     val displayIlluminanceEntity: String = "",
+    /** Blank keeps dashboard `stream_server` / existing camera fallbacks. */
+    val go2rtcUrl: String = "",
 )
 
 data class MediaPreview(
@@ -151,9 +166,10 @@ class HaViewModel(
     val connection: StateFlow<ConnectionState> = client.connection
         .stateIn(viewModelScope, SharingStarted.Eagerly, ConnectionState.Disconnected)
 
-    private val entityFlows = HashMap<String, StateFlow<EntityState?>>()
+    private val noEntityFlow: StateFlow<EntityState?> = MutableStateFlow(null)
+    private val entityFlows = ConcurrentHashMap<String, StateFlow<EntityState?>>()
     fun entityFlow(entityId: String?): StateFlow<EntityState?> {
-        if (entityId == null) return flowOf(null).stateIn(viewModelScope, SharingStarted.Eagerly, null)
+        if (entityId == null) return noEntityFlow
         return entityFlows.getOrPut(entityId) {
             client.states
                 .map { it[entityId] }
@@ -162,6 +178,29 @@ class HaViewModel(
         }
     }
 
+    private val noEntitiesFlow: StateFlow<Map<String, EntityState>> = MutableStateFlow(emptyMap())
+    private val entityMapFlows = ConcurrentHashMap<Set<String>, StateFlow<Map<String, EntityState>>>()
+
+    /**
+     * A view of [states] narrowed to [entityIds]. Widgets collect this instead of the whole map so
+     * the 80 ms `state_changed` flush only recomposes the widgets whose own entities changed.
+     */
+    fun entitiesFlow(entityIds: Collection<String?>): StateFlow<Map<String, EntityState>> {
+        val ids = entityIds.mapNotNullTo(HashSet()) { it?.takeIf(String::isNotBlank) }
+        if (ids.isEmpty()) return noEntitiesFlow
+        return entityMapFlows.getOrPut(ids) {
+            client.states
+                .map { all -> narrow(all, ids) }
+                .distinctUntilChanged()
+                .stateIn(viewModelScope, SharingStarted.Lazily, narrow(client.states.value, ids))
+        }
+    }
+
+    private fun narrow(all: Map<String, EntityState>, ids: Set<String>): Map<String, EntityState> =
+        buildMap(ids.size) {
+            ids.forEach { id -> all[id]?.let { put(id, it) } }
+        }
+
     private val _ui = MutableStateFlow(
         UiState(showSetup = !credentials.isConfigured),
     )
@@ -169,7 +208,7 @@ class HaViewModel(
 
     private var reconnectJob: Job? = null
     private var displayWakeJob: Job? = null
-    private var managementServer: ManagementServer? = null
+    @Volatile private var managementServer: ManagementServer? = null
     private val random = SecureRandom()
 
     private val _subscribedCalendars = MutableStateFlow(credentials.subscribedCalendars)
@@ -217,7 +256,6 @@ class HaViewModel(
     }
 
     init {
-        credentials.adoptOrCreatePin { newPin() }
         syncPinToUi()
         val (dashboard, loadError) = DashboardLoader.loadOrNull(app)
         _ui.value = _ui.value.copy(
@@ -228,8 +266,8 @@ class HaViewModel(
             displayOffEntity = credentials.displayOffEntity,
             displayBrightnessEntity = credentials.displayBrightnessEntity,
             displayIlluminanceEntity = credentials.displayIlluminanceEntity,
+            go2rtcUrl = credentials.go2rtcUrl,
         )
-        startManagementServer()
         client.onKioskEvent = { params ->
             if (KioskCommands.panelAllowed(params)) {
                 KioskCommands.fromParams(params)?.let { applyKioskCommand(it) }
@@ -247,20 +285,34 @@ class HaViewModel(
         watchPresenceScreen()
         watchWallCamerasOnReconnect()
         watchVisionTimelineRefresh()
-        if (credentials.isConfigured) {
-            prefetchWallCameras()
-            viewModelScope.launch { connect(credentials.baseUrl, credentials.token) }
+        // PIN adoption reads and reseals the Documents recovery file, and TLS setup generates an
+        // RSA-2048 keypair on first launch; neither belongs on the main thread. Connecting is
+        // chained after the PIN so it can't race `adoptOrCreatePin` on the credentials store.
+        viewModelScope.launch(Dispatchers.IO) {
+            credentials.adoptOrCreatePin { newPin() }
+            syncPinToUi()
+            if (credentials.isConfigured) {
+                prefetchWallCameras()
+                launch { connect(credentials.baseUrl, credentials.token) }
+            }
+            startManagementServer()
         }
     }
 
     override fun onCleared() {
         liveCameras.release()
         managementServer?.stop()
+        client.release()
         super.onCleared()
     }
 
     fun liveCamera(widget: WidgetNode): StateFlow<LiveCameraView> =
         liveCameras.view(CameraStreams.fromWidget(widget))
+
+    /** Stream lifecycle must be driven by an effect, not by a read during composition. */
+    fun startLiveCamera(widget: WidgetNode) {
+        liveCameras.start(CameraStreams.fromWidget(widget))
+    }
 
     fun attachCameraSurface(widget: WidgetNode) {
         liveCameras.markAttached(CameraStreams.fromWidget(widget))
@@ -299,8 +351,31 @@ class HaViewModel(
         return Result.success(fresh)
     }
 
+    private var localPinFailures = 0
+    private var localPinLockedUntilMs = 0L
+
+    /** Seconds still to wait before the on-device PIN gate accepts another attempt; 0 when open. */
+    fun managementPinLockoutSeconds(): Int {
+        val remaining = localPinLockedUntilMs - System.currentTimeMillis()
+        return if (remaining > 0) ((remaining + 999) / 1_000).toInt() else 0
+    }
+
     fun verifyManagementPin(pin: String): Boolean {
-        return credentials.managementPin.isNotBlank() && pin.trim() == credentials.managementPin
+        if (managementPinLockoutSeconds() > 0) return false
+        val ok = credentials.managementPin.isNotBlank() && pin.trim() == credentials.managementPin
+        if (ok) {
+            localPinFailures = 0
+            localPinLockedUntilMs = 0L
+            return true
+        }
+        localPinFailures++
+        if (localPinFailures >= LOCAL_PIN_MAX_FAILURES) {
+            val rounds = localPinFailures / LOCAL_PIN_MAX_FAILURES
+            val backoff = LOCAL_PIN_LOCKOUT_BASE_MS shl (rounds - 1).coerceAtMost(5)
+            localPinLockedUntilMs = System.currentTimeMillis() +
+                backoff.coerceAtMost(LOCAL_PIN_LOCKOUT_MAX_MS)
+        }
+        return false
     }
 
     private var calendarManagementUnlockedUntilMs: Long = 0
@@ -313,24 +388,32 @@ class HaViewModel(
         calendarManagementUnlockedUntilMs = System.currentTimeMillis() + durationMs
     }
 
+    /** Runs on every host resume: the recovery-file read and reseal must stay off the main thread. */
     fun retryRestoreIfNeeded() {
-        val wasConfigured = credentials.isConfigured
-        credentials.reloadFromExternal()
-        credentials.adoptOrCreatePin { newPin() }
-        syncPinToUi()
-        if (!credentials.isConfigured) return
-        if (_ui.value.showSetup) {
-            viewModelScope.launch { connect(credentials.baseUrl, credentials.token) }
-            return
+        viewModelScope.launch(Dispatchers.IO) {
+            val wasConfigured = credentials.isConfigured
+            credentials.reloadFromExternal()
+            credentials.adoptOrCreatePin { newPin() }
+            syncPinToUi()
+            if (!credentials.isConfigured) return@launch
+            val state = connection.value
+            val shouldConnect = _ui.value.showSetup ||
+                !wasConfigured ||
+                (state !is ConnectionState.Connected && state !is ConnectionState.Connecting)
+            if (shouldConnect) connect(credentials.baseUrl, credentials.token)
         }
-        if (!wasConfigured) {
-            viewModelScope.launch { connect(credentials.baseUrl, credentials.token) }
-            return
-        }
-        val state = connection.value
-        if (state !is ConnectionState.Connected && state !is ConnectionState.Connecting) {
-            viewModelScope.launch { connect(credentials.baseUrl, credentials.token) }
-        }
+    }
+
+    /**
+     * Keystore setup can fail, in which case [CredentialsStore] falls back to plaintext prefs.
+     * Fold that into the management banner so a panel in that state is diagnosable.
+     */
+    private fun managementBanner(error: String?): String? {
+        val plaintext = "Secure storage unavailable — token and PIN are stored unencrypted"
+            .takeIf { !credentials.prefsAreEncrypted }
+        return listOfNotNull(plaintext, error?.let { "Management server: $it" })
+            .joinToString(" · ")
+            .takeIf { it.isNotEmpty() }
     }
 
     private fun startManagementServer() {
@@ -339,7 +422,7 @@ class HaViewModel(
         val ssl = runCatching { ManagementTls(app).sslServerSocketFactory() }
         if (ssl.isFailure) {
             _ui.value = _ui.value.copy(
-                managementError = "Could not enable HTTPS for remote setup",
+                managementError = managementBanner("Could not enable HTTPS for remote setup"),
             )
             return
         }
@@ -347,7 +430,9 @@ class HaViewModel(
             pinProvider = { credentials.managementPin },
             savedUrlProvider = { credentials.baseUrl },
             screenshotProvider = { capture.captureJpeg() },
-            onSubmit = { _, url, token ->
+            // Blocks the NanoHTTPD worker (thread-per-request) because the admin page renders the
+            // success/failure of this exact attempt; the 20s cap bounds it.
+            onSubmit = { url, token ->
                 runBlocking {
                     withTimeout(20_000) { connect(url, token) }
                 }
@@ -365,7 +450,7 @@ class HaViewModel(
         val started = runCatching { server.start(5000, false) }
         managementServer = if (started.isSuccess) server else null
         _ui.value = _ui.value.copy(
-            managementError = started.exceptionOrNull()?.message,
+            managementError = managementBanner(started.exceptionOrNull()?.message),
         )
         viewModelScope.launch {
             while (true) {
@@ -384,22 +469,12 @@ class HaViewModel(
 
     fun entity(id: String?): EntityState? = id?.let { states.value[it] }
 
-    fun popup(hash: String?): PopupNode? {
-        if (hash == "#music") {
-            return PopupNode(
-                name = "Music Assistant",
-                icon = "mdi:music-note",
-                hash = "#music",
-            )
-        }
-        if (hash == "#changelog") {
-            return PopupNode(
-                name = "Changelog",
-                icon = "mdi:information",
-                hash = "#changelog",
-            )
-        }
-        return _ui.value.dashboard?.home?.popups?.firstOrNull { it.hash == hash }
+    // Stable instances: strong skipping compares PopupNode by identity, so returning a fresh
+    // one per recomposition would stop PopupHost and the whole music subtree from ever skipping.
+    fun popup(hash: String?): PopupNode? = when (hash) {
+        "#music" -> MUSIC_POPUP
+        "#changelog" -> CHANGELOG_POPUP
+        else -> _ui.value.dashboard?.home?.popups?.firstOrNull { it.hash == hash }
     }
 
     suspend fun connect(url: String, token: String): Result<Unit> {
@@ -458,6 +533,9 @@ class HaViewModel(
                     val url = credentials.baseUrl
                     val token = credentials.token
                     if (url.isBlank() || token.isBlank()) continue
+                    // A DNS miss while the VLAN was still coming up must not keep the HA host
+                    // pinned as "not private" and fail the guard instead of the network.
+                    NetworkGuard.clearCache()
                     try {
                         client.connect(url, token)
                     } catch (e: CancellationException) {
@@ -476,7 +554,6 @@ class HaViewModel(
 
     val savedUrl: String get() = credentials.baseUrl
     val savedToken: String get() = credentials.token
-    val savedGo2rtcUrl: String get() = credentials.go2rtcUrl
 
     private val _musicWall = MutableStateFlow(MusicWallState(selectedEntityId = credentials.musicPlayerEntity.ifBlank { null }))
     val musicWall: StateFlow<MusicWallState> = _musicWall
@@ -709,10 +786,6 @@ class HaViewModel(
         }
     }
 
-    fun refreshMusicDiscovery() {
-        loadMusicDiscovery()
-    }
-
     fun openAppleMusicBrowse() {
         viewModelScope.launch {
             val path = runCatching { client.musicAppleMusicRootPath() }.getOrElse { "apple_music://" }
@@ -802,14 +875,6 @@ class HaViewModel(
         if (stack.isEmpty()) return
         _musicWall.value = _musicWall.value.copy(
             discovery = _musicWall.value.discovery.copy(browseStack = stack.dropLast(1)),
-        )
-    }
-
-    fun clearMusicBrowse() {
-        musicBrowseJob?.cancel()
-        musicBrowseJob = null
-        _musicWall.value = _musicWall.value.copy(
-            discovery = _musicWall.value.discovery.copy(browseStack = emptyList()),
         )
     }
 
@@ -946,6 +1011,7 @@ class HaViewModel(
         }
     }
 
+    @OptIn(FlowPreview::class)
     private fun openMusicWall() {
         musicWallJob?.cancel()
         musicMediaWatchJob?.cancel()
@@ -979,9 +1045,11 @@ class HaViewModel(
             while (_ui.value.popupHash == "#music") {
                 val forcePlayers = tick == 0 || tick % 5 == 0
                 refreshMusicWall(forcePlayers = forcePlayers)
+                // The now-playing position is interpolated locally and the debounced `states`
+                // watcher above covers real transport changes, so polling faster buys nothing.
                 val interval = when (_musicWall.value.tab) {
-                    "now" -> 1_000L
-                    else -> 3_000L
+                    "now" -> 2_000L
+                    else -> 4_000L
                 }
                 delay(interval)
                 tick++
@@ -1287,6 +1355,28 @@ class HaViewModel(
         return Result.success(Unit)
     }
 
+    suspend fun setGo2rtcUrl(url: String): Result<Unit> {
+        val trimmed = url.trim().trimEnd('/')
+        if (trimmed.isNotBlank()) {
+            if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+                return Result.failure(
+                    IllegalArgumentException("URL must start with http:// or https://"),
+                )
+            }
+            val host = NetworkGuard.hostOf(trimmed)
+                ?: return Result.failure(IllegalArgumentException("Enter a valid go2rtc base URL"))
+            // Same policy as connect(): a public host would otherwise be accepted here and only
+            // surface later as a dead camera when the candidate filter drops it.
+            val privateHost = withContext(Dispatchers.IO) { NetworkGuard.isPrivateHost(host) }
+            if (!privateHost) {
+                return Result.failure(IllegalArgumentException(NetworkGuard.hostRejectionReason(host)))
+            }
+        }
+        credentials.go2rtcUrl = trimmed
+        _ui.value = _ui.value.copy(go2rtcUrl = credentials.go2rtcUrl)
+        return Result.success(Unit)
+    }
+
     fun sleepScreen(commandDisplay: Boolean = true) {
         if (_ui.value.screenAsleep || _ui.value.showSetup) return
         sleptAtMs = System.currentTimeMillis()
@@ -1458,7 +1548,8 @@ class HaViewModel(
             while (true) {
                 val seconds = _ui.value.screenTimeoutSeconds
                 if (seconds <= 0 || _ui.value.screenAsleep || _ui.value.showSetup) {
-                    delay(1_000)
+                    // Nothing to time out: park on the flow instead of polling once a second.
+                    _ui.first { it.screenTimeoutSeconds > 0 && !it.screenAsleep && !it.showSetup }
                     continue
                 }
                 if (peoplePresent(states.value, _mmWaveLive.value)) {
@@ -1515,8 +1606,6 @@ class HaViewModel(
                     brightnessEntity = brightEntity,
                     asleep = asleep,
                     luxState = illumEntity.takeIf { it.isNotBlank() }?.let { allStates[it]?.state },
-                    currentBrightness = brightEntity.takeIf { it.isNotBlank() }
-                        ?.let { allStates[it]?.state?.toFloatOrNull() },
                 )
             }
                 .distinctUntilChanged { a, b ->
@@ -1548,14 +1637,20 @@ class HaViewModel(
 
     private suspend fun rampAutoDisplayBrightness() {
         while (true) {
+            // Auto-brightness is idle far more often than not; suspend on whichever input is
+            // missing rather than waking ~11×/s for the process lifetime.
             val desired = autoBrightnessDesired.value
-            if (desired == null || _ui.value.screenAsleep) {
-                delay(AUTO_BRIGHTNESS_RAMP_MS)
+            if (desired == null) {
+                autoBrightnessDesired.filterNotNull().first()
+                continue
+            }
+            if (_ui.value.screenAsleep) {
+                _ui.first { !it.screenAsleep }
                 continue
             }
             val entityId = _ui.value.displayBrightnessEntity.takeIf { it.isNotBlank() }
             if (entityId == null) {
-                delay(AUTO_BRIGHTNESS_RAMP_MS)
+                _ui.first { it.displayBrightnessEntity.isNotBlank() }
                 continue
             }
             val live = states.value[entityId]?.state?.toFloatOrNull()?.roundToInt()
@@ -1625,7 +1720,6 @@ class HaViewModel(
         val brightnessEntity: String,
         val asleep: Boolean,
         val luxState: String?,
-        val currentBrightness: Float?,
     )
 
     private fun watchMmWaveClear() {
@@ -1669,23 +1763,24 @@ class HaViewModel(
                 _ui.map { it.dashboard?.home?.personCameras }.distinctUntilChanged(),
                 _debugPersonCamerasEnabled,
             ) { allStates, config, debugEnabled ->
-                Triple(config, allStates, debugEnabled)
-            }.collect { (config, allStates, debugEnabled) ->
+                // Resolve the active bindings inside the combine so the 80 ms state flush is
+                // filtered out here instead of rebuilding widgets and re-running the update.
+                val bindings = config?.bindings.orEmpty()
+                val active = when {
+                    bindings.isEmpty() -> emptyList()
+                    debugEnabled -> bindings
+                    else -> bindings.filter { binding -> personSensorActive(binding, allStates) }
+                }
+                Triple(config, active, debugEnabled)
+            }.distinctUntilChanged().collect { (config, active, debugEnabled) ->
                 if (config == null || config.bindings.isEmpty()) {
                     personCameraCooldownJob?.cancel()
                     personCameraCooldownJob = null
                     _activePersonCameras.value = emptyList()
                     return@collect
                 }
-                val active = if (debugEnabled) {
-                    config.bindings.map { it.toCameraWidget() }
-                } else {
-                    config.bindings
-                        .filter { binding -> personSensorActive(binding, allStates) }
-                        .map { it.toCameraWidget() }
-                }
                 updateActivePersonCameras(
-                    active,
+                    active.map { it.toCameraWidget() },
                     if (debugEnabled) 0 else config.cooldownSeconds,
                     ignoreCooldown = debugEnabled,
                 )
@@ -1751,11 +1846,6 @@ class HaViewModel(
                 color = extraCalendarColors[index % extraCalendarColors.size],
             )
         }
-    }
-
-    fun isCalendarSubscribed(entityId: String, defaults: List<CalendarSourceNode>): Boolean {
-        val selected = _subscribedCalendars.value ?: defaults.mapNotNull { it.entity }
-        return entityId in selected
     }
 
     fun setCalendarSubscribed(entityId: String, enabled: Boolean) {
@@ -1941,9 +2031,6 @@ class HaViewModel(
                 val data = action.data?.mapValues { it.value } ?: emptyMap()
                 client.callService(domain, name, ids.ifEmpty { null }, data)
             }
-            "fire-dom-event" -> {
-                // Weather now/today swap is handled natively in the weather popup.
-            }
         }
     }
 
@@ -1997,6 +2084,9 @@ class HaViewModel(
 
     companion object {
         private const val AUTO_BRIGHTNESS_RAMP_MS = 90L
+        private const val LOCAL_PIN_MAX_FAILURES = 5
+        private const val LOCAL_PIN_LOCKOUT_BASE_MS = 30_000L
+        private const val LOCAL_PIN_LOCKOUT_MAX_MS = 15 * 60_000L
         private const val MMWAVE_OCCUPANCY_ENTITY = "binary_sensor.secondary_living_room_switch_occupancy"
         private const val MMWAVE_TARGET_COUNT_ENTITY = "input_number.secondary_living_room_mmwave_target_count"
 

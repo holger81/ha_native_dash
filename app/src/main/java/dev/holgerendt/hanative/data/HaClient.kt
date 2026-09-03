@@ -61,8 +61,6 @@ data class EntityState(
     val lastChanged: Instant? = null,
     val lastUpdated: Instant? = null,
 ) {
-    fun attr(name: String): JsonElement? = attributes[name]
-
     fun attrString(name: String): String? = attributes[name]?.jsonPrimitive?.contentOrNull
 
     fun attrDouble(name: String): Double? {
@@ -156,11 +154,13 @@ class HaClient {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val mediaType = "application/json; charset=utf-8".toMediaType()
     private val http = OkHttpClient.Builder()
+        .addInterceptor(NetworkGuard.interceptor)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .pingInterval(30, TimeUnit.SECONDS)
         .callTimeout(30, TimeUnit.SECONDS)
         .build()
     private val massHttp = OkHttpClient.Builder()
+        .addInterceptor(NetworkGuard.interceptor)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .callTimeout(60, TimeUnit.SECONDS)
@@ -170,6 +170,10 @@ class HaClient {
         private const val MASS_COMMAND_MAX_ATTEMPTS = 3
         private const val MASS_COMMAND_RETRY_BASE_MS = 400L
         private const val COMMAND_TIMEOUT_MS = 30_000L
+        // Full-resolution stills; keep the map small and let posters refresh instead of
+        // pinning every camera ever viewed to its first frame for the process lifetime.
+        private const val SNAPSHOT_TTL_MS = 30_000L
+        private const val SNAPSHOT_CACHE_MAX_ENTRIES = 16
     }
 
     private var webSocket: WebSocket? = null
@@ -191,7 +195,8 @@ class HaClient {
     private val _connection = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val connection: StateFlow<ConnectionState> = _connection
     private val deviceNameCache = ConcurrentHashMap<String, String?>()
-    private val snapshotCache = ConcurrentHashMap<String, ByteArray>()
+    private class SnapshotEntry(val bytes: ByteArray, val expiresAtMs: Long)
+    private val snapshotCache = ConcurrentHashMap<String, SnapshotEntry>()
     @Volatile private var massIngress: MassIngressSession? = null
     @Volatile private var massAddonSlug: String? = null
     @Volatile private var massPlayersCache: Pair<Long, List<MassPlayerInfo>>? = null
@@ -248,10 +253,17 @@ class HaClient {
         massPlayersCache = null
         stateBatch.clear()
         batchScheduled = false
+        snapshotCache.clear()
         while (true) {
             if (!messageChannel.tryReceive().isSuccess) break
         }
         _connection.value = ConnectionState.Disconnected
+    }
+
+    /** Terminal teardown: after this the client cannot reconnect. */
+    fun release() {
+        disconnect()
+        scope.cancel()
     }
 
     private fun drainPending(error: Throwable) {
@@ -541,7 +553,7 @@ class HaClient {
                 }
                 .toList()
         }
-        return sortMusicPlayers(enrichMusicPlayersWithMassIds(base))
+        return sortMusicPlayers(refreshMusicPlayerTelemetry(base))
     }
 
     private fun sortMusicPlayers(players: List<MusicAssistantPlayer>): List<MusicAssistantPlayer> =
@@ -557,8 +569,7 @@ class HaClient {
         players: List<MusicAssistantPlayer> = emptyList(),
     ): MusicAssistantQueue? {
         val player = players.firstOrNull { it.entityId == entityId }
-        val massPlayers = runCatching { musicAssistantMassPlayers() }.getOrElse { emptyList() }
-        val massQueueId = resolveMassQueueId(entityId, player, massPlayers)
+        val massQueueId = resolveMassQueueId(entityId, player)
 
         val fromMass = if (!massQueueId.isNullOrBlank()) {
             runCatching { musicAssistantMassQueue(massQueueId) }.getOrNull()
@@ -581,19 +592,23 @@ class HaClient {
         return mergeMusicAssistantQueues(fromHa, fromMass)
     }
 
-    private fun resolveMassQueueId(
+    /** Only falls back to the MASS player list when the caller's player has no id to reuse. */
+    private suspend fun resolveMassQueueId(
         entityId: String,
         player: MusicAssistantPlayer?,
-        massPlayers: List<MassPlayerInfo>,
     ): String? {
         player?.groupRootId?.takeIf { it.isNotBlank() }?.let { return it }
         player?.massPlayerId?.takeIf { it.isNotBlank() }?.let { return it }
-        val name = state(entityId)?.friendlyName
-        return name?.let { matchMassPlayerInfo(it, massPlayers)?.playerId }
+        val name = state(entityId)?.friendlyName ?: return null
+        val massPlayers = runCatching { musicAssistantMassPlayers() }.getOrElse { emptyList() }
+        return matchMassPlayerInfo(name, massPlayers)?.playerId
     }
 
-    suspend fun refreshMusicPlayerTelemetry(players: List<MusicAssistantPlayer>): List<MusicAssistantPlayer> {
-        val massPlayers = runCatching { musicAssistantMassPlayers(force = true) }.getOrElse { emptyList() }
+    suspend fun refreshMusicPlayerTelemetry(
+        players: List<MusicAssistantPlayer>,
+        force: Boolean = true,
+    ): List<MusicAssistantPlayer> {
+        val massPlayers = runCatching { musicAssistantMassPlayers(force = force) }.getOrElse { emptyList() }
         if (massPlayers.isEmpty()) return players
         return players.map { player ->
             val matched = matchMassPlayerInfo(player.name, massPlayers) ?: return@map player
@@ -726,25 +741,6 @@ class HaClient {
         val players = rows.mapNotNull(::parseMassPlayerInfo)
         massPlayersCache = System.currentTimeMillis() to players
         players
-    }
-
-    suspend fun enrichMusicPlayersWithMassIds(players: List<MusicAssistantPlayer>): List<MusicAssistantPlayer> {
-        val massPlayers = runCatching { musicAssistantMassPlayers(force = true) }.getOrElse { emptyList() }
-        if (massPlayers.isEmpty()) return players
-        return players.map { player ->
-            val matched = matchMassPlayerInfo(player.name, massPlayers) ?: return@map player
-            player.copy(
-                massPlayerId = matched.playerId,
-                massVolume = matched.volume,
-                massGroupVolume = matched.groupVolume,
-                groupMemberIds = matched.groupMemberIds,
-                syncedToId = matched.syncedToId,
-                canGroupWithIds = matched.canGroupWithIds,
-                elapsedSec = matched.elapsedSec,
-                elapsedUpdatedAtMs = matched.elapsedUpdatedAtMs,
-                massPlaybackState = matched.playbackState,
-            )
-        }
     }
 
     suspend fun musicDiscoveryRecentlyPlayed(limit: Int = 12): List<MassMediaItem> {
@@ -1216,9 +1212,9 @@ class HaClient {
     }
 
     suspend fun cameraSnapshot(entityId: String): ByteArray? = withContext(Dispatchers.IO) {
-        snapshotCache[entityId]?.let { return@withContext it }
+        cachedSnapshot(entityId)?.let { return@withContext it }
         val fresh = fetchCameraSnapshot(entityId) ?: return@withContext null
-        snapshotCache[entityId] = fresh
+        putSnapshot(entityId, fresh)
         fresh
     }
 
@@ -1226,10 +1222,22 @@ class HaClient {
     suspend fun prefetchCameraSnapshots(entityIds: Collection<String>) {
         withContext(Dispatchers.IO) {
             entityIds.distinct().forEach { entityId ->
-                if (snapshotCache.containsKey(entityId)) return@forEach
-                fetchCameraSnapshot(entityId)?.let { snapshotCache[entityId] = it }
+                if (cachedSnapshot(entityId) != null) return@forEach
+                fetchCameraSnapshot(entityId)?.let { putSnapshot(entityId, it) }
             }
         }
+    }
+
+    private fun cachedSnapshot(entityId: String): ByteArray? {
+        val entry = snapshotCache[entityId] ?: return null
+        if (entry.expiresAtMs > System.currentTimeMillis()) return entry.bytes
+        snapshotCache.remove(entityId)
+        return null
+    }
+
+    private fun putSnapshot(entityId: String, bytes: ByteArray) {
+        if (snapshotCache.size >= SNAPSHOT_CACHE_MAX_ENTRIES) snapshotCache.clear()
+        snapshotCache[entityId] = SnapshotEntry(bytes, System.currentTimeMillis() + SNAPSHOT_TTL_MS)
     }
 
     private suspend fun fetchCameraSnapshot(entityId: String): ByteArray? = withContext(Dispatchers.IO) {

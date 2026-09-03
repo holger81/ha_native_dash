@@ -152,15 +152,6 @@ fun EntityState.isShuffleOn(): Boolean =
 fun EntityState.repeatMode(): String =
     attrString("repeat")?.lowercase() ?: "off"
 
-fun EntityState.supportsFeature(feature: Long): Boolean {
-    val supported = attributes["supported_features"] ?: return true
-    val bits = when (supported) {
-        is JsonPrimitive -> supported.longOrNull ?: supported.contentOrNull?.toLongOrNull()
-        else -> null
-    } ?: return true
-    return bits and feature != 0L
-}
-
 private fun JsonElement?.toBooleanOrNull(): Boolean? {
     val primitive = this as? JsonPrimitive ?: return null
     return when (primitive.contentOrNull?.lowercase()) {
@@ -243,17 +234,6 @@ fun parseMassPlayerInfo(element: JsonElement?): MassPlayerInfo? {
         playbackState = obj["playback_state"]?.jsonPrimitive?.contentOrNull
             ?: obj["state"]?.jsonPrimitive?.contentOrNull,
     )
-}
-
-fun matchMassPlayerId(haName: String, massPlayers: List<Pair<String, String>>): String? {
-    val target = normalizeMusicPlayerName(haName)
-    if (target.isBlank()) return null
-    massPlayers.firstOrNull { normalizeMusicPlayerName(it.second) == target }?.first?.let { return it }
-    massPlayers.firstOrNull {
-        val other = normalizeMusicPlayerName(it.second)
-        other.contains(target) || target.contains(other)
-    }?.first?.let { return it }
-    return null
 }
 
 fun matchMassPlayerInfo(haName: String, massPlayers: List<MassPlayerInfo>): MassPlayerInfo? {
@@ -415,7 +395,10 @@ fun extractMassImageUrl(obj: JsonObject): String? {
         ?: first?.get("url")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
 }
 
+private val APOSTROPHE_REGEX = Regex("['’]")
+private val NON_ALPHANUMERIC_REGEX = Regex("[^a-z0-9]+")
+
 fun normalizeMusicPlayerName(name: String): String =
     name.lowercase()
-        .replace(Regex("['’]"), "")
-        .replace(Regex("[^a-z0-9]+"), "")
+        .replace(APOSTROPHE_REGEX, "")
+        .replace(NON_ALPHANUMERIC_REGEX, "")

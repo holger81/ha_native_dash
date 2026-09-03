@@ -11,7 +11,7 @@ object DashboardLoader {
         explicitNulls = false
     }
 
-    fun load(context: Context): DashboardFile {
+    private fun load(context: Context): DashboardFile {
         val raw = context.assets.open("dashboard.json").bufferedReader().use { it.readText() }
         return json.decodeFromString(DashboardFile.serializer(), raw)
     }

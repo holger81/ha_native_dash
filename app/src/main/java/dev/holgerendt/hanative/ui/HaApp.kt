@@ -47,6 +47,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -81,7 +82,6 @@ import dev.holgerendt.hanative.ui.theme.PopupScrim
 import dev.holgerendt.hanative.ui.theme.ScreenBackground
 import dev.holgerendt.hanative.ui.theme.TextDark
 import dev.holgerendt.hanative.ui.theme.TextMuted
-import dev.holgerendt.hanative.ui.theme.accentColor
 import dev.holgerendt.hanative.ui.widgets.CameraPopup
 import dev.holgerendt.hanative.ui.widgets.ChipRow
 import dev.holgerendt.hanative.ui.widgets.MediaImageDialog
@@ -95,6 +95,9 @@ import dev.holgerendt.hanative.ui.widgets.WeatherHeader
 import dev.holgerendt.hanative.ui.widgets.WeekPlanner
 import dev.holgerendt.hanative.ui.widgets.WidgetTree
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 @Composable
 fun HaApp(viewModel: HaViewModel) {
@@ -145,7 +148,7 @@ fun HaApp(viewModel: HaViewModel) {
                 }
             }
         }
-        val popup = viewModel.popup(ui.popupHash)
+        val popup = remember(ui.popupHash) { viewModel.popup(ui.popupHash) }
         if (popup != null) {
             InWindowOverlay(
                 onDismiss = { viewModel.closePopup() },
@@ -225,13 +228,15 @@ private fun DrawerMenu(viewModel: HaViewModel) {
             )
         }
         Spacer(Modifier.weight(1f))
-        val ui by viewModel.ui.collectAsState()
+        val remoteUrls by remember(viewModel) {
+            viewModel.ui.map { it.remoteUrls }.distinctUntilChanged()
+        }.collectAsState(viewModel.ui.value.remoteUrls)
         Text("Remote setup", color = TextMuted, fontSize = 12.sp)
-        ui.remoteUrls.firstOrNull()?.let {
+        remoteUrls.firstOrNull()?.let {
             Text(it, color = TextDark, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
         }
-        Text("PIN ${ui.remotePin}", color = TextDark, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 4.dp, bottom = 4.dp))
-        Text("Stays until you change it in Settings", color = TextMuted, fontSize = 12.sp, modifier = Modifier.padding(bottom = 12.dp))
+        // The drawer is permanently rendered on a wall panel, so the admin PIN lives in Settings.
+        Text("PIN in Settings", color = TextMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
         Text(
             "Home Assistant connection",
             color = TextDark,
@@ -242,8 +247,12 @@ private fun DrawerMenu(viewModel: HaViewModel) {
 
 @Composable
 private fun HomeScreen(viewModel: HaViewModel) {
-    val ui by viewModel.ui.collectAsState()
-    val home = ui.dashboard?.home ?: return
+    // Only the dashboard tree matters here; collecting all of UiState would recompose the room
+    // grid, planner, and timeline every time a popup or more-info dialog opened on top of them.
+    val homeNode by remember(viewModel) {
+        viewModel.ui.map { it.dashboard?.home }.distinctUntilChanged()
+    }.collectAsState(viewModel.ui.value.dashboard?.home)
+    val home = homeNode ?: return
     val menu = home.header.firstOrNull { it.type == "menu_button" }
     val weather = home.header.firstOrNull { it.type == "weather_header" }
     Column(
@@ -473,6 +482,7 @@ private fun ChangelogPopup() {
 private fun SettingsPopup(popup: PopupNode, viewModel: HaViewModel) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ScreenTimeoutCard(viewModel)
+        Go2rtcUrlCard(viewModel)
         ManagementPinCard(viewModel)
         CalendarSubscriptionsCard(viewModel)
         DebugPersonCamerasCard(viewModel)
@@ -551,7 +561,7 @@ private fun ScreenTimeoutCard(viewModel: HaViewModel) {
             label = "Turn off display entity",
             hint = "switch.uc_display turns the panel off on sleep and on when waking",
             selected = ui.displayOffEntity,
-            choices = viewModel.displayOffEntityChoices(),
+            choices = remember(viewModel) { viewModel.displayOffEntityChoices() },
             noneLabel = "None (app overlay only)",
             fieldColors = fieldColors,
             onSelect = viewModel::setDisplayOffEntity,
@@ -560,7 +570,7 @@ private fun ScreenTimeoutCard(viewModel: HaViewModel) {
             label = "Brightness entity",
             hint = "number.uc_display_brightness controls panel backlight",
             selected = ui.displayBrightnessEntity,
-            choices = viewModel.displayBrightnessEntityChoices(),
+            choices = remember(viewModel) { viewModel.displayBrightnessEntityChoices() },
             noneLabel = "None",
             fieldColors = fieldColors,
             onSelect = viewModel::setDisplayBrightnessEntity,
@@ -569,7 +579,7 @@ private fun ScreenTimeoutCard(viewModel: HaViewModel) {
             label = "Auto-brightness sensor",
             hint = "Room illuminance (lx) maps to backlight while the panel is awake",
             selected = ui.displayIlluminanceEntity,
-            choices = viewModel.displayIlluminanceEntityChoices(),
+            choices = remember(viewModel) { viewModel.displayIlluminanceEntityChoices() },
             noneLabel = "None (manual only)",
             fieldColors = fieldColors,
             onSelect = viewModel::setDisplayIlluminanceEntity,
@@ -821,6 +831,89 @@ private fun CalendarSubscriptionsCard(viewModel: HaViewModel) {
 }
 
 @Composable
+private fun Go2rtcUrlCard(viewModel: HaViewModel) {
+    val overlay = LocalOverlay.current
+    val ui by viewModel.ui.collectAsState()
+    var urlText by remember { mutableStateOf(ui.go2rtcUrl) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var message by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(ui.go2rtcUrl) {
+        urlText = ui.go2rtcUrl
+    }
+    val fieldColors = settingsFieldColors(overlay)
+    val scope = rememberCoroutineScope()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .background(overlay.card)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("go2rtc", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            "Base URL for live camera streams when a popup has no stream_server. Leave blank to use dashboard stream_server values.",
+            color = overlay.muted,
+            fontSize = 14.sp,
+        )
+        OutlinedTextField(
+            value = urlText,
+            onValueChange = {
+                urlText = it
+                error = null
+                message = null
+            },
+            label = { Text("go2rtc base URL") },
+            placeholder = { Text("http://192.168.10.31:1984/") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = fieldColors,
+        )
+        error?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 13.sp) }
+        message?.let { Text(it, color = Color(0xFFC5E1A5), fontSize = 13.sp) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = {
+                    scope.launch {
+                        val result = viewModel.setGo2rtcUrl(urlText)
+                        if (result.isSuccess) {
+                            error = null
+                            message = if (urlText.isBlank()) "Using dashboard stream_server" else "go2rtc URL saved"
+                        } else {
+                            message = null
+                            error = result.exceptionOrNull()?.message ?: "Could not save URL"
+                        }
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(ActiveYellow),
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Save URL", color = Color.Black)
+            }
+            if (ui.go2rtcUrl.isNotBlank() || urlText.isNotBlank()) {
+                TextButton(
+                    onClick = {
+                        urlText = ""
+                        scope.launch {
+                            val result = viewModel.setGo2rtcUrl("")
+                            if (result.isSuccess) {
+                                error = null
+                                message = "Using dashboard stream_server"
+                            } else {
+                                message = null
+                                error = result.exceptionOrNull()?.message ?: "Could not clear URL"
+                            }
+                        }
+                    },
+                ) {
+                    Text("Clear", color = overlay.text)
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ManagementPinCard(viewModel: HaViewModel) {
     val overlay = LocalOverlay.current
     val ui by viewModel.ui.collectAsState()
@@ -851,7 +944,18 @@ private fun ManagementPinCard(viewModel: HaViewModel) {
             color = overlay.muted,
             fontSize = 14.sp,
         )
-        Text("Current PIN ${ui.remotePin}", color = overlay.text, fontSize = 16.sp, fontFamily = FontFamily.Monospace)
+        var revealed by remember { mutableStateOf(false) }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "Current PIN " + if (revealed) ui.remotePin else "•".repeat(ui.remotePin.length.coerceAtLeast(6)),
+                color = overlay.text,
+                fontSize = 16.sp,
+                fontFamily = FontFamily.Monospace,
+            )
+            TextButton(onClick = { revealed = !revealed }) {
+                Text(if (revealed) "Hide" else "Show", color = overlay.text)
+            }
+        }
         OutlinedTextField(
             value = pin,
             onValueChange = { value ->
@@ -1011,7 +1115,7 @@ fun SetupScreen(viewModel: HaViewModel) {
                 fontFamily = FontFamily.Monospace,
             )
             Text("This PIN stays until you change it in Settings.", color = ChipOnDark, fontSize = 13.sp)
-            ui.managementError?.let { Text("Management server: $it", color = Color(0xFFFF8A80), fontSize = 12.sp) }
+            ui.managementError?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 12.sp) }
             if (!showOnDevice && error != null) {
                 Text(error, color = Color(0xFFFF8A80), fontSize = 13.sp, textAlign = TextAlign.Center)
             }

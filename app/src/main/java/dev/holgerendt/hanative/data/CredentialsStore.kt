@@ -9,6 +9,11 @@ import org.json.JSONObject
 
 class CredentialsStore(context: Context) {
     private val app = context.applicationContext
+
+    /** True when the Keystore-backed prefs failed and the token/PIN sit in plaintext. */
+    var prefsAreEncrypted: Boolean = true
+        private set
+
     private val prefs: SharedPreferences = createSecurePrefs()
 
     private fun createSecurePrefs(): SharedPreferences {
@@ -20,7 +25,11 @@ class CredentialsStore(context: Context) {
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
             )
-        }.getOrNull() ?: return app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        }.getOrNull()
+        if (secure == null) {
+            prefsAreEncrypted = false
+            return app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        }
         migratePlaintextInto(secure)
         return secure
     }
@@ -66,7 +75,7 @@ class CredentialsStore(context: Context) {
         }
 
     /** Null means follow Lovelace week-planner calendars; empty means none. */
-    var subscribedCalendars: List<String>? = null
+    var subscribedCalendars: List<String>? = readCalendarPref()
         set(value) {
             field = value?.map { it.trim() }?.filter { it.startsWith("calendar.") }?.distinct()
             persist()
@@ -183,18 +192,6 @@ class CredentialsStore(context: Context) {
         persist()
     }
 
-    fun clear() {
-        persistEnabled = false
-        baseUrl = ""
-        token = ""
-        managementPin = ""
-        generatedThisProcess = false
-        persistEnabled = true
-        prefs.edit().clear().apply()
-        runCatching { app.deleteSharedPreferences(PREFS_NAME) }
-        runCatching { RecoverableFiles.delete(app, RecoverableFiles.CREDENTIALS_NAME) }
-    }
-
     private fun writePin(value: String, generated: Boolean) {
         pinValue = value.trim()
         generatedThisProcess = generated
@@ -203,9 +200,18 @@ class CredentialsStore(context: Context) {
 
     private fun readPref(key: String): String = prefs.getString(key, "")?.trim().orEmpty()
 
+    /** Absent key means "follow Lovelace"; a stored (possibly empty) array is an explicit choice. */
+    private fun readCalendarPref(): List<String>? {
+        val raw = prefs.getString(KEY_CALENDARS, null) ?: return null
+        val arr = runCatching { JSONArray(raw) }.getOrNull() ?: return null
+        return (0 until arr.length()).mapNotNull { index ->
+            arr.optString(index).trim().takeIf { it.startsWith("calendar.") }
+        }.distinct()
+    }
+
     private fun persist() {
         if (!persistEnabled) return
-        prefs.edit()
+        val editor = prefs.edit()
             .putString(KEY_URL, baseUrl)
             .putString(KEY_TOKEN, token)
             .putString(KEY_GO2RTC_URL, go2rtcUrl)
@@ -215,7 +221,13 @@ class CredentialsStore(context: Context) {
             .putString(KEY_DISPLAY_BRIGHTNESS, displayBrightnessEntity)
             .putString(KEY_DISPLAY_ILLUMINANCE, displayIlluminanceEntity)
             .putString(KEY_MUSIC_PLAYER, musicPlayerEntity)
-            .apply()
+        val calendars = subscribedCalendars
+        if (calendars != null) {
+            editor.putString(KEY_CALENDARS, JSONArray(calendars).toString())
+        } else {
+            editor.remove(KEY_CALENDARS)
+        }
+        editor.apply()
         persistRecoverable()
     }
 
@@ -248,8 +260,7 @@ class CredentialsStore(context: Context) {
             }
         }.toString()
         // Seal with ANDROID_ID-derived AES-GCM so other apps can't read Documents/HA Native.
-        // Legacy plaintext files are still read and re-sealed on the next persist.
-        runCatching {
+        val sealed = runCatching {
             SecureRecovery.writeSealed(
                 app,
                 RecoverableFiles.CREDENTIALS_NAME,
@@ -258,6 +269,8 @@ class CredentialsStore(context: Context) {
                 body.toByteArray(Charsets.UTF_8),
             )
         }
+        // Once a seal exists, the legacy plaintext path is closed for good (see readRecoverableObject).
+        if (sealed.isSuccess) prefs.edit().putBoolean(KEY_RECOVERY_SEALED, true).apply()
     }
 
     private fun readCalendarList(obj: JSONObject?): List<String>? {
@@ -281,7 +294,10 @@ class CredentialsStore(context: Context) {
             runCatching { RecoverableFiles.delete(app, RecoverableFiles.CREDENTIALS_NAME) }
             return null
         }
-        // Legacy plaintext recovery file (pre-seal or temporary revert).
+        // Legacy plaintext recovery file (pre-seal). Honoured as a one-shot migration only:
+        // once this install has written a seal, an unsealed file in public Documents is not
+        // trusted, so dropping one in can no longer inject a URL, token, or PIN.
+        if (prefs.getBoolean(KEY_RECOVERY_SEALED, false)) return null
         return runCatching { JSONObject(raw.toString(Charsets.UTF_8)) }.getOrNull()
     }
 
@@ -377,6 +393,8 @@ class CredentialsStore(context: Context) {
         private const val KEY_DISPLAY_BRIGHTNESS = "display_brightness_entity"
         private const val KEY_DISPLAY_ILLUMINANCE = "display_illuminance_entity"
         private const val KEY_MUSIC_PLAYER = "music_player_entity"
+        private const val KEY_CALENDARS = "subscribed_calendars"
+        private const val KEY_RECOVERY_SEALED = "recovery_sealed"
         const val MAX_SCREEN_TIMEOUT_SECONDS = 86_400
         const val DEFAULT_DISPLAY_OFF_ENTITY = "switch.uc_display"
         const val DEFAULT_DISPLAY_BRIGHTNESS_ENTITY = "number.uc_display_brightness"

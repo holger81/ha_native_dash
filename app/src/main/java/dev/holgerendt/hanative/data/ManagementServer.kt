@@ -6,13 +6,14 @@ import java.net.URLDecoder
 import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
 import javax.net.ssl.SSLServerSocketFactory
+import org.json.JSONObject
 
 class ManagementServer(
     private val port: Int = PORT,
     private val pinProvider: () -> String,
     private val savedUrlProvider: () -> String,
     private val screenshotProvider: () -> ScreenCapture.Jpeg,
-    private val onSubmit: (pin: String, url: String, token: String) -> Result<Unit>,
+    private val onSubmit: (url: String, token: String) -> Result<Unit>,
     private val onCommand: (KioskCommand) -> Unit,
     private val kioskStateProvider: () -> KioskSnapshot,
     sslSocketFactory: SSLServerSocketFactory,
@@ -24,6 +25,7 @@ class ManagementServer(
         var count = 0
         var lockedUntil = 0L
         var lastAttempt = 0L
+        var rounds = 0
     }
 
     private val failures = ConcurrentHashMap<String, FailureState>()
@@ -106,7 +108,7 @@ class ManagementServer(
     }
 
     private fun handleKioskState(session: IHTTPSession): Response {
-        authorizeApi(session)?.let { return json(session, Response.Status.UNAUTHORIZED, """{"ok":false,"error":"${escape(it)}"}""") }
+        authorizeApi(session)?.let { return json(session, Response.Status.UNAUTHORIZED, errorJson(it)) }
         return json(session, Response.Status.OK, snapshotJson())
     }
 
@@ -127,10 +129,18 @@ class ManagementServer(
             params.putAll(flattenBody(body))
         }
         authorizeApi(session, pinFromBody(body))?.let {
-            return json(session, Response.Status.UNAUTHORIZED, """{"ok":false,"error":"${escape(it)}"}""")
+            return json(session, Response.Status.UNAUTHORIZED, errorJson(it))
         }
         if (!KioskCommands.panelAllowed(params)) {
-            return json(session, Response.Status.OK, """{"ok":true,"ignored":true,"reason":"panel mismatch"}""")
+            return json(
+                session,
+                Response.Status.OK,
+                JSONObject()
+                    .put("ok", true)
+                    .put("ignored", true)
+                    .put("reason", "panel mismatch")
+                    .toString(),
+            )
         }
         val command = if (body.trimStart().startsWith("{")) {
             KioskCommands.fromJson(body) ?: KioskCommands.fromParams(params)
@@ -141,7 +151,10 @@ class ManagementServer(
             return json(
                 session,
                 Response.Status.BAD_REQUEST,
-                """{"ok":false,"error":"Unknown command. Use cmd=wake, cmd=sleep, cmd=camera, cmd=navigate&path=#camerafront_view, or cmd=home."}""",
+                errorJson(
+                    "Unknown command. Use cmd=wake, cmd=sleep, cmd=camera, " +
+                        "cmd=navigate&path=#camerafront_view, or cmd=home.",
+                ),
             )
         }
         onCommand(command)
@@ -159,9 +172,17 @@ class ManagementServer(
 
     private fun snapshotJson(): String {
         val snap = kioskStateProvider()
-        val popupJson = snap.popup?.let { "\"${escape(it)}\"" } ?: "null"
-        return """{"ok":true,"popup":$popupJson,"connected":${snap.connected},"asleep":${snap.screenAsleep},"panel":"${KioskCommands.PANEL_ID}"}"""
+        return JSONObject()
+            .put("ok", true)
+            .put("popup", snap.popup ?: JSONObject.NULL)
+            .put("connected", snap.connected)
+            .put("asleep", snap.screenAsleep)
+            .put("panel", KioskCommands.PANEL_ID)
+            .toString()
     }
+
+    private fun errorJson(message: String): String =
+        JSONObject().put("ok", false).put("error", message).toString()
 
     private fun authorizeApi(session: IHTTPSession, bodyPin: String? = null): String? {
         if (authenticated(session)) return null
@@ -251,7 +272,7 @@ class ManagementServer(
         if (url.isBlank() || token.isBlank()) {
             return html(adminPage(url, "URL and token are required.", false), Response.Status.BAD_REQUEST)
         }
-        val result = onSubmit(pinProvider(), url, token)
+        val result = onSubmit(url, token)
         return if (result.isSuccess) {
             html(adminPage(url, "Saved. The wall panel is connecting to Home Assistant.", true))
         } else {
@@ -315,7 +336,8 @@ class ManagementServer(
             state.count += 1
             return if (state.count >= MAX_FAILURES) {
                 state.count = 0
-                state.lockedUntil = now + LOCKOUT_MS
+                state.rounds += 1
+                state.lockedUntil = now + lockoutMs(state.rounds)
                 LOCKOUT_MESSAGE
             } else {
                 "PIN does not match the wall panel."
@@ -530,6 +552,8 @@ class ManagementServer(
         private const val SESSION_TTL_MS = 12 * 60 * 60 * 1000L
         private const val MAX_FAILURES = 5
         private const val LOCKOUT_MS = 30_000L
+        private const val MAX_LOCKOUT_MS = 15 * 60_000L
+        private const val MAX_LOCKOUT_SHIFT = 5
         private const val FAILURE_EXPIRY_MS = 10 * 60_000L
         private const val MAX_TRACKED_CLIENTS = 256
         private const val LOCKOUT_MESSAGE = "Too many attempts. Wait a moment and try again."
@@ -560,6 +584,10 @@ class ManagementServer(
                 .live { background:#000; border-radius:14px; overflow:hidden; min-height:220px; }
                 .live img { width:100%; height:auto; display:block; }
         """
+
+        /** 30 s, 60 s, 120 s … per source IP, capped at [MAX_LOCKOUT_MS]. */
+        private fun lockoutMs(rounds: Int): Long =
+            (LOCKOUT_MS shl (rounds - 1).coerceIn(0, MAX_LOCKOUT_SHIFT)).coerceAtMost(MAX_LOCKOUT_MS)
 
         private fun sessionCookieHeader(token: String, maxAgeSec: Long): String =
             "$COOKIE_NAME=$token; Path=/; Max-Age=$maxAgeSec; HttpOnly; Secure; SameSite=Strict"

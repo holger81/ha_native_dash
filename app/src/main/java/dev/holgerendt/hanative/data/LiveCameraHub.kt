@@ -27,6 +27,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 data class LiveCameraView(
     val player: ExoPlayer? = null,
@@ -53,11 +54,13 @@ class LiveCameraHub(
     @Volatile private var warmKeys: Set<String> = emptySet()
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    fun view(target: CameraTarget): StateFlow<LiveCameraView> {
+    /** Pure accessor: safe to call from composition. Starting a stream is [start]. */
+    fun view(target: CameraTarget): StateFlow<LiveCameraView> = session(target).view
+
+    fun start(target: CameraTarget) {
         val session = session(target)
         clearIdleRelease(session)
         if (target.hasLiveSource()) startOne(session)
-        return session.view
     }
 
     fun ensureRunning(targets: Collection<CameraTarget>) {
@@ -84,13 +87,12 @@ class LiveCameraHub(
     fun markAttached(target: CameraTarget) {
         val session = session(target)
         clearIdleRelease(session)
-        session.attached += 1
+        session.attached.incrementAndGet()
     }
 
     fun restorePlaceholder(target: CameraTarget) {
         val session = sessions[key(target)] ?: return
-        session.attached = (session.attached - 1).coerceAtLeast(0)
-        if (session.attached > 0) return
+        if (session.attached.updateAndGet { (it - 1).coerceAtLeast(0) } > 0) return
         runOnMain {
             val player = session.player ?: return@runOnMain
             attachPlaceholder(session, player)
@@ -147,12 +149,12 @@ class LiveCameraHub(
      * [resume] re-arms the timer).
      */
     private fun armIdleRelease(session: Session) {
-        if (paused || session.warm || session.attached > 0) return
+        if (paused || session.warm || session.attached.get() > 0) return
         clearIdleRelease(session)
         session.idleJob = scope.launch {
             delay(IDLE_RELEASE_MS)
             if (paused) return@launch
-            if (session.warm || session.attached > 0) return@launch
+            if (session.warm || session.attached.get() > 0) return@launch
             // Atomic take: if we didn't own the map slot, a newer session or a
             // concurrent stop/release owns this camera now.
             if (sessions.remove(key(session.target)) !== session) return@launch
@@ -220,7 +222,7 @@ class LiveCameraHub(
         val ended = CompletableDeferred<Boolean>()
         withContext(Dispatchers.Main.immediate) {
             val player = session.player ?: createPlayer(session).also { session.player = it }
-            if (session.attached == 0) attachPlaceholder(session, player)
+            if (session.attached.get() == 0) attachPlaceholder(session, player)
             session.listener?.let { player.removeListener(it) }
             val listener = object : Player.Listener {
                 override fun onRenderedFirstFrame() {
@@ -300,7 +302,7 @@ class LiveCameraHub(
             if (frame != null) {
                 session.bitmap.value = frame
                 session.publish()
-                delay(50)
+                delay(300)
             } else {
                 delay(400)
             }
@@ -361,10 +363,10 @@ class LiveCameraHub(
         var job: Job? = null
         var jpegJob: Job? = null
         var idleJob: Job? = null
-        var skipHls: Boolean = false
-        var attached: Int = 0
-        var warm: Boolean = false
-        var errored: Boolean = false
+        @Volatile var skipHls: Boolean = false
+        val attached = AtomicInteger(0)
+        @Volatile var warm: Boolean = false
+        @Volatile var errored: Boolean = false
         val bitmap = MutableStateFlow<Bitmap?>(null)
         val videoReady = MutableStateFlow(false)
         val view = MutableStateFlow(LiveCameraView())

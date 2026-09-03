@@ -1,6 +1,10 @@
 package dev.holgerendt.hanative.data
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.Dns
+import okhttp3.Interceptor
+import java.io.IOException
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
@@ -16,7 +20,12 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object NetworkGuard {
 
-    private val hostCache = ConcurrentHashMap<String, Boolean>()
+    private const val POSITIVE_TTL_MS = 10 * 60_000L
+    private const val NEGATIVE_TTL_MS = 15_000L
+
+    private class HostCacheEntry(val allowed: Boolean, val expiresAtMs: Long)
+
+    private val hostCache = ConcurrentHashMap<String, HostCacheEntry>()
 
     fun hostOf(url: String): String? {
         val schemeEnd = url.indexOf("://")
@@ -36,9 +45,17 @@ object NetworkGuard {
     fun isPrivateHost(host: String): Boolean {
         val normalized = host.normalizeHost()
         if (normalized.isBlank()) return false
-        hostCache[normalized]?.let { return it }
+        val now = System.currentTimeMillis()
+        hostCache[normalized]?.let { entry ->
+            if (entry.expiresAtMs > now) return entry.allowed
+            hostCache.remove(normalized)
+        }
         val allowed = isPrivateHostUncached(normalized)
-        hostCache[normalized] = allowed
+        // A rejection is usually just a DNS miss. Pinning it for the process lifetime would
+        // wedge every later attempt when the panel boots before the VLAN/DNS is up, so
+        // negatives expire quickly while positives are held longer.
+        val ttl = if (allowed) POSITIVE_TTL_MS else NEGATIVE_TTL_MS
+        hostCache[normalized] = HostCacheEntry(allowed, now + ttl)
         return allowed
     }
 
@@ -47,17 +64,29 @@ object NetworkGuard {
         hostCache.clear()
     }
 
-    fun hostRejectionReason(host: String?): String {
+    /**
+     * Last line of defence on the shared OkHttp clients, so a new request path is guarded by
+     * default rather than by remembering to call [isPrivateHost] at the call site.
+     */
+    val interceptor: Interceptor = Interceptor { chain ->
+        val url = chain.request().url
+        if ((url.scheme == "http" || url.scheme == "https") && !isPrivateHost(url.host)) {
+            throw IOException("Blocked: host '${url.host}' is not on the local network")
+        }
+        chain.proceed(chain.request())
+    }
+
+    suspend fun hostRejectionReason(host: String?): String = withContext(Dispatchers.IO) {
         val normalized = host?.normalizeHost().orEmpty()
-        if (normalized.isBlank()) return "Enter a valid Home Assistant URL."
-        if (isPrivateHost(normalized)) return ""
+        if (normalized.isBlank()) return@withContext "Enter a valid Home Assistant URL."
+        if (isPrivateHost(normalized)) return@withContext ""
         if (normalized == "localhost" || normalized.endsWith(".local") ||
             normalized.all { it in '0'..'9' || it == '.' }
         ) {
-            return "Home Assistant must use a private LAN address, not '$normalized'."
+            return@withContext "Home Assistant must use a private LAN address, not '$normalized'."
         }
         val resolved = resolveAddresses(normalized)
-        return when {
+        when {
             resolved.isEmpty() ->
                 "Could not resolve '$normalized'. Use the LAN IP (e.g. http://192.168.x.x:8123) or check DNS on the panel."
             resolved.none(::isPrivateInetAddress) ->

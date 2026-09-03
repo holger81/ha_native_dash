@@ -4,6 +4,7 @@ import android.content.Context
 import android.provider.Settings
 import java.security.SecureRandom
 import java.security.spec.KeySpec
+import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
 import javax.crypto.SecretKey
 import javax.crypto.SecretKeyFactory
@@ -31,6 +32,7 @@ internal object SecureRecovery {
     private const val PBKDF2_ITERATIONS = 100_000
 
     private val random = SecureRandom()
+    private val keyCache = ConcurrentHashMap<String, SecretKey>()
 
     fun readRaw(context: Context, name: String): ByteArray? =
         RecoverableFiles.read(context, name)
@@ -74,7 +76,12 @@ internal object SecureRecovery {
         init(mode, key, GCMParameterSpec(TAG_BITS, iv))
     }
 
+    /**
+     * ANDROID_ID and the salt never change for the life of the install, so the 100k-iteration
+     * derivation is cached: [persist] would otherwise pay for two of them on every write.
+     */
     private fun keyFor(context: Context, purpose: String): SecretKey? {
+        keyCache[purpose]?.let { return it }
         val deviceId = Settings.Secure.getString(
             context.contentResolver,
             Settings.Secure.ANDROID_ID,
@@ -84,6 +91,6 @@ internal object SecureRecovery {
         return runCatching {
             SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec)
                 .let { SecretKeySpec(it.encoded, "AES") }
-        }.getOrNull()
+        }.getOrNull()?.also { keyCache[purpose] = it }
     }
 }

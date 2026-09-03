@@ -40,7 +40,7 @@ class ManagementTls(context: Context) {
 
     private fun loadOrCreate(): Pair<KeyStore, String> {
         loadMaterial(internalFile().takeIf { it.isFile }?.readBytes())?.let { material ->
-            p12Store(material.p12, material.password)?.let { store ->
+            p12Store(material.p12, material.password)?.takeIf(::coversLanAddresses)?.let { store ->
                 if (material.password == LEGACY_PASSWORD) persist(store, randomPassword())
                 return store to material.password
             }
@@ -48,7 +48,7 @@ class ManagementTls(context: Context) {
         val publicRaw = SecureRecovery.readRaw(app, RecoverableFiles.TLS_NAME)
         loadMaterial(publicRaw?.let { SecureRecovery.decryptIfSealed(app, SecureRecovery.TLS_MAGIC, it) ?: it })
             ?.let { material ->
-                p12Store(material.p12, material.password)?.let { store ->
+                p12Store(material.p12, material.password)?.takeIf(::coversLanAddresses)?.let { store ->
                     val password = if (material.password == LEGACY_PASSWORD) randomPassword() else material.password
                     persist(store, password)
                     return store to password
@@ -97,6 +97,17 @@ class ManagementTls(context: Context) {
             load(ByteArrayInputStream(p12), password.toCharArray())
         }
     }.getOrNull()
+
+    /** A stored cert is reusable only while it still covers every current LAN IP; no IPs at all is not a mismatch. */
+    private fun coversLanAddresses(store: KeyStore): Boolean {
+        val current = LanAddresses.ipv4()
+        if (current.isEmpty()) return true
+        val names = runCatching {
+            val cert = store.getCertificate(ALIAS) as? X509Certificate
+            cert?.subjectAlternativeNames?.mapNotNull { it?.getOrNull(1) as? String }
+        }.getOrNull() ?: return false
+        return current.all { names.contains(it) }
+    }
 
     private fun generate(password: String): KeyStore {
         val keyPair = KeyPairGenerator.getInstance("RSA").run {

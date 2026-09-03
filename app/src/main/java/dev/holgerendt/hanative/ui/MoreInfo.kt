@@ -127,6 +127,10 @@ private val ToggleDomains = setOf(
     "siren",
 )
 
+private val HistoryTimeFormat = DateTimeFormatter.ofPattern("h:mm a", Locale.US)
+private val HistoryDateFormat = DateTimeFormatter.ofPattern("MMM d", Locale.US)
+private val LastChangedFormat = DateTimeFormatter.ofPattern("EEE d MMM HH:mm")
+
 @Composable
 fun MoreInfoDialog(entityId: String, viewModel: HaViewModel) {
     val overlay = OverlayLightPopup
@@ -364,8 +368,6 @@ private fun HistoryGraphChart(buckets: List<HistoryBucket>, unit: String, nowMs:
     val dataMax = buckets.maxOf { it.max }
     val (yMin, yMax, yTicks) = niceAxis(dataMin, dataMax)
     val zone = ZoneId.systemDefault()
-    val timeFmt = DateTimeFormatter.ofPattern("h:mm a", Locale.US)
-    val dateFmt = DateTimeFormatter.ofPattern("MMM d", Locale.US)
     val decimals = historyDecimals(yMin, yMax)
     val labelStyle = TextStyle(color = overlay.muted, fontSize = 10.sp)
     val unitStyle = TextStyle(color = overlay.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
@@ -442,9 +444,9 @@ private fun HistoryGraphChart(buckets: List<HistoryBucket>, unit: String, nowMs:
             val time = startMs + (endMs - startMs) * i / xLabelCount
             val instant = Instant.ofEpochMilli(time).atZone(zone)
             val label = if (i == 0 || (instant.hour == 0 && instant.minute < 20)) {
-                instant.format(dateFmt)
+                instant.format(HistoryDateFormat)
             } else {
-                instant.format(timeFmt)
+                instant.format(HistoryTimeFormat)
             }
             val layout = textMeasurer.measure(label, labelStyle)
             val x = xOf(time) - layout.size.width / 2f
@@ -552,7 +554,7 @@ private fun CalendarEvents(entityId: String, viewModel: HaViewModel) {
             Text("Upcoming", color = overlay.muted, fontSize = 12.sp)
             events.forEach { event ->
                 val whenText = event.start?.atZone(ZoneId.systemDefault())
-                    ?.format(DateTimeFormatter.ofPattern("EEE d MMM HH:mm"))
+                    ?.format(LastChangedFormat)
                     ?: event.startDate?.toString()
                     ?: ""
                 Column(Modifier.padding(vertical = 4.dp)) {

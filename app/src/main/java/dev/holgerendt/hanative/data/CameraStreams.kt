@@ -35,16 +35,6 @@ data class CameraTarget(
 ) {
     fun hasLiveSource(): Boolean =
         !streamName.isNullOrBlank() || entityId?.startsWith("camera.") == true
-
-    companion object {
-        fun from(widget: WidgetNode): CameraTarget = CameraTarget(
-            name = widget.name,
-            entityId = widget.entity,
-            streamServer = widget.streamServer,
-            streamName = widget.streamName,
-            muted = widget.muted != false,
-        )
-    }
 }
 
 class CameraStreamException(message: String) : Exception(message)
@@ -56,6 +46,7 @@ object CameraStreams {
     private val resolveCache = ConcurrentHashMap<String, ResolveCacheEntry>()
 
     private val streamClient = OkHttpClient.Builder()
+        .addInterceptor(NetworkGuard.interceptor)
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .callTimeout(0, TimeUnit.MILLISECONDS)
@@ -95,7 +86,13 @@ object CameraStreams {
         return if (self) listOf(widget) else emptyList()
     }
 
-    fun fromWidget(widget: WidgetNode): CameraTarget = CameraTarget.from(widget)
+    fun fromWidget(widget: WidgetNode): CameraTarget = CameraTarget(
+        name = widget.name,
+        entityId = widget.entity,
+        streamServer = widget.streamServer,
+        streamName = widget.streamName,
+        muted = widget.muted != false,
+    )
 
     fun httpErrorMessage(code: Int, entityId: String?): String = when (code) {
         401, 403 -> "Camera unauthorized — check the Home Assistant token"
@@ -255,11 +252,17 @@ object CameraStreams {
     }
 
     private fun looksLikeHtmlOrJson(data: ByteArray): Boolean {
-        val start = data.dropWhile { it == ' '.code.toByte() || it == '\n'.code.toByte() || it == '\r'.code.toByte() }
-            .take(16)
-            .map { it.toInt().toChar() }
-            .joinToString("")
-        return start.startsWith("<") || start.startsWith("{") || start.startsWith("[")
+        var i = 0
+        while (i < data.size) {
+            val b = data[i]
+            if (b != ' '.code.toByte() && b != '\n'.code.toByte() && b != '\r'.code.toByte()) break
+            i++
+        }
+        if (i >= data.size) return false
+        return when (data[i]) {
+            '<'.code.toByte(), '{'.code.toByte(), '['.code.toByte() -> true
+            else -> false
+        }
     }
 
     // HA stream URLs and go2rtc layouts can change (token rotation, camera

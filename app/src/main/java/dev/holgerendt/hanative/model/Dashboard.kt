@@ -8,11 +8,10 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.intOrNull
 
 @Serializable
+// `version`, `source`, `entities` and the top-level `icons` array are still emitted by
+// scripts/extract_dashboard.py but nothing reads them; `ignoreUnknownKeys` drops them.
 data class DashboardFile(
-    val version: Int = 1,
-    val source: String? = null,
     val home: HomeDashboard,
-    val entities: List<String> = emptyList(),
 )
 
 @Serializable
@@ -80,14 +79,11 @@ data class WidgetNode(
     @SerialName("entity_ids") val entityIds: List<String>? = null,
     @SerialName("stream_server") val streamServer: String? = null,
     @SerialName("stream_name") val streamName: String? = null,
-    @SerialName("camera_view") val cameraView: String? = null,
     @SerialName("card_type") val cardType: String? = null,
     val muted: Boolean? = null,
     val hash: String? = null,
-    val path: String? = null,
     val accent: String? = null,
     val radius: String? = null,
-    val background: String? = null,
     val label: String? = null,
     val layout: String? = null,
     val columns: JsonElement? = null,
@@ -96,17 +92,14 @@ data class WidgetNode(
     val days: Int? = null,
     @SerialName("number_of_events") val numberOfEvents: Int? = null,
     @SerialName("number_of_hours") val numberOfHours: Int? = null,
-    @SerialName("hours_to_show") val hoursToShow: String? = null,
     @SerialName("grid_area") val gridArea: String? = null,
     @SerialName("activity_entity") val activityEntity: String? = null,
     @SerialName("companion_entity") val companionEntity: String? = null,
-    val battery: String? = null,
     @SerialName("home_sensor") val homeSensor: String? = null,
     @SerialName("temp_entity") val tempEntity: String? = null,
     @SerialName("sun_entity") val sunEntity: String? = null,
     @SerialName("graph_entity") val graphEntity: String? = null,
     val content: String? = null,
-    val style: String? = null,
     @SerialName("default_tab") val defaultTab: Int? = null,
     @SerialName("emphasize_unlocked") val emphasizeUnlocked: Boolean? = null,
     val tap: ActionNode? = null,
@@ -125,7 +118,6 @@ data class WidgetNode(
     @SerialName("show_condition") val showCondition: Boolean? = null,
     @SerialName("show_temperature") val showTemperature: Boolean? = null,
     @SerialName("show_low_temperature") val showLowTemperature: Boolean? = null,
-    val conditions: List<JsonObject> = emptyList(),
 ) {
     fun columnCount(): Int =
         (columns as? JsonPrimitive)?.intOrNull?.takeIf { it > 0 } ?: 2
@@ -171,7 +163,6 @@ data class DisplayNode(
 data class SeriesNode(
     val entity: String? = null,
     val name: String? = null,
-    val type: String? = null,
 )
 
 @Serializable

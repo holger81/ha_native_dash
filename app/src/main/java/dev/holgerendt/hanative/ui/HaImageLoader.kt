@@ -12,16 +12,21 @@ import dev.holgerendt.hanative.data.HaClient
 import dev.holgerendt.hanative.data.NetworkGuard
 import okhttp3.OkHttpClient
 import java.io.File
-import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 
 private const val DISK_CACHE_DIR = "ha_image_cache"
 private const val DISK_CACHE_MAX_BYTES = 64L * 1024L * 1024L
 
-/** Coil ImageLoader with memory + disk cache; HA bearer auth for same-origin URLs only. */
+/**
+ * Coil ImageLoader with memory + disk cache; HA bearer auth for same-origin URLs only.
+ *
+ * One instance per process: each loader owns an 18%-of-heap memory cache, an OkHttp pool, and a
+ * handle on the same disk-cache directory, so building one per cover-art tile is not viable.
+ * Crossfade is configured per request instead of here to avoid animating twice.
+ */
 fun haImageLoader(context: Context, client: HaClient): ImageLoader {
     val appContext = context.applicationContext
     return ImageLoader.Builder(appContext)
-        .crossfade(true)
         .memoryCachePolicy(CachePolicy.ENABLED)
         .diskCachePolicy(CachePolicy.ENABLED)
         .memoryCache {
@@ -37,14 +42,9 @@ fun haImageLoader(context: Context, client: HaClient): ImageLoader {
         }
         .okHttpClient {
             OkHttpClient.Builder()
+                .addInterceptor(NetworkGuard.interceptor)
                 .addInterceptor { chain ->
                     val request = chain.request()
-                    val url = request.url
-                    if (url.scheme == "http" || url.scheme == "https") {
-                        if (!NetworkGuard.isPrivateHost(url.host)) {
-                            throw IOException("Blocked: image host '${url.host}' is not on the local network")
-                        }
-                    }
                     val urlText = request.url.toString()
                     val base = client.currentBaseUrl.trimEnd('/')
                     val needsAuth = base.isNotBlank() && urlText.startsWith(base)
@@ -61,10 +61,14 @@ fun haImageLoader(context: Context, client: HaClient): ImageLoader {
         .build()
 }
 
+private val sharedLoaders = ConcurrentHashMap<HaClient, ImageLoader>()
+
 @Composable
 fun rememberHaImageLoader(client: HaClient): ImageLoader {
     val context = LocalContext.current
-    return remember(client) { haImageLoader(context, client) }
+    return remember(client) {
+        sharedLoaders.getOrPut(client) { haImageLoader(context, client) }
+    }
 }
 
 fun resolveHaImageUrl(path: String?, baseUrl: String): String? {

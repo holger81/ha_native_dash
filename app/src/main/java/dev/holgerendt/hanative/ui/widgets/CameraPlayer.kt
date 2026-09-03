@@ -48,10 +48,13 @@ import dev.holgerendt.hanative.ui.theme.ChipOnDark
 import kotlinx.coroutines.delay
 
 private val CameraShape = RoundedCornerShape(24.dp)
+private const val SNAPSHOT_REFRESH_MS = 30_000L
+private const val SNAPSHOT_RETRY_MS = 2_000L
 
 @Composable
 fun CameraPopup(popup: PopupNode, viewModel: HaViewModel) {
-    val go2rtcUrl = viewModel.savedGo2rtcUrl
+    val ui by viewModel.ui.collectAsState()
+    val go2rtcUrl = ui.go2rtcUrl
     val cameras = remember(popup, go2rtcUrl) { CameraStreams.camerasForPopup(popup, go2rtcUrl) }
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -132,7 +135,9 @@ private fun SnapshotCameraSurface(
                     }
                 }
             }
-            delay(1000)
+            // Snapshots are TTL-cached in HaClient, so polling faster than the TTL only
+            // re-serves the same bytes. Retry quickly while failing, then settle down.
+            delay(if (next == null) SNAPSHOT_RETRY_MS else SNAPSHOT_REFRESH_MS)
         }
     }
     val bitmap = remember(bytes) {
@@ -162,7 +167,8 @@ private fun LiveCameraSurface(
     modifier: Modifier,
     fitContent: Boolean = false,
 ) {
-    val live by viewModel.liveCamera(widget).collectAsState()
+    val live by remember(widget) { viewModel.liveCamera(widget) }.collectAsState()
+    LaunchedEffect(widget) { viewModel.startLiveCamera(widget) }
     var surfaceReady by remember(widget) { mutableStateOf(false) }
     val player = live.player
     val still = live.bitmap
