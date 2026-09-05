@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -802,10 +802,11 @@ private fun LazyListScope.musicBrowseItems(
                     Text(err, color = Color(0xFFFF8A80), fontSize = 13.sp)
                 }
             }
-            items(
+            // Provider listings can repeat a uri/name, and duplicate lazy-list keys throw.
+            itemsIndexed(
                 items = frame.items,
-                key = { item -> "browse:${mediaItemKey(item)}" },
-            ) { item ->
+                key = { index, item -> "browse:$index:${mediaItemKey(item)}" },
+            ) { _, item ->
                 DiscoveryListRow(
                     item = item,
                     playing = item.uri == discovery.playingUri,
@@ -829,10 +830,10 @@ private fun LazyListScope.searchResultItems(
     item(key = "search-title-$typeKey") {
         Text(title, color = LocalOverlay.current.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
     }
-    items(
+    itemsIndexed(
         items = items,
-        key = { item -> "search:$typeKey:${mediaItemKey(item)}" },
-    ) { item ->
+        key = { index, item -> "search:$typeKey:$index:${mediaItemKey(item)}" },
+    ) { _, item ->
         DiscoveryListRow(
             item = item,
             playing = item.uri == playingUri,

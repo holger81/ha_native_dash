@@ -1322,27 +1322,11 @@ class HaClient {
             is JsonObject -> rest["events"] as? JsonArray
             else -> null
         }
-        if (rows != null) {
-            return rows.mapNotNull { parseCalendarEvent(it as? JsonObject ?: return@mapNotNull null, entityId) }
+        // Listing events is REST-only; the websocket API has no equivalent command, so a
+        // failed read is reported as empty rather than retried over the socket.
+        return rows.orEmpty().mapNotNull {
+            parseCalendarEvent(it as? JsonObject ?: return@mapNotNull null, entityId)
         }
-        return websocketCalendarEvents(entityId, start, end)
-    }
-
-    private suspend fun websocketCalendarEvents(entityId: String, start: Instant, end: Instant): List<HaCalendarEvent> {
-        val result = runCatching {
-            command {
-                put("type", "calendar/events")
-                put("entity_id", entityId)
-                put("start_date_time", start.toString())
-                put("end_date_time", end.toString())
-            }
-        }.getOrNull() ?: return emptyList()
-        val rows = when (result) {
-            is JsonArray -> result
-            is JsonObject -> result["events"] as? JsonArray ?: result["response"] as? JsonArray
-            else -> null
-        } ?: return emptyList()
-        return rows.mapNotNull { parseCalendarEvent(it as? JsonObject ?: return@mapNotNull null, entityId) }
     }
 
     suspend fun createCalendarEvent(
