@@ -724,7 +724,6 @@ def convert_button_card(card: dict) -> dict:
     label = card.get("label")
     if isinstance(label, str) and "vent" in label.lower():
         ids = ENTITY_RE.findall(label) or ENTITY_RE.findall(str(card.get("tap_action")))
-        service = None
         tap = card.get("tap_action") or {}
         return {
             "type": "vents_group",

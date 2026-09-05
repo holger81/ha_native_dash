@@ -238,6 +238,10 @@ class HaViewModel(
     /** Lux-mapped brightness the ramp is easing toward; null while auto-brightness is idle. */
     private val autoBrightnessDesired = MutableStateFlow<Int?>(null)
     private var autoBrightnessApplied: Int? = null
+    /** Filtered ambient lux that rejects transient shadows. */
+    private var filteredAmbientLux: Double? = null
+    /** Job confirming sustained dimming before lowering ambient lux. */
+    private var pendingDimJob: Job? = null
 
     private val extraCalendarColors = listOf(
         "var(--blue)",
@@ -1330,6 +1334,10 @@ class HaViewModel(
 
     fun noteUserActivity() {
         lastActivityMs = System.currentTimeMillis()
+        if (pendingDimJob != null) {
+            pendingDimJob?.cancel()
+            pendingDimJob = null
+        }
     }
 
     fun onHostResumed() {
@@ -1381,6 +1389,11 @@ class HaViewModel(
         if (_ui.value.screenAsleep || _ui.value.showSetup) return
         sleptAtMs = System.currentTimeMillis()
         displayWakeJob?.cancel()
+        pendingDimJob?.cancel()
+        pendingDimJob = null
+        filteredAmbientLux = null
+        autoBrightnessDesired.value = null
+        autoBrightnessApplied = null
         if (commandDisplay && connection.value is ConnectionState.Connected) {
             _ui.value.displayOffEntity.takeIf { it.isNotBlank() }?.let { entityId ->
                 viewModelScope.launch { runCatching { client.setEntityPower(entityId, on = false) } }
@@ -1392,6 +1405,8 @@ class HaViewModel(
 
     fun wakeScreen(commandDisplay: Boolean = true) {
         lastActivityMs = System.currentTimeMillis()
+        pendingDimJob?.cancel()
+        pendingDimJob = null
         if (commandDisplay && connection.value is ConnectionState.Connected) {
             _ui.value.displayOffEntity.takeIf { it.isNotBlank() }?.let { entityId ->
                 commandDisplayOnWithRetry(entityId)
@@ -1434,6 +1449,11 @@ class HaViewModel(
         }
         val normalized = CredentialsStore.normalizeEntityId(entityId)
         credentials.displayBrightnessEntity = normalized
+        pendingDimJob?.cancel()
+        pendingDimJob = null
+        filteredAmbientLux = null
+        autoBrightnessDesired.value = null
+        autoBrightnessApplied = null
         _ui.value = _ui.value.copy(displayBrightnessEntity = normalized)
         return Result.success(Unit)
     }
@@ -1457,6 +1477,11 @@ class HaViewModel(
         }
         val normalized = CredentialsStore.normalizeEntityId(entityId)
         credentials.displayIlluminanceEntity = normalized
+        pendingDimJob?.cancel()
+        pendingDimJob = null
+        filteredAmbientLux = null
+        autoBrightnessDesired.value = null
+        autoBrightnessApplied = null
         _ui.value = _ui.value.copy(displayIlluminanceEntity = normalized)
         return Result.success(Unit)
     }
@@ -1600,36 +1625,106 @@ class HaViewModel(
                 _ui.map { Triple(it.displayIlluminanceEntity, it.displayBrightnessEntity, it.screenAsleep) }
                     .distinctUntilChanged(),
                 states,
-            ) { (illumEntity, brightEntity, asleep), allStates ->
+                mmWaveLive,
+            ) { (illumEntity, brightEntity, asleep), allStates, live ->
                 AutoBrightnessSnapshot(
                     illuminanceEntity = illumEntity,
                     brightnessEntity = brightEntity,
                     asleep = asleep,
                     luxState = illumEntity.takeIf { it.isNotBlank() }?.let { allStates[it]?.state },
+                    inFront = personInFrontOfDisplay(allStates, live),
                 )
             }
                 .distinctUntilChanged { a, b ->
                     a.asleep == b.asleep &&
                         a.illuminanceEntity == b.illuminanceEntity &&
                         a.brightnessEntity == b.brightnessEntity &&
-                        a.luxState == b.luxState
+                        a.luxState == b.luxState &&
+                        a.inFront == b.inFront
                 }
-                .debounce(400)
+                .debounce(300)
                 .collect { snap ->
                     if (snap.asleep ||
                         snap.illuminanceEntity.isBlank() ||
                         snap.brightnessEntity.isBlank()
                     ) {
+                        pendingDimJob?.cancel()
+                        pendingDimJob = null
+                        filteredAmbientLux = null
                         autoBrightnessDesired.value = null
                         autoBrightnessApplied = null
                         return@collect
                     }
-                    val lux = snap.luxState?.toDoubleOrNull()
-                    if (lux == null || lux <= 0) {
+                    val rawLux = snap.luxState?.toDoubleOrNull()
+                    if (rawLux == null || rawLux <= 0) {
+                        pendingDimJob?.cancel()
+                        pendingDimJob = null
+                        filteredAmbientLux = null
                         autoBrightnessDesired.value = null
                         return@collect
                     }
-                    autoBrightnessDesired.value = luxToDisplayBrightness(lux)
+
+                    val currentAmbient = filteredAmbientLux
+                    if (currentAmbient == null) {
+                        filteredAmbientLux = rawLux
+                        pendingDimJob?.cancel()
+                        pendingDimJob = null
+                        autoBrightnessDesired.value = luxToDisplayBrightness(rawLux)
+                        return@collect
+                    }
+
+                    if (rawLux >= currentAmbient) {
+                        // Room brightened (lights turned on, daylight, or person stepped away)
+                        pendingDimJob?.cancel()
+                        pendingDimJob = null
+                        filteredAmbientLux = rawLux
+                        autoBrightnessDesired.value = luxToDisplayBrightness(rawLux)
+                        return@collect
+                    }
+
+                    if (rawLux >= currentAmbient * SHADOW_TOLERANCE_RATIO) {
+                        // Trivial light dip or normal sensor noise (< 10% drop): keep steady
+                        pendingDimJob?.cancel()
+                        pendingDimJob = null
+                        return@collect
+                    }
+
+                    // Significant drop (rawLux < currentAmbient * 0.90)
+                    val isPitchDark = rawLux <= PITCH_DARK_LUX_THRESHOLD
+                    if (snap.inFront && !isPitchDark) {
+                        // Person is standing in front of or interacting with the tablet in a lit room.
+                        // This drop is their shadow blocking the sensor — hold the unshadowed ambient baseline!
+                        pendingDimJob?.cancel()
+                        pendingDimJob = null
+                        return@collect
+                    }
+
+                    // Drop without person in front, or lights completely turned off (< 15 lx):
+                    // Confirm lower level before dimming so momentary shadows from people walking by don't dim.
+                    val targetConfirmMs = if (isPitchDark) BRIGHTNESS_DARK_CONFIRM_MS else BRIGHTNESS_DIM_CONFIRM_MS
+                    if (pendingDimJob != null && isPitchDark) {
+                        pendingDimJob?.cancel()
+                        pendingDimJob = null
+                    }
+                    if (pendingDimJob == null) {
+                        pendingDimJob = viewModelScope.launch {
+                            delay(targetConfirmMs)
+                            if (_ui.value.screenAsleep) return@launch
+                            val liveStates = states.value
+                            val liveIllum = _ui.value.displayIlluminanceEntity
+                            val liveLux = liveIllum.takeIf { it.isNotBlank() }
+                                ?.let { liveStates[it]?.state?.toDoubleOrNull() }
+                                ?: return@launch
+                            val liveInFront = personInFrontOfDisplay(liveStates, _mmWaveLive.value)
+                            val curAmb = filteredAmbientLux ?: liveLux
+                            val dark = liveLux <= PITCH_DARK_LUX_THRESHOLD
+                            if ((!liveInFront || dark) && liveLux < curAmb * SHADOW_TOLERANCE_RATIO) {
+                                filteredAmbientLux = liveLux
+                                autoBrightnessDesired.value = luxToDisplayBrightness(liveLux)
+                            }
+                            pendingDimJob = null
+                        }
+                    }
                 }
         }
         viewModelScope.launch { rampAutoDisplayBrightness() }
@@ -1720,7 +1815,38 @@ class HaViewModel(
         val brightnessEntity: String,
         val asleep: Boolean,
         val luxState: String?,
+        val inFront: Boolean,
     )
+
+    private fun personInFrontOfDisplay(
+        allStates: Map<String, EntityState>,
+        live: MmWaveLiveTargets,
+        now: Long = System.currentTimeMillis(),
+    ): Boolean {
+        // 1. User interacted with UI recently (touch, popup, navigation within last 60s)
+        if (now - lastActivityMs < RECENT_ACTIVITY_HOLD_MS) return true
+
+        // 2. mmWave live targets in close proximity to switch/tablet (depth 1..220 cm, |x| <= 150 cm)
+        if (live.slots.values.any { it.y in 1..220 && abs(it.x) <= 150 }) return true
+
+        // 3. HA mmWave target depth helpers in close proximity (depth 1..220 cm, |x| <= 150 cm)
+        for (i in 1..4) {
+            val y = allStates["input_number.secondary_living_room_mmwave_target_${i}_y"]?.state?.toDoubleOrNull()
+            val x = allStates["input_number.secondary_living_room_mmwave_target_${i}_x"]?.state?.toDoubleOrNull() ?: 0.0
+            if (y != null && y in 1.0..220.0 && abs(x) <= 150.0) return true
+        }
+
+        // 4. Target count > 0 with unknown depth while live slots are empty
+        val count = live.count.coerceAtLeast(
+            allStates[MMWAVE_TARGET_COUNT_ENTITY]?.state?.toDoubleOrNull()?.roundToInt() ?: 0
+        )
+        if (count > 0 && live.slots.isEmpty()) {
+            val y1 = allStates["input_number.secondary_living_room_mmwave_target_1_y"]?.state?.toDoubleOrNull()
+            if (y1 == null || y1 in 1.0..220.0) return true
+        }
+
+        return false
+    }
 
     private fun watchMmWaveClear() {
         viewModelScope.launch {
@@ -2084,6 +2210,11 @@ class HaViewModel(
 
     companion object {
         private const val AUTO_BRIGHTNESS_RAMP_MS = 90L
+        private const val BRIGHTNESS_DIM_CONFIRM_MS = 45_000L
+        private const val BRIGHTNESS_DARK_CONFIRM_MS = 15_000L
+        private const val PITCH_DARK_LUX_THRESHOLD = 15.0
+        private const val RECENT_ACTIVITY_HOLD_MS = 60_000L
+        private const val SHADOW_TOLERANCE_RATIO = 0.90
         private const val LOCAL_PIN_MAX_FAILURES = 5
         private const val LOCAL_PIN_LOCKOUT_BASE_MS = 30_000L
         private const val LOCAL_PIN_LOCKOUT_MAX_MS = 15 * 60_000L
