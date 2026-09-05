@@ -147,8 +147,12 @@ panel; low ROI / risk). Notable work landed outside the original numbered items:
   `NetworkGuard` test later is fine). Was: unit `KioskCommands`,
   `CredentialsStore`, `DashboardLoader`, `CameraStreams`, presence→brightness,
   `HaClient` pending drain/timeout; androidTest smoke connect flow.
-- [x] **3.5 Build hygiene** — unused `WAKE_LOCK` permission removed from the
-  manifest. Bump-on-assemble stays intentional (UniFi Connect requires a
+- [x] **3.5 Build hygiene** — `WAKE_LOCK` and `ACCESS_WIFI_STATE` must stay in
+  the manifest: `LiveCameraHub.createPlayer` sets `C.WAKE_MODE_NETWORK`, so
+  Media3 acquires a `PowerManager` WakeLock and a `WifiManager` WifiLock from
+  `ExoPlayer.prepare()`. Dropping them threw `SecurityException` on the first
+  camera stream (fixed after 1.0.125); grep for the permission name, not just
+  `WakeLock`, before trimming. Bump-on-assemble stays intentional (UniFi Connect requires a
   strictly higher `versionCode` per upload; see
   `.cursor/rules/unifi-apk-version.mdc`).
   - [−] R8/minify for release — won't implement (risk to Media3/OkHttp).
