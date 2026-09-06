@@ -113,7 +113,13 @@ apply_runtime() {
 install_app() {
   local apk="${1:-}"
   if [[ -z "$apk" ]]; then
-    apk="$(cd "$(dirname "$0")/.." && pwd)/app/build/outputs/apk/debug/app-debug.apk"
+    local root
+    root="$(cd "$(dirname "$0")/.." && pwd)"
+    if [[ -f "$root/app/build/outputs/apk/debug/greatroom-wall-debug.apk" ]]; then
+      apk="$root/app/build/outputs/apk/debug/greatroom-wall-debug.apk"
+    else
+      apk="$root/app/build/outputs/apk/debug/app-debug.apk"
+    fi
   fi
   [[ -f "$apk" ]] || die "APK not found: $apk"
   "$ADB" install -r -t "$apk"

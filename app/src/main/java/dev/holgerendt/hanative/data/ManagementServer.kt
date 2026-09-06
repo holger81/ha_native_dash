@@ -49,11 +49,13 @@ class ManagementServer(
             session.method == Method.GET && uri == "/logout" -> handleLogout(session)
             session.method == Method.POST && uri == "/logout" -> handleLogout(session)
             session.method == Method.GET && uri == "/screenshot" -> handleScreenshot(session)
-            session.method == Method.OPTIONS && (uri == "/api/command" || uri == "/api/state") ->
+            session.method == Method.OPTIONS && (uri == "/api/command" || uri == "/api/state" || uri == "/api/crash") ->
                 corsPreflight(session)
             session.method == Method.GET && uri == "/api/state" -> handleKioskState(session)
             (session.method == Method.GET || session.method == Method.POST) && uri == "/api/command" ->
                 handleKioskCommand(session)
+            session.method == Method.GET && uri == "/api/crash" -> handleGetCrash(session)
+            session.method == Method.POST && uri == "/api/crash/clear" -> handleClearCrash(session)
             session.method == Method.POST && uri == "/setup" -> handleSetup(session)
             session.method == Method.POST && uri == "/wake" -> handleWake(session)
             else -> newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not found")
@@ -168,6 +170,32 @@ class ManagementServer(
         runCatching { session.parseBody(HashMap()) }
         onCommand(KioskCommand.Wake)
         return html(adminPage(savedUrlProvider(), "Waking the wall display.", true))
+    }
+
+    private fun handleGetCrash(session: IHTTPSession): Response {
+        val crash = CrashLogger.latestCrash
+        val json = JSONObject()
+            .put("ok", true)
+            .put("hasCrash", crash != null)
+            .put("crash", crash ?: "")
+        return json(session, Response.Status.OK, json.toString(2))
+    }
+
+    private fun handleClearCrash(session: IHTTPSession): Response {
+        if (!authenticated(session)) {
+            val files = HashMap<String, String>()
+            if (session.method == Method.POST) {
+                runCatching { session.parseBody(files) }
+            }
+            val params = formParams(session, files)
+            val body = files["postData"].orEmpty()
+            val pin = (params["pin"] ?: pinFromBody(body)).orEmpty().replace(" ", "")
+            if (pin.isBlank() || pinError(pin, clientKey(session)) != null) {
+                return json(session, Response.Status.FORBIDDEN, errorJson("PIN does not match the wall panel."))
+            }
+        }
+        CrashLogger.clearCrash()
+        return redirectHome()
     }
 
     private fun snapshotJson(): String {
@@ -365,11 +393,13 @@ class ManagementServer(
         return response
     }
 
-    private fun redirectHome(setCookie: String): Response {
+    private fun redirectHome(setCookie: String? = null): Response {
         val response = newFixedLengthResponse(Response.Status.REDIRECT, MIME_HTML, "")
         response.addHeader("Location", "/")
         response.addHeader("Cache-Control", "no-store")
-        response.addHeader("Set-Cookie", setCookie)
+        if (setCookie != null) {
+            response.addHeader("Set-Cookie", setCookie)
+        }
         return response
     }
 
@@ -422,6 +452,18 @@ class ManagementServer(
             success -> """<p class="ok">${escape(message)}</p>"""
             else -> """<p class="err">${escape(message)}</p>"""
         }
+        val crashReport = CrashLogger.latestCrash
+        val crashSection = if (!crashReport.isNullOrBlank()) {
+            """
+            <section style="background:#2a1111; border:1px solid #d32f2f; border-radius:14px; padding:16px; margin:16px 0;">
+              <h2 style="color:#ff8a80; margin:0 0 8px 0; font-size:1.1rem;">⚠️ Last App Crash</h2>
+              <pre style="white-space:pre-wrap; word-break:break-all; font-size:11px; max-height:260px; overflow-y:auto; background:#1a0505; color:#ffcdd2; padding:10px; border-radius:8px; margin:0 0 10px 0;">${escape(crashReport)}</pre>
+              <form method="post" action="/api/crash/clear">
+                <button class="inline" type="submit" style="background:#552222; color:#fff; border:0; padding:8px 14px; border-radius:8px; font-size:13px; cursor:pointer;">Dismiss crash report</button>
+              </form>
+            </section>
+            """.trimIndent()
+        } else ""
         return """
             <!doctype html>
             <html lang="en">
@@ -441,6 +483,7 @@ class ManagementServer(
                 </div>
                 <p>Paste your Home Assistant URL and long-lived access token. The live view uses your login session — the PIN is not sent on screenshot refreshes.</p>
                 $notice
+                $crashSection
                 <section class="live-wrap">
                   <h2>Live screen</h2>
                   <p id="live-status" class="meta">Loading live screen…</p>

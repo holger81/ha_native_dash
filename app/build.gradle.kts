@@ -101,6 +101,10 @@ android {
     }
 }
 
+base {
+    archivesName.set("greatroom-wall")
+}
+
 composeCompiler {
     metricsDestination.set(layout.buildDirectory.dir("compose_metrics"))
     reportsDestination.set(layout.buildDirectory.dir("compose_reports"))

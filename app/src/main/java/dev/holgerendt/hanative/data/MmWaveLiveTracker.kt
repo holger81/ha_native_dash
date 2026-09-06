@@ -42,7 +42,7 @@ object MmWaveLiveTracker {
         event.slotUpdates.forEach { (slot, pos) -> slots[slot] = pos }
         val count = event.count.coerceIn(0, 4).coerceAtLeast(slots.keys.maxOrNull() ?: 0)
         (count + 1..4).forEach { slots.remove(it) }
-        return MmWaveLiveTargets(count = count, slots = slots)
+        return MmWaveLiveTargets(count = count, slots = slots.toMap())
     }
 
     private fun parseArgs(args: JsonObject): MmWaveTargetEvent? {

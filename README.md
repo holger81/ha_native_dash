@@ -23,7 +23,7 @@ Native Jetpack Compose tablet app that mirrors the Lovelace **greatroom wall** d
 ./gradlew :app:assembleDebug
 ```
 
-APK: `app/build/outputs/apk/debug/app-debug.apk`
+APK: `app/build/outputs/apk/debug/greatroom-wall-debug.apk`
 
 ## First launch
 

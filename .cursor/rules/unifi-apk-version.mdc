@@ -10,16 +10,16 @@ UniFi Connect rejects APK uploads with "Outdated App File" unless `versionCode` 
 ## When building or handing over an APK
 
 - After any change meant for the UniFi Display, run `./gradlew :app:assembleDebug` (or `assembleRelease` / `packageDebug` / `packageRelease`). Those tasks auto-bump `versionCode` and `versionName` in `app/version.properties`.
-- Never tell the user to upload an existing `app/build/outputs/apk/debug/app-debug.apk` without rebuilding first.
+- Never tell the user to upload an existing `app/build/outputs/apk/debug/greatroom-wall-debug.apk` without rebuilding first.
 - Never reuse a previously built APK. Rebuild even if sources look unchanged — a second assemble produces a higher `versionCode`.
 - Do not bump by hand-editing `defaultConfig` in `app/build.gradle.kts`. Do not bump on Gradle sync or compile-only tasks.
 - Do not auto-commit `app/version.properties` (a dirty tree after assemble is expected).
 
 ```bash
 # ❌ BAD — reuse last APK
-# "Upload app/build/outputs/apk/debug/app-debug.apk"
+# "Upload app/build/outputs/apk/debug/greatroom-wall-debug.apk"
 
 # ✅ GOOD — rebuild so versionCode increases
 ./gradlew :app:assembleDebug
-# then upload app/build/outputs/apk/debug/app-debug.apk
+# then upload app/build/outputs/apk/debug/greatroom-wall-debug.apk
 ```

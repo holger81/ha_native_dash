@@ -37,7 +37,11 @@ echo "Building APK..."
 start_emulator
 
 echo "Installing..."
-adb install -r "$ROOT/app/build/outputs/apk/debug/app-debug.apk" >/dev/null
+if [[ -f "$ROOT/app/build/outputs/apk/debug/greatroom-wall-debug.apk" ]]; then
+  adb install -r "$ROOT/app/build/outputs/apk/debug/greatroom-wall-debug.apk" >/dev/null
+else
+  adb install -r "$ROOT/app/build/outputs/apk/debug/app-debug.apk" >/dev/null
+fi
 adb shell appops set dev.holgerendt.hanative MANAGE_EXTERNAL_STORAGE allow >/dev/null 2>&1 || true
 adb shell rm -rf "/sdcard/Documents/HA Native" >/dev/null 2>&1 || true
 adb shell pm clear dev.holgerendt.hanative >/dev/null

@@ -24,6 +24,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -67,6 +68,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.holgerendt.hanative.data.Changelog
+import dev.holgerendt.hanative.data.CrashLogger
 import dev.holgerendt.hanative.data.ConnectionState
 import dev.holgerendt.hanative.data.QrCodes
 import dev.holgerendt.hanative.model.PopupNode
@@ -486,7 +488,72 @@ private fun SettingsPopup(popup: PopupNode, viewModel: HaViewModel) {
         ManagementPinCard(viewModel)
         CalendarSubscriptionsCard(viewModel)
         DebugPersonCamerasCard(viewModel)
+        CrashLogCard()
         WidgetTree(popup.cards, viewModel)
+    }
+}
+
+@Composable
+private fun CrashLogCard() {
+    val overlay = LocalOverlay.current
+    var crashText by remember { mutableStateOf(CrashLogger.latestCrash) }
+    var expanded by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .background(overlay.card)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("Diagnostics & crash log", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        val text = crashText
+        if (text.isNullOrBlank()) {
+            Text(
+                "No crash reports recorded. Uncaught errors are automatically preserved across relaunches.",
+                color = overlay.muted,
+                fontSize = 14.sp,
+            )
+        } else {
+            Text(
+                "A previous crash was captured and preserved for troubleshooting.",
+                color = Color(0xFFFF8A80),
+                fontSize = 14.sp,
+            )
+            if (expanded) {
+                SelectionContainer {
+                    Text(
+                        text = text,
+                        color = overlay.text,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFF1E1E1E))
+                            .padding(12.dp),
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = { expanded = !expanded },
+                    colors = ButtonDefaults.buttonColors(containerColor = overlay.well, contentColor = overlay.text),
+                ) {
+                    Text(if (expanded) "Hide details" else "View stack trace")
+                }
+                Button(
+                    onClick = {
+                        CrashLogger.clearCrash()
+                        crashText = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A1515), contentColor = Color(0xFFFF8A80)),
+                ) {
+                    Text("Clear report")
+                }
+            }
+        }
     }
 }
 
