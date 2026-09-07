@@ -1786,7 +1786,12 @@
           },
           {
             "type": "room_conditions",
-            "entity": "sensor.great_room_4afa_temperature"
+            "entity": "sensor.great_room_4afa_temperature",
+            "display": {
+              "kind": "temp_hum",
+              "temp_entity": "sensor.great_room_4afa_temperature",
+              "hum_entity": "sensor.great_room_4afa_humidity"
+            }
           },
           {
             "type": "tabs",
@@ -2083,7 +2088,12 @@
           },
           {
             "type": "room_conditions",
-            "entity": "sensor.hallway_temperature"
+            "entity": "sensor.hallway_temperature",
+            "display": {
+              "kind": "temp_hum",
+              "temp_entity": "sensor.hallway_temperature",
+              "climate_entity": "climate.hallway_room"
+            }
           },
           {
             "type": "vertical_stack",
@@ -2097,21 +2107,6 @@
                 "name": "Hallway Light",
                 "icon": "mdi:ceiling-light",
                 "entity": "switch.nspanelhallway_relay_1"
-              }
-            ]
-          },
-          {
-            "type": "vertical_stack",
-            "cards": [
-              {
-                "type": "section_header",
-                "name": "Climate"
-              },
-              {
-                "type": "climate",
-                "name": "Hallway",
-                "entity": "climate.hallway_room",
-                "activity_entity": "select.hallway_activity_status"
               }
             ]
           },
@@ -2245,7 +2240,12 @@
           },
           {
             "type": "room_conditions",
-            "entity": "sensor.main_bathroom_6eca_temperature"
+            "entity": "sensor.main_bathroom_6eca_temperature",
+            "display": {
+              "kind": "temp_hum",
+              "temp_entity": "sensor.main_bathroom_6eca_temperature",
+              "hum_entity": "sensor.main_bathroom_6eca_humidity"
+            }
           },
           {
             "type": "vertical_stack",
@@ -2389,7 +2389,12 @@
           },
           {
             "type": "room_conditions",
-            "entity": "sensor.jonathans_bedroom_9b3a_temperature"
+            "entity": "sensor.jonathans_bedroom_9b3a_temperature",
+            "display": {
+              "kind": "temp_hum",
+              "temp_entity": "sensor.jonathans_bedroom_9b3a_temperature",
+              "hum_entity": "sensor.jonathans_bedroom_9b3a_humidity"
+            }
           },
           {
             "type": "vertical_stack",
@@ -2399,20 +2404,14 @@
                 "name": "Light"
               },
               {
-                "type": "light_slider",
-                "name": "Ceiling Lights",
-                "icon": "mdi:light-recessed",
-                "entity": "light.jonathans_room_lights"
-              },
-              {
                 "type": "grid",
                 "columns": 2,
                 "cards": [
                   {
-                    "type": "light_toggle",
-                    "name": "Fan Light",
-                    "icon": "mdi:ceiling-fan-light",
-                    "entity": "light.ceiling_fan_light"
+                    "type": "light_slider",
+                    "name": "Ceiling Light",
+                    "icon": "mdi:light-recessed",
+                    "entity": "light.jonathans_room_lights"
                   },
                   {
                     "type": "light_toggle",
@@ -2624,7 +2623,12 @@
           },
           {
             "type": "room_conditions",
-            "entity": "sensor.office_abfd_temperature"
+            "entity": "sensor.office_abfd_temperature",
+            "display": {
+              "kind": "temp_hum",
+              "temp_entity": "sensor.office_abfd_temperature",
+              "hum_entity": "sensor.office_abfd_humidity"
+            }
           },
           {
             "type": "vertical_stack",
@@ -2857,7 +2861,6 @@
     "select.emilias_room_activity_status",
     "select.great_room_activity_status",
     "select.guestroom_activity_status",
-    "select.hallway_activity_status",
     "select.jonathans_bedroom_activity_status",
     "select.main_bathroom_activity_status",
     "select.main_bedroom_activity_status",
@@ -2910,12 +2913,20 @@
     "switch.volkswagen_id_buzz_charging",
     "vacuum.s8_maxv_ultra",
     "weather.forecast_tankerland_ct",
-    "light.ceiling_fan_light",
     "light.jonathans_patio_lightswitch",
     "media_player.office",
     "scene.all_off",
     "scene.movie_night",
     "scene.night",
+    "sensor.emilias_room_2733_humidity",
+    "sensor.great_room_4afa_humidity",
+    "sensor.guestroom_f628_humidity",
+    "sensor.jonathans_bedroom_9b3a_humidity",
+    "sensor.main_bathroom_6eca_humidity",
+    "sensor.main_bedroom_6671_humidity",
+    "sensor.office_abfd_humidity",
+    "sensor.second_bathroom_8ee5_humidity",
+    "sensor.st_00063154_temperature",
     "switch.coffeemachine",
     "switch.master_bathroom_exhaust_fan",
     "switch.master_bathroom_main_light",
@@ -2938,7 +2949,6 @@
     "mdi:car-outline",
     "mdi:cash",
     "mdi:ceiling-fan",
-    "mdi:ceiling-fan-light",
     "mdi:ceiling-light",
     "mdi:cellphone",
     "mdi:cellphone-information",

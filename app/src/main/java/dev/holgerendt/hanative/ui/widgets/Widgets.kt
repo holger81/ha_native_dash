@@ -122,6 +122,8 @@ import dev.holgerendt.hanative.ui.isVisible
 import dev.holgerendt.hanative.ui.number
 import dev.holgerendt.hanative.ui.rememberHaImageLoader
 import dev.holgerendt.hanative.ui.resolveHaImageUrl
+import dev.holgerendt.hanative.ui.roomHum
+import dev.holgerendt.hanative.ui.roomTemp
 import dev.holgerendt.hanative.ui.tempHum
 import dev.holgerendt.hanative.ui.timelineEventStyle
 import dev.holgerendt.hanative.ui.toDoubleOrNullSafe
@@ -1845,12 +1847,19 @@ fun ClimateCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
 @Composable
 fun RoomConditions(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
-    val entityId = widget.entity ?: widget.display?.tempEntity
-    val watchedEntities = remember(widget, entityId) {
-        (widget.display.entityIds() + listOfNotNull(entityId)).distinct()
+    val display = widget.display
+    val entityId = widget.entity ?: display?.tempEntity
+    val watchedEntities = remember(widget, entityId, display) {
+        val deducedHum = if (entityId?.endsWith("_temperature") == true) {
+            entityId.replace(Regex("_temperature$"), "_humidity")
+        } else null
+        (display.entityIds() + listOfNotNull(entityId, deducedHum)).filterNotNull().distinct()
     }
     val states by viewModel.entitiesFlow(watchedEntities).collectAsState()
     val entityState = entityId?.let { states[it] }
+
+    val tempVal = states.roomTemp(display, entityId)
+    val humVal = states.roomHum(display, entityId)
 
     var points by remember(entityId) { mutableStateOf(listOf<Pair<Long, Double>>()) }
 
@@ -1892,7 +1901,28 @@ fun RoomConditions(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(70.dp),
             AccentRed.copy(alpha = 0.7f),
         )
-        Text(states.tempHum(widget.display), color = overlay.text, fontSize = 48.sp, fontWeight = FontWeight.Light)
+        Row(
+            modifier = Modifier.align(Alignment.TopStart),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = if (tempVal != null) tempVal.format(1, "°") else "—",
+                color = overlay.text,
+                fontSize = 44.sp,
+                fontWeight = FontWeight.Light,
+                lineHeight = 44.sp,
+            )
+            if (humVal != null) {
+                Text(
+                    text = humVal.format(0, "%"),
+                    color = overlay.text.copy(alpha = 0.65f),
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Normal,
+                    modifier = Modifier.padding(bottom = 6.dp),
+                )
+            }
+        }
     }
 }
 

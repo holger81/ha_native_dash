@@ -28,8 +28,32 @@ fun Map<String, EntityState>.tempHum(display: DisplayNode?): String {
         ?: getState(display.tempEntity)?.state?.toDoubleOrNull()
     val hum = climate?.attrDouble("current_humidity")
         ?: getState(display.humEntity)?.state?.toDoubleOrNull()
+        ?: run {
+            val t = display.tempEntity
+            if (t?.endsWith("_temperature") == true) {
+                getState(t.replace(Regex("_temperature$"), "_humidity"))?.state?.toDoubleOrNull()
+            } else null
+        }
     if (temp == null) return "Unknown"
     return if (hum == null) temp.format(1, "°") else "${temp.format(1, "°")}  ${hum.format(0, "%")}"
+}
+
+fun Map<String, EntityState>.roomTemp(display: DisplayNode?, fallbackEntity: String? = null): Double? {
+    val climate = getState(display?.climateEntity)
+    return climate?.attrDouble("current_temperature")
+        ?: getState(display?.tempEntity ?: fallbackEntity)?.state?.toDoubleOrNull()
+}
+
+fun Map<String, EntityState>.roomHum(display: DisplayNode?, fallbackEntity: String? = null): Double? {
+    val climate = getState(display?.climateEntity)
+    return climate?.attrDouble("current_humidity")
+        ?: getState(display?.humEntity)?.state?.toDoubleOrNull()
+        ?: run {
+            val t = display?.tempEntity ?: fallbackEntity
+            if (t?.endsWith("_temperature") == true) {
+                getState(t.replace(Regex("_temperature$"), "_humidity"))?.state?.toDoubleOrNull()
+            } else null
+        }
 }
 
 fun Map<String, EntityState>.formatState(format: StateFormat?, fallback: String? = null): String {
