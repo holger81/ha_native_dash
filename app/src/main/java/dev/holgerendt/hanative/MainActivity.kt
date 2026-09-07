@@ -63,7 +63,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN || ev.actionMasked == MotionEvent.ACTION_UP) {
             viewModel.noteUserActivity()
         }
         return super.dispatchTouchEvent(ev)

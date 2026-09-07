@@ -1692,11 +1692,40 @@ fun ClimateCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
 @Composable
 fun RoomConditions(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
-    val states by viewModel.entitiesFlow(widget.display.entityIds()).collectAsState()
-    var points by remember { mutableStateOf(listOf<Pair<Long, Double>>()) }
-    LaunchedEffect(widget.entity) {
-        widget.entity?.let { points = viewModel.client.history(it, 12) }
+    val entityId = widget.entity ?: widget.display?.tempEntity
+    val watchedEntities = remember(widget, entityId) {
+        (widget.display.entityIds() + listOfNotNull(entityId)).distinct()
     }
+    val states by viewModel.entitiesFlow(watchedEntities).collectAsState()
+    val entityState = entityId?.let { states[it] }
+
+    var points by remember(entityId) { mutableStateOf(listOf<Pair<Long, Double>>()) }
+
+    suspend fun refreshHistory() {
+        if (entityId.isNullOrBlank()) return
+        val fresh = runCatching { viewModel.client.history(entityId, 12) }.getOrNull()
+        if (!fresh.isNullOrEmpty()) {
+            points = fresh
+        }
+    }
+
+    LaunchedEffect(entityId, viewModel.client.currentBaseUrl) {
+        while (true) {
+            refreshHistory()
+            delay(30_000L)
+        }
+    }
+
+    LaunchedEffect(entityState?.state, entityState?.lastChanged) {
+        if (entityState == null || entityId.isNullOrBlank()) return@LaunchedEffect
+        delay(1_000L)
+        refreshHistory()
+    }
+
+    val plottedPoints = remember(points, entityState?.state, entityState?.lastChanged) {
+        withLivePoint(points, entityState, System.currentTimeMillis())
+    }
+
     Box(
         modifier = modifier
             .height(140.dp)
@@ -1705,9 +1734,36 @@ fun RoomConditions(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
             .widgetClicks(widget, viewModel)
             .padding(20.dp),
     ) {
-        Sparkline(points, Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(70.dp), AccentRed.copy(alpha = 0.7f))
+        Sparkline(
+            plottedPoints,
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(70.dp),
+            AccentRed.copy(alpha = 0.7f),
+        )
         Text(states.tempHum(widget.display), color = overlay.text, fontSize = 48.sp, fontWeight = FontWeight.Light)
     }
+}
+
+private fun withLivePoint(
+    points: List<Pair<Long, Double>>,
+    entity: EntityState?,
+    nowMs: Long,
+): List<Pair<Long, Double>> {
+    val currentVal = entity?.state?.toDoubleOrNull() ?: return points
+    if (points.isEmpty()) {
+        val startMs = nowMs - 12L * 3600_000L
+        return listOf(startMs to currentVal, nowMs to currentVal)
+    }
+    val out = ArrayList<Pair<Long, Double>>(points.size + 2)
+    out.addAll(points)
+    val last = points.last()
+    val changeMs = entity.lastChanged?.toEpochMilli() ?: nowMs
+    if (changeMs > last.first && changeMs < nowMs) {
+        out += changeMs to currentVal
+    }
+    if (nowMs > last.first) {
+        out += nowMs to currentVal
+    }
+    return out
 }
 
 @Composable
@@ -1857,7 +1913,13 @@ fun HistoryChart(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier 
     }
     var points by remember(entity) { mutableStateOf(listOf<Pair<Long, Double>>()) }
     LaunchedEffect(entity, viewModel.client.currentBaseUrl) {
-        entity?.let { points = runCatching { viewModel.client.history(it, 24) }.getOrDefault(emptyList()) }
+        while (true) {
+            entity?.let {
+                val fresh = runCatching { viewModel.client.history(it, 24) }.getOrNull()
+                if (!fresh.isNullOrEmpty()) points = fresh
+            }
+            delay(45_000L)
+        }
     }
     Column(
         modifier = modifier
@@ -2264,19 +2326,54 @@ private fun SensorValueText(value: String, color: Color, size: androidx.compose.
 fun Sparkline(points: List<Pair<Long, Double>>, modifier: Modifier, color: Color) {
     Canvas(modifier) {
         if (points.size < 2) return@Canvas
-        val min = points.minOf { it.second }
-        val max = points.maxOf { it.second }
-        val span = (max - min).takeIf { it != 0.0 } ?: 1.0
-        val path = Path()
-        points.forEachIndexed { index, point ->
-            val x = size.width * index / (points.size - 1).toFloat()
-            val y = size.height - ((point.second - min) / span * size.height).toFloat()
-            if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        var min = points.minOf { it.second }
+        var max = points.maxOf { it.second }
+        if (min == max) {
+            min -= 1.0
+            max += 1.0
         }
-        path.lineTo(size.width, size.height)
-        path.lineTo(0f, size.height)
-        path.close()
-        drawPath(path, color.copy(alpha = 0.35f), style = Fill)
+        val pad = ((max - min) * 0.1).coerceAtLeast(0.2)
+        min -= pad
+        max += pad
+        val span = max - min
+
+        val tMin = points.minOf { it.first }
+        val tMax = points.maxOf { it.first }
+        val tSpan = (tMax - tMin).takeIf { it > 0 }
+        val pts = if (tSpan != null) points.sortedBy { it.first } else points
+
+        val linePath = Path()
+        val fillPath = Path()
+
+        pts.forEachIndexed { index, point ->
+            val x = if (tSpan != null) {
+                ((point.first - tMin).toDouble() / tSpan * size.width).toFloat().coerceIn(0f, size.width)
+            } else {
+                size.width * index / (pts.size - 1).toFloat()
+            }
+            val y = (size.height - ((point.second - min) / span * size.height).toFloat()).coerceIn(0f, size.height)
+            if (index == 0) {
+                linePath.moveTo(x, y)
+                fillPath.moveTo(x, y)
+            } else {
+                linePath.lineTo(x, y)
+                fillPath.lineTo(x, y)
+            }
+        }
+        fillPath.lineTo(size.width, size.height)
+        fillPath.lineTo(0f, size.height)
+        fillPath.close()
+
+        drawPath(fillPath, color.copy(alpha = 0.35f), style = Fill)
+        drawPath(
+            linePath,
+            color,
+            style = Stroke(
+                width = 2.5.dp.toPx(),
+                cap = StrokeCap.Round,
+                join = StrokeJoin.Round,
+            ),
+        )
     }
 }
 

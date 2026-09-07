@@ -254,6 +254,7 @@ class HaViewModel(
     private val _debugPersonCamerasEnabled = MutableStateFlow(false)
     val debugPersonCamerasEnabled: StateFlow<Boolean> = _debugPersonCamerasEnabled
     private var personCameraCooldownJob: Job? = null
+    private var roomPopupDismissJob: Job? = null
 
     private var lastActivityMs = System.currentTimeMillis()
     private var sleptAtMs = 0L
@@ -1307,6 +1308,7 @@ class HaViewModel(
             hash == "#music" -> openMusicWall()
             previous == "#music" -> closeMusicWall()
         }
+        scheduleRoomPopupDismiss()
     }
 
     fun openWeatherPopup(
@@ -1319,11 +1321,35 @@ class HaViewModel(
             drawerOpen = false,
             weatherPopupContext = WeatherPopupContext(focusDate, entityId, initialTab),
         )
+        scheduleRoomPopupDismiss()
     }
 
     fun closePopup() {
+        roomPopupDismissJob?.cancel()
+        roomPopupDismissJob = null
         closeMusicWall()
         _ui.value = _ui.value.copy(popupHash = null, weatherPopupContext = null)
+    }
+
+    fun isRoomPopup(hash: String?): Boolean {
+        if (hash.isNullOrBlank()) return false
+        val rooms = _ui.value.dashboard?.home?.rooms ?: return false
+        return rooms.any { (it.tap?.hash ?: it.hash) == hash }
+    }
+
+    private fun scheduleRoomPopupDismiss() {
+        roomPopupDismissJob?.cancel()
+        if (!isRoomPopup(_ui.value.popupHash)) {
+            roomPopupDismissJob = null
+            return
+        }
+        roomPopupDismissJob = viewModelScope.launch {
+            delay(ROOM_POPUP_TIMEOUT_MS)
+            if (isRoomPopup(_ui.value.popupHash)) {
+                closePopup()
+                closeMoreInfo()
+            }
+        }
     }
 
     fun openMoreInfo(entityId: String?) {
@@ -1405,6 +1431,7 @@ class HaViewModel(
             pendingDimJob?.cancel()
             pendingDimJob = null
         }
+        scheduleRoomPopupDismiss()
     }
 
     fun onTabletMotion(active: Boolean) {
@@ -1473,6 +1500,12 @@ class HaViewModel(
         displayWakeJob?.cancel()
         pendingDimJob?.cancel()
         pendingDimJob = null
+        roomPopupDismissJob?.cancel()
+        roomPopupDismissJob = null
+        if (isRoomPopup(_ui.value.popupHash)) {
+            closePopup()
+            closeMoreInfo()
+        }
         filteredAmbientLux = null
         autoBrightnessDesired.value = null
         autoBrightnessApplied = null
@@ -2351,6 +2384,7 @@ class HaViewModel(
     }
 
     companion object {
+        private const val ROOM_POPUP_TIMEOUT_MS = 60_000L
         private const val AUTO_BRIGHTNESS_RAMP_MS = 90L
         private const val BRIGHTNESS_DIM_CONFIRM_MS = 45_000L
         private const val BRIGHTNESS_DARK_CONFIRM_MS = 15_000L
