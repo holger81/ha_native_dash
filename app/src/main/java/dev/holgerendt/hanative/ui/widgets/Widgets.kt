@@ -266,7 +266,15 @@ fun WidgetItem(
         "week_planner" -> WeekPlanner(widget, viewModel, modifier)
         "vision_timeline" -> VisionTimeline(widget, viewModel, modifier)
         "light_slider" -> LightSlider(widget, viewModel, modifier)
-        "light_toggle", "cover_toggle", "entity_button" -> ToggleRow(widget, viewModel, modifier)
+        "fan_slider" -> LightSlider(widget, viewModel, modifier)
+        "section_header" -> SectionHeader(widget.name.orEmpty(), modifier)
+        "light_toggle", "cover_toggle", "entity_button" -> {
+            if (widget.entity.isNullOrBlank() && widget.icon.isNullOrBlank() && (widget.tap == null || widget.tap.type in setOf("none", "more_info"))) {
+                SectionHeader(widget.name.orEmpty(), modifier)
+            } else {
+                ToggleRow(widget, viewModel, modifier)
+            }
+        }
         "vent_toggle" -> VentRow(widget, viewModel, modifier, listOfNotNull(widget.entity))
         "vents_group" -> VentRow(widget, viewModel, modifier, widget.entityIds.orEmpty())
         "climate" -> ClimateCard(widget, viewModel, modifier)
@@ -1653,6 +1661,21 @@ fun VentRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier, ids:
 }
 
 @Composable
+fun SectionHeader(title: String, modifier: Modifier = Modifier) {
+    if (title.isBlank()) return
+    val overlay = LocalOverlay.current
+    Text(
+        text = title,
+        color = overlay.text,
+        fontSize = 16.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(start = 2.dp, top = 8.dp, bottom = 2.dp),
+    )
+}
+
+@Composable
 fun ClimateCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
     val states by viewModel.entitiesFlow(listOf(widget.entity, widget.activityEntity)).collectAsState()
@@ -1660,31 +1683,161 @@ fun ClimateCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
     val current = climate?.attrDouble("current_temperature")
     val target = climate?.attrDouble("temperature") ?: climate?.attrDouble("target_temp_high")
     val activity = states[widget.activityEntity]
-    val heating = activity?.state.equals("Active", ignoreCase = true) || climate?.state == "heat"
+    val isHeating = climate?.state == "heat"
+    val isCooling = climate?.state == "cool"
+    val isAuto = climate?.state in setOf("heat_cool", "auto")
+    val activityActive = activity?.state.equals("Active", ignoreCase = true)
+
+    val modes = remember(climate?.attributes) {
+        val list = climate?.attrStringList("hvac_modes")
+        if (!list.isNullOrEmpty()) list else listOf("off", "cool", "heat", "heat_cool")
+    }
+
     Column(
         modifier = modifier
             .clip(CardShape)
             .background(overlay.card)
             .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.widgetClicks(widget, viewModel),
+            modifier = Modifier.fillMaxWidth(),
         ) {
-            Text(widget.name ?: "Climate", color = overlay.text, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-            MdiIcon(if (heating) "mdi:thermometer" else "mdi:thermostat", tint = if (heating) AccentRed else overlay.text, size = 22.dp)
+            Text(
+                widget.name ?: "Climate",
+                color = overlay.text,
+                fontWeight = FontWeight.Medium,
+                fontSize = 16.sp,
+                modifier = Modifier.weight(1f),
+            )
+            if (activity != null && !widget.activityEntity.isNullOrBlank()) {
+                val actText = if (activityActive) "Active" else "Inactive"
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (activityActive) ActiveLight else overlay.well)
+                        .clickable {
+                            val next = if (activityActive) "Inactive" else "Active"
+                            viewModel.setSelectOption(widget.activityEntity, next)
+                        }
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                ) {
+                    Text(
+                        actText,
+                        color = if (activityActive) Color.Black else overlay.muted,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+            }
+            MdiIcon(
+                when {
+                    isHeating -> "mdi:fire"
+                    isCooling -> "mdi:snowflake"
+                    isAuto -> "mdi:autorenew"
+                    else -> "mdi:thermostat"
+                },
+                tint = when {
+                    isHeating -> AccentRed
+                    isCooling -> AccentBlue
+                    else -> overlay.muted
+                },
+                size = 22.dp,
+            )
         }
-        Text("${current.format(1, "°")}  →  ${target.format(1, "°")}", color = overlay.text, fontSize = 28.sp, fontWeight = FontWeight.Light)
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("–", color = overlay.text, fontSize = 28.sp, modifier = Modifier.clickable {
-                target?.let { widget.entity?.let { id -> viewModel.setTemperature(id, it - 0.5) } }
-            }.padding(8.dp))
-            Text(target.format(1, "°"), color = overlay.text, fontSize = 22.sp, fontWeight = FontWeight.Medium)
-            Text("+", color = overlay.text, fontSize = 28.sp, modifier = Modifier.clickable {
-                target?.let { widget.entity?.let { id -> viewModel.setTemperature(id, it + 0.5) } }
-            }.padding(8.dp))
-            Spacer(Modifier.weight(1f))
-            Text(climate?.state?.replaceFirstChar { it.uppercase() } ?: "—", color = overlay.muted)
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "${current.format(1, "°")}  →  ${target.format(1, "°")}",
+                color = overlay.text,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Light,
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(overlay.well)
+                        .clickable {
+                            target?.let { widget.entity?.let { id -> viewModel.setTemperature(id, it - 0.5) } }
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("–", color = overlay.text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                }
+                Text(
+                    target.format(1, "°"),
+                    color = overlay.text,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(horizontal = 2.dp),
+                )
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(overlay.well)
+                        .clickable {
+                            target?.let { widget.entity?.let { id -> viewModel.setTemperature(id, it + 0.5) } }
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("+", color = overlay.text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            modes.forEach { mode ->
+                val isSelected = climate?.state.equals(mode, ignoreCase = true)
+                val label = when (mode.lowercase()) {
+                    "heat_cool" -> "Auto"
+                    else -> mode.replaceFirstChar { it.uppercase() }
+                }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(34.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(
+                            when {
+                                isSelected && mode == "cool" -> AccentBlue.copy(alpha = 0.25f)
+                                isSelected && mode == "heat" -> AccentRed.copy(alpha = 0.25f)
+                                isSelected -> ActiveLight
+                                else -> overlay.well
+                            }
+                        )
+                        .clickable {
+                            widget.entity?.let { id -> viewModel.setHvacMode(id, mode) }
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = label,
+                        color = when {
+                            isSelected && mode == "cool" -> AccentBlue
+                            isSelected && mode == "heat" -> AccentRed
+                            isSelected -> Color.Black
+                            else -> overlay.muted
+                        },
+                        fontSize = 12.sp,
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                    )
+                }
+            }
         }
     }
 }

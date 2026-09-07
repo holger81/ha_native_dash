@@ -63,6 +63,10 @@ fun Map<String, EntityState>.isVisible(node: WidgetNode): Boolean {
 fun Map<String, EntityState>.brightnessPct(entityId: String?): Int = this[entityId]?.brightnessPct() ?: 0
 
 fun EntityState?.brightnessPct(): Int {
+    if (this?.entityId?.startsWith("fan.") == true) {
+        val pct = attrDouble("percentage") ?: 0.0
+        return pct.roundToInt().coerceIn(0, 100)
+    }
     val brightness = this?.attrDouble("brightness") ?: return 0
     return ((brightness / 255.0) * 100.0).roundToInt().coerceIn(0, 100)
 }

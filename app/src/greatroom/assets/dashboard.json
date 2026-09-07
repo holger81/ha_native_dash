@@ -752,15 +752,8 @@
                 "areas": "\"header header\"",
                 "cards": [
                   {
-                    "type": "entity_button",
-                    "entity": null,
-                    "name": "Status",
-                    "icon": null,
-                    "label": null,
-                    "tap": null,
-                    "hold": null,
-                    "show_entity_picture": null,
-                    "grid_area": "header"
+                    "type": "section_header",
+                    "name": "Status"
                   },
                   {
                     "type": "gap",
@@ -1793,16 +1786,7 @@
           },
           {
             "type": "room_conditions",
-            "entity": "sensor.great_room_4afa_temperature",
-            "display": {
-              "kind": "temp_hum",
-              "temp_entity": "sensor.great_room_4afa_temperature",
-              "hum_entity": "sensor.great_room_4afa_humidity",
-              "climate_entity": null
-            },
-            "tap": {
-              "type": "more_info"
-            }
+            "entity": "sensor.great_room_4afa_temperature"
           },
           {
             "type": "tabs",
@@ -1817,30 +1801,16 @@
                     "columns": 2,
                     "cards": [
                       {
+                        "type": "light_slider",
                         "name": "Livingspace Floorlamp",
                         "icon": "mdi:floor-lamp-torchiere",
-                        "entity": "light.livingroom_standlamp",
-                        "background": "var(--popupBG)",
-                        "type": "light_slider",
-                        "tap": {
-                          "type": "toggle"
-                        },
-                        "hold": {
-                          "type": "more_info"
-                        }
+                        "entity": "light.livingroom_standlamp"
                       },
                       {
+                        "type": "light_slider",
                         "name": "Livingspace Light",
                         "icon": "mdi:sofa",
-                        "entity": "light.living_room_lights_ceiling",
-                        "background": "var(--popupBG)",
-                        "type": "light_slider",
-                        "tap": {
-                          "type": "toggle"
-                        },
-                        "hold": {
-                          "type": "more_info"
-                        }
+                        "entity": "light.living_room_lights_ceiling"
                       }
                     ]
                   },
@@ -1849,30 +1819,16 @@
                     "columns": 2,
                     "cards": [
                       {
+                        "type": "light_slider",
                         "name": "Entertainment Light",
                         "icon": "mdi:television-ambient-light",
-                        "entity": "light.entertainment",
-                        "background": "var(--popupBG)",
-                        "type": "light_slider",
-                        "tap": {
-                          "type": "toggle"
-                        },
-                        "hold": {
-                          "type": "more_info"
-                        }
+                        "entity": "light.entertainment"
                       },
                       {
+                        "type": "light_slider",
                         "name": "Diningspace Light",
                         "icon": "mdi:table-furniture",
-                        "entity": "light.dining_room_lights_ceiling",
-                        "background": "var(--popupBG)",
-                        "type": "light_slider",
-                        "tap": {
-                          "type": "toggle"
-                        },
-                        "hold": {
-                          "type": "more_info"
-                        }
+                        "entity": "light.dining_room_lights_ceiling"
                       }
                     ]
                   },
@@ -1881,30 +1837,16 @@
                     "columns": 2,
                     "cards": [
                       {
+                        "type": "light_slider",
                         "name": "Kitchenspace Light",
                         "icon": "mdi:silverware-variant",
-                        "entity": "light.kitchen_light",
-                        "background": "var(--popupBG)",
-                        "type": "light_slider",
-                        "tap": {
-                          "type": "toggle"
-                        },
-                        "hold": {
-                          "type": "more_info"
-                        }
+                        "entity": "light.kitchen_light"
                       },
                       {
-                        "name": "Air Purifier",
-                        "icon": "mdi:air-purifier",
-                        "entity": "fan.blue_pure_fan",
-                        "background": "var(--popupBG)",
                         "type": "light_toggle",
-                        "tap": {
-                          "type": "toggle"
-                        },
-                        "hold": {
-                          "type": "more_info"
-                        }
+                        "name": "Kitchen Cabinets",
+                        "icon": "mdi:light-recessed",
+                        "entity": "light.kitchen_cabinet_lights"
                       }
                     ]
                   },
@@ -1913,131 +1855,80 @@
                     "columns": 2,
                     "cards": [
                       {
-                        "name": "Kitchen Cabinets",
-                        "icon": "mdi:light-recessed",
-                        "entity": "light.kitchen_cabinet_lights",
-                        "background": "var(--popupBG)",
-                        "type": "light_toggle",
-                        "tap": {
-                          "type": "toggle"
-                        },
-                        "hold": {
-                          "type": "more_info"
-                        }
+                        "type": "fan_slider",
+                        "name": "Air Purifier",
+                        "icon": "mdi:air-purifier",
+                        "entity": "fan.blue_pure_fan"
                       },
                       {
-                        "name": "Patio lights",
-                        "icon": "mdi:torch",
-                        "entity": "switch.foyer_main_lights",
-                        "background": "var(--popupBG)",
                         "type": "light_toggle",
-                        "tap": {
-                          "type": "toggle"
-                        },
-                        "hold": {
-                          "type": "more_info"
-                        }
+                        "name": "Coffee Machine",
+                        "icon": "mdi:coffee",
+                        "entity": "switch.coffeemachine"
                       }
                     ]
                   },
                   {
-                    "name": "Entrance Light",
-                    "icon": "mdi:light-recessed",
-                    "entity": "light.entrance_light_ceiling",
-                    "background": "var(--popupBG)",
-                    "type": "light_toggle",
-                    "tap": {
-                      "type": "toggle"
-                    },
-                    "hold": {
-                      "type": "more_info"
-                    }
+                    "type": "grid",
+                    "columns": 2,
+                    "cards": [
+                      {
+                        "type": "light_toggle",
+                        "name": "Patio lights",
+                        "icon": "mdi:torch",
+                        "entity": "switch.foyer_main_lights"
+                      },
+                      {
+                        "type": "light_toggle",
+                        "name": "Entrance Light",
+                        "icon": "mdi:light-recessed",
+                        "entity": "light.entrance_light_ceiling"
+                      }
+                    ]
                   },
                   {
                     "type": "vertical_stack",
                     "cards": [
                       {
-                        "type": "entity_button",
-                        "entity": null,
-                        "name": "Scenes",
-                        "icon": null,
-                        "label": null,
-                        "tap": null,
-                        "hold": null,
-                        "show_entity_picture": null
+                        "type": "section_header",
+                        "name": "Scenes"
                       },
                       {
                         "type": "layout_grid",
-                        "columns": "max-content max-content max-content",
-                        "rows": "min-content",
-                        "areas": "\"one two three\"\n",
+                        "columns": "1fr 1fr 1fr",
                         "cards": [
                           {
+                            "type": "action_chip",
                             "name": "Movie Night",
                             "icon": "mdi:movie-open",
-                            "entity": null,
-                            "background": null,
-                            "type": "action_chip",
-                            "style": "chips_big",
+                            "accent": "yellow",
                             "tap": {
                               "type": "call_service",
                               "service": "scene.turn_on",
-                              "entity_id": "scene.tv_mode",
-                              "data": {
-                                "transition": 2
-                              }
-                            },
-                            "hold": null,
-                            "grid_area": "one"
+                              "entity": "scene.movie_night"
+                            }
                           },
                           {
+                            "type": "action_chip",
                             "name": "All Off",
                             "icon": "mdi:power",
-                            "entity": null,
-                            "background": null,
-                            "type": "action_chip",
-                            "style": "chips_big",
+                            "accent": "yellow",
                             "tap": {
                               "type": "call_service",
-                              "service": "homeassistant.turn_off",
-                              "entity_id": [
-                                "light.livingroom_standlamp",
-                                "light.living_room_lights_ceiling",
-                                "light.entertainment",
-                                "light.dining_room_lights_ceiling",
-                                "light.kitchen_light",
-                                "light.kitchen_cabinet_lights",
-                                "light.entrance_light_ceiling",
-                                "switch.foyer_main_lights"
-                              ],
-                              "data": null
-                            },
-                            "hold": null,
-                            "grid_area": "two"
+                              "service": "scene.turn_on",
+                              "entity": "scene.all_off"
+                            }
                           },
                           {
-                            "name": "Night",
-                            "icon": "mdi:sleep",
-                            "entity": null,
-                            "background": null,
                             "type": "action_chip",
-                            "style": "chips_big",
+                            "name": "Night",
+                            "icon": "mdi:weather-night",
+                            "accent": "yellow",
                             "tap": {
                               "type": "call_service",
-                              "service": "homeassistant.turn_off",
-                              "entity_id": [
-                                "light.livingroom_standlamp",
-                                "light.living_room_lights_ceiling",
-                                "light.entertainment",
-                                "light.dining_room_lights_ceiling",
-                                "light.kitchen_light",
-                                "light.kitchen_cabinet_lights",
-                                "switch.foyer_main_lights"
-                              ],
-                              "data": null
-                            },
-                            "hold": null,
-                            "grid_area": "three"
+                              "service": "scene.turn_on",
+                              "entity": "scene.night"
+                            }
                           }
                         ]
                       }
@@ -2056,28 +1947,13 @@
                     "entity_ids": [
                       "cover.great_room_edc5_vent",
                       "cover.great_room_large_b09b_vent"
-                    ],
-                    "tap": {
-                      "type": "call_service",
-                      "service": "[[[\n  const ventStates = [\n    states['cover.great_room_edc5_vent']?.state,\n    states['cover.great_room_large_b09b_vent']?.state\n  ];\n  return ventStates.some((state) => state === 'open' || state === 'opening')\n    ? 'cover.close_cover_tilt'\n    : 'cover.open_cover_tilt';\n]]]\n",
-                      "entity_id": [
-                        "cover.great_room_edc5_vent",
-                        "cover.great_room_large_b09b_vent"
-                      ],
-                      "data": null
-                    },
-                    "hold": {
-                      "type": "none"
-                    }
+                    ]
                   },
                   {
                     "type": "climate",
-                    "entity": "climate.great_room_room",
                     "name": "Great Room",
-                    "activity_entity": "select.great_room_activity_status",
-                    "tap": {
-                      "type": "more_info"
-                    }
+                    "entity": "climate.great_room_room",
+                    "activity_entity": "select.great_room_activity_status"
                   }
                 ]
               },
@@ -2087,24 +1963,14 @@
                 "cards": [
                   {
                     "type": "media_player",
-                    "entity": "media_player.living_room",
-                    "companion_entity": "media_player.living_room_appletv",
                     "name": "TV",
-                    "icon": "mdi:television-classic",
-                    "tap": {
-                      "type": "toggle"
-                    },
-                    "hold": null
+                    "entity": "media_player.living_room",
+                    "companion_entity": "media_player.living_room_appletv"
                   },
                   {
                     "type": "generic",
-                    "card_type": "custom:firemote-card",
-                    "entity": "media_player.living_room_appletv",
-                    "name": null,
-                    "icon": null,
-                    "tap": {
-                      "type": "more_info"
-                    }
+                    "name": "Living Room AppleTV",
+                    "entity": "media_player.living_room_appletv"
                   }
                 ]
               }
@@ -2140,14 +2006,8 @@
             "type": "vertical_stack",
             "cards": [
               {
-                "type": "entity_button",
-                "entity": null,
-                "name": "Light",
-                "icon": null,
-                "label": null,
-                "tap": null,
-                "hold": null,
-                "show_entity_picture": null
+                "type": "section_header",
+                "name": "Light"
               },
               {
                 "name": "Ceiling Lights",
@@ -2181,14 +2041,8 @@
             "type": "vertical_stack",
             "cards": [
               {
-                "type": "entity_button",
-                "entity": null,
-                "name": "Climate",
-                "icon": null,
-                "label": null,
-                "tap": null,
-                "hold": null,
-                "show_entity_picture": null
+                "type": "section_header",
+                "name": "Climate"
               },
               {
                 "name": "Room Vent",
@@ -2229,38 +2083,20 @@
           },
           {
             "type": "room_conditions",
-            "entity": "sensor.hallway_temperature",
-            "display": {
-              "kind": "temp_hum",
-              "temp_entity": null,
-              "hum_entity": null,
-              "climate_entity": "climate.hallway_room"
-            },
-            "tap": {
-              "type": "more_info"
-            }
+            "entity": "sensor.hallway_temperature"
           },
           {
             "type": "vertical_stack",
             "cards": [
               {
-                "type": "entity_button",
-                "entity": null,
-                "name": "Lights",
-                "icon": null,
-                "label": null,
-                "tap": null,
-                "hold": null,
-                "show_entity_picture": null
+                "type": "section_header",
+                "name": "Light"
               },
               {
-                "type": "climate",
-                "entity": "climate.hallway_room",
-                "name": "Hallway",
-                "activity_entity": "select.hallway_activity_status",
-                "tap": {
-                  "type": "more_info"
-                }
+                "type": "light_toggle",
+                "name": "Hallway Light",
+                "icon": "mdi:ceiling-light",
+                "entity": "switch.nspanelhallway_relay_1"
               }
             ]
           },
@@ -2268,44 +2104,35 @@
             "type": "vertical_stack",
             "cards": [
               {
-                "type": "entity_button",
-                "entity": null,
-                "name": "Info",
-                "icon": null,
-                "label": null,
-                "tap": null,
-                "hold": null,
-                "show_entity_picture": null
+                "type": "section_header",
+                "name": "Climate"
               },
               {
-                "type": "grid",
-                "columns": 2,
-                "cards": [
-                  {
-                    "name": "Front Door",
-                    "icon": "mdi:fridge",
-                    "entity": "lock.front_door",
-                    "background": "var(--popupBG)",
-                    "type": "sensor_big",
-                    "label": null,
-                    "state": null,
-                    "tap": {
-                      "type": "more_info"
-                    }
-                  },
-                  {
-                    "name": "Hallway Temperature",
-                    "icon": "mdi:thermometer",
-                    "entity": "sensor.nspanelhallway_temperature",
-                    "background": "var(--popupBG)",
-                    "type": "sensor_big",
-                    "label": null,
-                    "state": null,
-                    "tap": {
-                      "type": "more_info"
-                    }
-                  }
-                ]
+                "type": "climate",
+                "name": "Hallway",
+                "entity": "climate.hallway_room",
+                "activity_entity": "select.hallway_activity_status"
+              }
+            ]
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "section_header",
+                "name": "Info"
+              },
+              {
+                "type": "sensor_big",
+                "name": "Hallway Temperature",
+                "icon": "mdi:thermometer",
+                "entity": "sensor.nspanelhallway_temperature",
+                "state": {
+                  "decimals": 1,
+                  "entity": "sensor.nspanelhallway_temperature",
+                  "kind": "number",
+                  "suffix": ""
+                }
               }
             ]
           }
@@ -2339,14 +2166,8 @@
             "type": "vertical_stack",
             "cards": [
               {
-                "type": "entity_button",
-                "entity": null,
-                "name": "Controls",
-                "icon": null,
-                "label": null,
-                "tap": null,
-                "hold": null,
-                "show_entity_picture": null
+                "type": "section_header",
+                "name": "Controls"
               },
               {
                 "name": "Ceiling Lights",
@@ -2380,14 +2201,8 @@
             "type": "vertical_stack",
             "cards": [
               {
-                "type": "entity_button",
-                "entity": null,
-                "name": "Climate",
-                "icon": null,
-                "label": null,
-                "tap": null,
-                "hold": null,
-                "show_entity_picture": null
+                "type": "section_header",
+                "name": "Climate"
               },
               {
                 "name": "Guestroom Vents",
@@ -2420,7 +2235,7 @@
       {
         "type": "popup",
         "name": "Main Bathroom",
-        "icon": "mdi:shower-head",
+        "icon": "mdi:shower",
         "hash": "#mainbath",
         "accent": "red",
         "cards": [
@@ -2430,42 +2245,26 @@
           },
           {
             "type": "room_conditions",
-            "entity": "sensor.main_bathroom_6eca_temperature",
-            "display": {
-              "kind": "temp_hum",
-              "temp_entity": "sensor.main_bathroom_6eca_temperature",
-              "hum_entity": "sensor.main_bathroom_6eca_humidity",
-              "climate_entity": null
-            },
-            "tap": {
-              "type": "more_info"
-            }
+            "entity": "sensor.main_bathroom_6eca_temperature"
           },
           {
             "type": "vertical_stack",
             "cards": [
               {
-                "type": "entity_button",
-                "entity": null,
-                "name": "Light",
-                "icon": null,
-                "label": null,
-                "tap": null,
-                "hold": null,
-                "show_entity_picture": null
+                "type": "section_header",
+                "name": "Light"
               },
               {
-                "name": "Bathroom Light",
-                "icon": "mdi:ceiling-light-multiple-outline",
-                "entity": "light.main_bathroom_light",
-                "background": "var(--popupBG)",
                 "type": "light_slider",
-                "tap": {
-                  "type": "toggle"
-                },
-                "hold": {
-                  "type": "more_info"
-                }
+                "name": "Bathroom Light",
+                "icon": "mdi:light-recessed",
+                "entity": "light.main_bathroom_light"
+              },
+              {
+                "type": "light_toggle",
+                "name": "Main Light",
+                "icon": "mdi:lightbulb-outline",
+                "entity": "switch.master_bathroom_main_light"
               }
             ]
           },
@@ -2473,36 +2272,26 @@
             "type": "vertical_stack",
             "cards": [
               {
-                "type": "entity_button",
-                "entity": null,
-                "name": "Climate",
-                "icon": null,
-                "label": null,
-                "tap": null,
-                "hold": null,
-                "show_entity_picture": null
+                "type": "section_header",
+                "name": "Climate"
               },
               {
-                "name": "Bathroom Vent",
-                "icon": null,
-                "entity": "cover.main_bathroom_72c5_vent",
-                "background": "var(--popupBG)",
+                "type": "light_toggle",
+                "name": "Exhaust Fan",
+                "icon": "mdi:fan",
+                "entity": "switch.master_bathroom_exhaust_fan"
+              },
+              {
                 "type": "vent_toggle",
-                "tap": {
-                  "type": "vent_tilt_toggle"
-                },
-                "hold": {
-                  "type": "more_info"
-                }
+                "name": "Bathroom Vent",
+                "icon": "mdi:air-filter",
+                "entity": "cover.main_bathroom_72c5_vent"
               },
               {
                 "type": "climate",
-                "entity": "climate.main_bathroom_room",
                 "name": "Main Bathroom",
-                "activity_entity": "select.main_bathroom_activity_status",
-                "tap": {
-                  "type": "more_info"
-                }
+                "entity": "climate.main_bathroom_room",
+                "activity_entity": "select.main_bathroom_activity_status"
               }
             ]
           }
@@ -2536,14 +2325,8 @@
             "type": "vertical_stack",
             "cards": [
               {
-                "type": "entity_button",
-                "entity": null,
-                "name": "Light",
-                "icon": null,
-                "label": null,
-                "tap": null,
-                "hold": null,
-                "show_entity_picture": null
+                "type": "section_header",
+                "name": "Light"
               },
               {
                 "name": "Bathroom Light",
@@ -2564,14 +2347,8 @@
             "type": "vertical_stack",
             "cards": [
               {
-                "type": "entity_button",
-                "entity": null,
-                "name": "Climate",
-                "icon": null,
-                "label": null,
-                "tap": null,
-                "hold": null,
-                "show_entity_picture": null
+                "type": "section_header",
+                "name": "Climate"
               },
               {
                 "name": "Bathroom Vent",
@@ -2602,9 +2379,9 @@
       {
         "type": "popup",
         "name": "Jonathan's Room",
-        "icon": "mdi:desk",
+        "icon": "mdi:alpha-j-circle-outline",
         "hash": "#jonathans_room",
-        "accent": "blue",
+        "accent": "orange",
         "cards": [
           {
             "type": "gap",
@@ -2612,88 +2389,36 @@
           },
           {
             "type": "room_conditions",
-            "entity": "sensor.jonathans_bedroom_9b3a_temperature",
-            "display": {
-              "kind": "temp_hum",
-              "temp_entity": "sensor.jonathans_bedroom_9b3a_temperature",
-              "hum_entity": "sensor.jonathans_bedroom_9b3a_humidity",
-              "climate_entity": null
-            },
-            "tap": {
-              "type": "more_info"
-            }
+            "entity": "sensor.jonathans_bedroom_9b3a_temperature"
           },
           {
             "type": "vertical_stack",
             "cards": [
               {
-                "type": "entity_button",
-                "entity": null,
-                "name": "Light",
-                "icon": null,
-                "label": null,
-                "tap": null,
-                "hold": null,
-                "show_entity_picture": null
+                "type": "section_header",
+                "name": "Light"
               },
               {
+                "type": "light_slider",
                 "name": "Ceiling Lights",
                 "icon": "mdi:light-recessed",
-                "entity": "light.jonathans_room_lights",
-                "background": "var(--popupBG)",
-                "type": "light_slider",
-                "tap": {
-                  "type": "toggle"
-                },
-                "hold": {
-                  "type": "more_info"
-                }
-              }
-            ]
-          },
-          {
-            "type": "vertical_stack",
-            "cards": [
-              {
-                "type": "entity_button",
-                "entity": null,
-                "name": "Controls",
-                "icon": null,
-                "label": null,
-                "tap": null,
-                "hold": null,
-                "show_entity_picture": null
+                "entity": "light.jonathans_room_lights"
               },
               {
                 "type": "grid",
                 "columns": 2,
                 "cards": [
                   {
-                    "name": "Ceiling Fan",
-                    "icon": "mdi:fan",
-                    "entity": "fan.ceiling_fan",
-                    "background": "var(--popupBG)",
                     "type": "light_toggle",
-                    "tap": {
-                      "type": "toggle"
-                    },
-                    "hold": {
-                      "type": "more_info"
-                    }
+                    "name": "Fan Light",
+                    "icon": "mdi:ceiling-fan-light",
+                    "entity": "light.ceiling_fan_light"
                   },
                   {
-                    "type": "entity_button",
-                    "entity": "cover.jonathan",
-                    "name": "Patio Door",
-                    "icon": "mdi:door-sliding",
-                    "label": null,
-                    "tap": {
-                      "type": "toggle"
-                    },
-                    "hold": {
-                      "type": "more_info"
-                    },
-                    "show_entity_picture": null
+                    "type": "light_toggle",
+                    "name": "Patio Light",
+                    "icon": "mdi:light-recessed",
+                    "entity": "light.jonathans_patio_lightswitch"
                   }
                 ]
               }
@@ -2703,36 +2428,47 @@
             "type": "vertical_stack",
             "cards": [
               {
-                "type": "entity_button",
-                "entity": null,
-                "name": "Climate",
-                "icon": null,
-                "label": null,
-                "tap": null,
-                "hold": null,
-                "show_entity_picture": null
+                "type": "section_header",
+                "name": "Controls"
               },
               {
-                "name": "Room Vent",
-                "icon": null,
-                "entity": "cover.jonathans_bedroom_f623_vent",
-                "background": "var(--popupBG)",
+                "type": "grid",
+                "columns": 2,
+                "cards": [
+                  {
+                    "type": "fan_slider",
+                    "name": "Ceiling Fan",
+                    "icon": "mdi:ceiling-fan",
+                    "entity": "fan.ceiling_fan"
+                  },
+                  {
+                    "type": "cover_toggle",
+                    "name": "Patio Door",
+                    "icon": "mdi:door-sliding",
+                    "entity": "cover.jonathan"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "section_header",
+                "name": "Climate"
+              },
+              {
                 "type": "vent_toggle",
-                "tap": {
-                  "type": "vent_tilt_toggle"
-                },
-                "hold": {
-                  "type": "more_info"
-                }
+                "name": "Room Vent",
+                "icon": "mdi:air-filter",
+                "entity": "cover.jonathans_bedroom_f623_vent"
               },
               {
                 "type": "climate",
-                "entity": "climate.jonathans_bedroom_room",
                 "name": "Jonathan's Room",
-                "activity_entity": "select.jonathans_bedroom_activity_status",
-                "tap": {
-                  "type": "more_info"
-                }
+                "entity": "climate.jonathans_bedroom_room",
+                "activity_entity": "select.jonathans_bedroom_activity_status"
               }
             ]
           }
@@ -2766,14 +2502,8 @@
             "type": "vertical_stack",
             "cards": [
               {
-                "type": "entity_button",
-                "entity": null,
-                "name": "Light",
-                "icon": null,
-                "label": null,
-                "tap": null,
-                "hold": null,
-                "show_entity_picture": null
+                "type": "section_header",
+                "name": "Light"
               },
               {
                 "name": "Ceiling Lights",
@@ -2807,14 +2537,8 @@
             "type": "vertical_stack",
             "cards": [
               {
-                "type": "entity_button",
-                "entity": null,
-                "name": "Climate",
-                "icon": null,
-                "label": null,
-                "tap": null,
-                "hold": null,
-                "show_entity_picture": null
+                "type": "section_header",
+                "name": "Climate"
               },
               {
                 "name": "Room Vent",
@@ -2854,18 +2578,8 @@
             "height": 12
           },
           {
-            "type": "entity_button",
-            "entity": null,
-            "name": null,
-            "icon": null,
-            "label": null,
-            "tap": {
-              "type": "none"
-            },
-            "hold": {
-              "type": "none"
-            },
-            "show_entity_picture": null
+            "type": "section_header",
+            "name": null
           },
           {
             "type": "layout_grid",
@@ -2900,9 +2614,9 @@
       {
         "type": "popup",
         "name": "Office",
-        "icon": "mdi:alpha-j-circle-outline",
+        "icon": "mdi:desk",
         "hash": "#office",
-        "accent": "blue",
+        "accent": "yellow",
         "cards": [
           {
             "type": "gap",
@@ -2910,42 +2624,20 @@
           },
           {
             "type": "room_conditions",
-            "entity": "sensor.office_abfd_temperature",
-            "display": {
-              "kind": "temp_hum",
-              "temp_entity": "sensor.office_abfd_temperature",
-              "hum_entity": "sensor.office_abfd_humidity",
-              "climate_entity": null
-            },
-            "tap": {
-              "type": "more_info"
-            }
+            "entity": "sensor.office_abfd_temperature"
           },
           {
             "type": "vertical_stack",
             "cards": [
               {
-                "type": "entity_button",
-                "entity": null,
-                "name": "Light",
-                "icon": null,
-                "label": null,
-                "tap": null,
-                "hold": null,
-                "show_entity_picture": null
+                "type": "section_header",
+                "name": "Light"
               },
               {
+                "type": "light_slider",
                 "name": "Ceiling Lights",
                 "icon": "mdi:light-recessed",
-                "entity": "light.office_lights",
-                "background": "var(--popupBG)",
-                "type": "light_slider",
-                "tap": {
-                  "type": "toggle"
-                },
-                "hold": {
-                  "type": "more_info"
-                }
+                "entity": "light.office_lights"
               }
             ]
           },
@@ -2953,36 +2645,35 @@
             "type": "vertical_stack",
             "cards": [
               {
-                "type": "entity_button",
-                "entity": null,
-                "name": "Climate",
-                "icon": null,
-                "label": null,
-                "tap": null,
-                "hold": null,
-                "show_entity_picture": null
+                "type": "section_header",
+                "name": "Media"
               },
               {
-                "name": "Office Vent",
-                "icon": null,
-                "entity": "cover.office_7d51_vent",
-                "background": "var(--popupBG)",
+                "type": "media_player",
+                "name": "Office Speaker",
+                "icon": "mdi:speaker",
+                "entity": "media_player.office"
+              }
+            ]
+          },
+          {
+            "type": "vertical_stack",
+            "cards": [
+              {
+                "type": "section_header",
+                "name": "Climate"
+              },
+              {
                 "type": "vent_toggle",
-                "tap": {
-                  "type": "vent_tilt_toggle"
-                },
-                "hold": {
-                  "type": "more_info"
-                }
+                "name": "Office Vent",
+                "icon": "mdi:air-filter",
+                "entity": "cover.office_7d51_vent"
               },
               {
                 "type": "climate",
-                "entity": "climate.office_room",
                 "name": "Office",
-                "activity_entity": "select.office_activity_status",
-                "tap": {
-                  "type": "more_info"
-                }
+                "entity": "climate.office_room",
+                "activity_entity": "select.office_activity_status"
               }
             ]
           }
@@ -3162,7 +2853,6 @@
     "number.model_3_charge_limit",
     "person.bettina",
     "person.holger",
-    "scene.tv_mode",
     "script.clean_house",
     "select.emilias_room_activity_status",
     "select.great_room_activity_status",
@@ -3219,7 +2909,17 @@
     "switch.model_3_defrost",
     "switch.volkswagen_id_buzz_charging",
     "vacuum.s8_maxv_ultra",
-    "weather.forecast_tankerland_ct"
+    "weather.forecast_tankerland_ct",
+    "light.ceiling_fan_light",
+    "light.jonathans_patio_lightswitch",
+    "media_player.office",
+    "scene.all_off",
+    "scene.movie_night",
+    "scene.night",
+    "switch.coffeemachine",
+    "switch.master_bathroom_exhaust_fan",
+    "switch.master_bathroom_main_light",
+    "switch.nspanelhallway_relay_1"
   ],
   "icons": [
     "mdi:air-filter",
@@ -3237,10 +2937,12 @@
     "mdi:car-electric-outline",
     "mdi:car-outline",
     "mdi:cash",
+    "mdi:ceiling-fan",
+    "mdi:ceiling-fan-light",
     "mdi:ceiling-light",
-    "mdi:ceiling-light-multiple-outline",
     "mdi:cellphone",
     "mdi:cellphone-information",
+    "mdi:coffee",
     "mdi:cog",
     "mdi:desk",
     "mdi:dishwasher",
@@ -3250,12 +2952,12 @@
     "mdi:fan",
     "mdi:floor-lamp-torchiere",
     "mdi:flower-outline",
-    "mdi:fridge",
     "mdi:home-battery-outline",
     "mdi:home-lightning-bolt",
     "mdi:lamp",
     "mdi:laptop-account",
     "mdi:light-recessed",
+    "mdi:lightbulb-outline",
     "mdi:lightning-bolt",
     "mdi:menu",
     "mdi:metronome-tick",
@@ -3268,14 +2970,15 @@
     "mdi:receipt-text",
     "mdi:seat-outline",
     "mdi:shoe-print",
+    "mdi:shower",
     "mdi:shower-head",
     "mdi:silverware-fork-knife",
     "mdi:silverware-variant",
-    "mdi:sleep",
     "mdi:sofa",
     "mdi:sofa-outline",
     "mdi:solar-power-variant",
     "mdi:solar-power-variant-outline",
+    "mdi:speaker",
     "mdi:table-furniture",
     "mdi:television-ambient-light",
     "mdi:television-classic",
@@ -3290,6 +2993,7 @@
     "mdi:van-passenger",
     "mdi:video",
     "mdi:washing-machine",
+    "mdi:weather-night",
     "mdi:weather-partly-snowy-rainy",
     "mdi:window-closed-variant"
   ]

@@ -69,6 +69,11 @@ data class EntityState(
         return primitive.doubleOrNull ?: primitive.contentOrNull?.toDoubleOrNull()
     }
 
+    fun attrStringList(name: String): List<String> {
+        val arr = attributes[name] as? JsonArray ?: return emptyList()
+        return arr.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+    }
+
     val friendlyName: String
         get() = attrString("friendly_name") ?: entityId.substringAfter('.')
 
@@ -988,14 +993,28 @@ class HaClient {
     }
 
     suspend fun setLightBrightness(entityId: String, pct: Int) {
-        if (pct <= 0) {
+        val clamped = pct.coerceIn(0, 100)
+        if (entityId.startsWith("fan.")) {
+            if (clamped <= 0) {
+                callService("fan", "turn_off", listOf(entityId))
+            } else {
+                callService(
+                    "fan",
+                    "set_percentage",
+                    listOf(entityId),
+                    mapOf("percentage" to JsonPrimitive(clamped)),
+                )
+            }
+            return
+        }
+        if (clamped <= 0) {
             callService("light", "turn_off", listOf(entityId))
         } else {
             callService(
                 "light",
                 "turn_on",
                 listOf(entityId),
-                mapOf("brightness_pct" to JsonPrimitive(pct)),
+                mapOf("brightness_pct" to JsonPrimitive(clamped)),
             )
         }
     }
@@ -1006,6 +1025,24 @@ class HaClient {
             "set_temperature",
             listOf(entityId),
             mapOf("temperature" to JsonPrimitive(temperature)),
+        )
+    }
+
+    suspend fun setHvacMode(entityId: String, mode: String) {
+        callService(
+            "climate",
+            "set_hvac_mode",
+            listOf(entityId),
+            mapOf("hvac_mode" to JsonPrimitive(mode)),
+        )
+    }
+
+    suspend fun setSelectOption(entityId: String, option: String) {
+        callService(
+            "select",
+            "select_option",
+            listOf(entityId),
+            mapOf("option" to JsonPrimitive(option)),
         )
     }
 

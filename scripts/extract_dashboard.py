@@ -751,6 +751,14 @@ def convert_button_card(card: dict) -> dict:
             "hold": convert_action(card.get("hold_action")),
         }
 
+    tap_action = card.get("tap_action")
+    tap_type = tap_action.get("action") if isinstance(tap_action, dict) else None
+    if not entity and not icon and (tap_type in (None, "none") or tap_action is None):
+        return {
+            "type": "section_header",
+            "name": name if isinstance(name, str) and "[[[" not in name else None,
+        }
+
     widget = {
         "type": "entity_button",
         "entity": entity,
@@ -989,12 +997,13 @@ def merge_overrides(home: dict, overrides: dict) -> None:
         order = {name: i for i, name in enumerate(room_order)}
         home["rooms"].sort(key=lambda r: order.get(r.get("name"), 999))
 
-    # Add extra popups
+    # Add extra popups or override existing popups in-place
     for popup in overrides.get("popups", []):
-        existing = [p for p in home["popups"] if p.get("hash") == popup.get("hash")]
-        if existing:
-            home["popups"].remove(existing[0])
         insert_after = popup.pop("insert_after_hash", None)
+        existing_idx = next((i for i, p in enumerate(home["popups"]) if p.get("hash") == popup.get("hash")), None)
+        if existing_idx is not None:
+            home["popups"][existing_idx] = popup
+            continue
         if insert_after:
             idx = next((i for i, p in enumerate(home["popups"]) if p.get("hash") == insert_after), None)
             if idx is not None:

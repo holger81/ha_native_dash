@@ -28,6 +28,510 @@
         }
       ],
       "insert_after_hash": "#settings"
+    },
+    {
+      "type": "popup",
+      "name": "Great Room",
+      "icon": "mdi:seat-outline",
+      "hash": "#great_room",
+      "accent": "green",
+      "cards": [
+        {
+          "type": "gap",
+          "height": 12
+        },
+        {
+          "type": "room_conditions",
+          "entity": "sensor.great_room_4afa_temperature"
+        },
+        {
+          "type": "tabs",
+          "default_tab": 1,
+          "tabs": [
+            {
+              "title": "Light",
+              "icon": "mdi:lamp",
+              "cards": [
+                {
+                  "type": "grid",
+                  "columns": 2,
+                  "cards": [
+                    {
+                      "type": "light_slider",
+                      "name": "Livingspace Floorlamp",
+                      "icon": "mdi:floor-lamp-torchiere",
+                      "entity": "light.livingroom_standlamp"
+                    },
+                    {
+                      "type": "light_slider",
+                      "name": "Livingspace Light",
+                      "icon": "mdi:sofa",
+                      "entity": "light.living_room_lights_ceiling"
+                    }
+                  ]
+                },
+                {
+                  "type": "grid",
+                  "columns": 2,
+                  "cards": [
+                    {
+                      "type": "light_slider",
+                      "name": "Entertainment Light",
+                      "icon": "mdi:television-ambient-light",
+                      "entity": "light.entertainment"
+                    },
+                    {
+                      "type": "light_slider",
+                      "name": "Diningspace Light",
+                      "icon": "mdi:table-furniture",
+                      "entity": "light.dining_room_lights_ceiling"
+                    }
+                  ]
+                },
+                {
+                  "type": "grid",
+                  "columns": 2,
+                  "cards": [
+                    {
+                      "type": "light_slider",
+                      "name": "Kitchenspace Light",
+                      "icon": "mdi:silverware-variant",
+                      "entity": "light.kitchen_light"
+                    },
+                    {
+                      "type": "light_toggle",
+                      "name": "Kitchen Cabinets",
+                      "icon": "mdi:light-recessed",
+                      "entity": "light.kitchen_cabinet_lights"
+                    }
+                  ]
+                },
+                {
+                  "type": "grid",
+                  "columns": 2,
+                  "cards": [
+                    {
+                      "type": "fan_slider",
+                      "name": "Air Purifier",
+                      "icon": "mdi:air-purifier",
+                      "entity": "fan.blue_pure_fan"
+                    },
+                    {
+                      "type": "light_toggle",
+                      "name": "Coffee Machine",
+                      "icon": "mdi:coffee",
+                      "entity": "switch.coffeemachine"
+                    }
+                  ]
+                },
+                {
+                  "type": "grid",
+                  "columns": 2,
+                  "cards": [
+                    {
+                      "type": "light_toggle",
+                      "name": "Patio lights",
+                      "icon": "mdi:torch",
+                      "entity": "switch.foyer_main_lights"
+                    },
+                    {
+                      "type": "light_toggle",
+                      "name": "Entrance Light",
+                      "icon": "mdi:light-recessed",
+                      "entity": "light.entrance_light_ceiling"
+                    }
+                  ]
+                },
+                {
+                  "type": "vertical_stack",
+                  "cards": [
+                    {
+                      "type": "section_header",
+                      "name": "Scenes"
+                    },
+                    {
+                      "type": "layout_grid",
+                      "columns": "1fr 1fr 1fr",
+                      "cards": [
+                        {
+                          "type": "action_chip",
+                          "name": "Movie Night",
+                          "icon": "mdi:movie-open",
+                          "accent": "yellow",
+                          "tap": {
+                            "type": "call_service",
+                            "service": "scene.turn_on",
+                            "entity": "scene.movie_night"
+                          }
+                        },
+                        {
+                          "type": "action_chip",
+                          "name": "All Off",
+                          "icon": "mdi:power",
+                          "accent": "yellow",
+                          "tap": {
+                            "type": "call_service",
+                            "service": "scene.turn_on",
+                            "entity": "scene.all_off"
+                          }
+                        },
+                        {
+                          "type": "action_chip",
+                          "name": "Night",
+                          "icon": "mdi:weather-night",
+                          "accent": "yellow",
+                          "tap": {
+                            "type": "call_service",
+                            "service": "scene.turn_on",
+                            "entity": "scene.night"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "Climate",
+              "icon": "mdi:thermostat",
+              "cards": [
+                {
+                  "type": "vents_group",
+                  "name": "Great Room Vents",
+                  "icon": "mdi:air-filter",
+                  "entity_ids": [
+                    "cover.great_room_edc5_vent",
+                    "cover.great_room_large_b09b_vent"
+                  ]
+                },
+                {
+                  "type": "climate",
+                  "name": "Great Room",
+                  "entity": "climate.great_room_room",
+                  "activity_entity": "select.great_room_activity_status"
+                }
+              ]
+            },
+            {
+              "title": "Media",
+              "icon": "mdi:television-classic",
+              "cards": [
+                {
+                  "type": "media_player",
+                  "name": "TV",
+                  "entity": "media_player.living_room",
+                  "companion_entity": "media_player.living_room_appletv"
+                },
+                {
+                  "type": "generic",
+                  "name": "Living Room AppleTV",
+                  "entity": "media_player.living_room_appletv"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "popup",
+      "name": "Main Bathroom",
+      "icon": "mdi:shower",
+      "hash": "#mainbath",
+      "accent": "red",
+      "cards": [
+        {
+          "type": "gap",
+          "height": 12
+        },
+        {
+          "type": "room_conditions",
+          "entity": "sensor.main_bathroom_6eca_temperature"
+        },
+        {
+          "type": "vertical_stack",
+          "cards": [
+            {
+              "type": "section_header",
+              "name": "Light"
+            },
+            {
+              "type": "light_slider",
+              "name": "Bathroom Light",
+              "icon": "mdi:light-recessed",
+              "entity": "light.main_bathroom_light"
+            },
+            {
+              "type": "light_toggle",
+              "name": "Main Light",
+              "icon": "mdi:lightbulb-outline",
+              "entity": "switch.master_bathroom_main_light"
+            }
+          ]
+        },
+        {
+          "type": "vertical_stack",
+          "cards": [
+            {
+              "type": "section_header",
+              "name": "Climate"
+            },
+            {
+              "type": "light_toggle",
+              "name": "Exhaust Fan",
+              "icon": "mdi:fan",
+              "entity": "switch.master_bathroom_exhaust_fan"
+            },
+            {
+              "type": "vent_toggle",
+              "name": "Bathroom Vent",
+              "icon": "mdi:air-filter",
+              "entity": "cover.main_bathroom_72c5_vent"
+            },
+            {
+              "type": "climate",
+              "name": "Main Bathroom",
+              "entity": "climate.main_bathroom_room",
+              "activity_entity": "select.main_bathroom_activity_status"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "popup",
+      "name": "Jonathan's Room",
+      "icon": "mdi:alpha-j-circle-outline",
+      "hash": "#jonathans_room",
+      "accent": "orange",
+      "cards": [
+        {
+          "type": "gap",
+          "height": 12
+        },
+        {
+          "type": "room_conditions",
+          "entity": "sensor.jonathans_bedroom_9b3a_temperature"
+        },
+        {
+          "type": "vertical_stack",
+          "cards": [
+            {
+              "type": "section_header",
+              "name": "Light"
+            },
+            {
+              "type": "light_slider",
+              "name": "Ceiling Lights",
+              "icon": "mdi:light-recessed",
+              "entity": "light.jonathans_room_lights"
+            },
+            {
+              "type": "grid",
+              "columns": 2,
+              "cards": [
+                {
+                  "type": "light_toggle",
+                  "name": "Fan Light",
+                  "icon": "mdi:ceiling-fan-light",
+                  "entity": "light.ceiling_fan_light"
+                },
+                {
+                  "type": "light_toggle",
+                  "name": "Patio Light",
+                  "icon": "mdi:light-recessed",
+                  "entity": "light.jonathans_patio_lightswitch"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "vertical_stack",
+          "cards": [
+            {
+              "type": "section_header",
+              "name": "Controls"
+            },
+            {
+              "type": "grid",
+              "columns": 2,
+              "cards": [
+                {
+                  "type": "fan_slider",
+                  "name": "Ceiling Fan",
+                  "icon": "mdi:ceiling-fan",
+                  "entity": "fan.ceiling_fan"
+                },
+                {
+                  "type": "cover_toggle",
+                  "name": "Patio Door",
+                  "icon": "mdi:door-sliding",
+                  "entity": "cover.jonathan"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "vertical_stack",
+          "cards": [
+            {
+              "type": "section_header",
+              "name": "Climate"
+            },
+            {
+              "type": "vent_toggle",
+              "name": "Room Vent",
+              "icon": "mdi:air-filter",
+              "entity": "cover.jonathans_bedroom_f623_vent"
+            },
+            {
+              "type": "climate",
+              "name": "Jonathan's Room",
+              "entity": "climate.jonathans_bedroom_room",
+              "activity_entity": "select.jonathans_bedroom_activity_status"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "popup",
+      "name": "Office",
+      "icon": "mdi:desk",
+      "hash": "#office",
+      "accent": "yellow",
+      "cards": [
+        {
+          "type": "gap",
+          "height": 12
+        },
+        {
+          "type": "room_conditions",
+          "entity": "sensor.office_abfd_temperature"
+        },
+        {
+          "type": "vertical_stack",
+          "cards": [
+            {
+              "type": "section_header",
+              "name": "Light"
+            },
+            {
+              "type": "light_slider",
+              "name": "Ceiling Lights",
+              "icon": "mdi:light-recessed",
+              "entity": "light.office_lights"
+            }
+          ]
+        },
+        {
+          "type": "vertical_stack",
+          "cards": [
+            {
+              "type": "section_header",
+              "name": "Media"
+            },
+            {
+              "type": "media_player",
+              "name": "Office Speaker",
+              "icon": "mdi:speaker",
+              "entity": "media_player.office"
+            }
+          ]
+        },
+        {
+          "type": "vertical_stack",
+          "cards": [
+            {
+              "type": "section_header",
+              "name": "Climate"
+            },
+            {
+              "type": "vent_toggle",
+              "name": "Office Vent",
+              "icon": "mdi:air-filter",
+              "entity": "cover.office_7d51_vent"
+            },
+            {
+              "type": "climate",
+              "name": "Office",
+              "entity": "climate.office_room",
+              "activity_entity": "select.office_activity_status"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "popup",
+      "name": "Hallway",
+      "icon": "mdi:door",
+      "hash": "#hallway",
+      "accent": "yellow",
+      "cards": [
+        {
+          "type": "gap",
+          "height": 12
+        },
+        {
+          "type": "room_conditions",
+          "entity": "sensor.hallway_temperature"
+        },
+        {
+          "type": "vertical_stack",
+          "cards": [
+            {
+              "type": "section_header",
+              "name": "Light"
+            },
+            {
+              "type": "light_toggle",
+              "name": "Hallway Light",
+              "icon": "mdi:ceiling-light",
+              "entity": "switch.nspanelhallway_relay_1"
+            }
+          ]
+        },
+        {
+          "type": "vertical_stack",
+          "cards": [
+            {
+              "type": "section_header",
+              "name": "Climate"
+            },
+            {
+              "type": "climate",
+              "name": "Hallway",
+              "entity": "climate.hallway_room",
+              "activity_entity": "select.hallway_activity_status"
+            }
+          ]
+        },
+        {
+          "type": "vertical_stack",
+          "cards": [
+            {
+              "type": "section_header",
+              "name": "Info"
+            },
+            {
+              "type": "sensor_big",
+              "name": "Hallway Temperature",
+              "icon": "mdi:thermometer",
+              "entity": "sensor.nspanelhallway_temperature",
+              "state": {
+                "decimals": 1,
+                "entity": "sensor.nspanelhallway_temperature",
+                "kind": "number",
+                "suffix": ""
+              }
+            }
+          ]
+        }
+      ]
     }
   ],
   "chip_overrides": [
@@ -77,12 +581,19 @@
     "input_number.secondary_living_room_mmwave_target_4_y",
     "input_number.secondary_living_room_mmwave_target_4_z",
     "input_number.secondary_living_room_mmwave_target_count",
+    "light.ceiling_fan_light",
+    "light.jonathans_patio_lightswitch",
+    "media_player.office",
     "number.secondary_living_room_switch_mmwave_depth_maximum_far",
     "number.secondary_living_room_switch_mmwave_depth_minimum_near",
     "number.secondary_living_room_switch_mmwave_width_maximum_right",
     "number.secondary_living_room_switch_mmwave_width_minimum_left",
     "sensor.envoy_202234122877_available_battery_energy",
-    "sensor.envoy_202234122877_reserve_battery_energy"
+    "sensor.envoy_202234122877_reserve_battery_energy",
+    "switch.coffeemachine",
+    "switch.master_bathroom_exhaust_fan",
+    "switch.master_bathroom_main_light",
+    "switch.nspanelhallway_relay_1"
   ],
   "entity_order": [
     "binary_sensor.envoy_battery_discharging",

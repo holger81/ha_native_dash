@@ -2358,6 +2358,19 @@ class HaViewModel(
     fun setBrightness(entityId: String, pct: Int) {
         viewModelScope.launch {
             val clamped = pct.coerceIn(0, 100)
+            if (entityId.startsWith("fan.")) {
+                if (clamped <= 0) {
+                    client.applyOptimisticState(entityId, "off")
+                } else {
+                    client.applyOptimisticState(
+                        entityId,
+                        "on",
+                        mapOf("percentage" to JsonPrimitive(clamped)),
+                    )
+                }
+                client.setLightBrightness(entityId, clamped)
+                return@launch
+            }
             if (clamped <= 0) {
                 client.applyOptimisticState(entityId, "off")
             } else {
@@ -2374,6 +2387,20 @@ class HaViewModel(
 
     fun setTemperature(entityId: String, temperature: Double) {
         viewModelScope.launch { client.setTemperature(entityId, temperature) }
+    }
+
+    fun setHvacMode(entityId: String, mode: String) {
+        viewModelScope.launch {
+            client.applyOptimisticState(entityId, mode)
+            client.setHvacMode(entityId, mode)
+        }
+    }
+
+    fun setSelectOption(entityId: String, option: String) {
+        viewModelScope.launch {
+            client.applyOptimisticState(entityId, option)
+            client.setSelectOption(entityId, option)
+        }
     }
 
     fun tiltGroup(entityIds: List<String>) {
