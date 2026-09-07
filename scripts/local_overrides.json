@@ -10,6 +10,17 @@
     "Hallway",
     "Office"
   ],
+  "room_overrides": [
+    {
+      "path": "#hallway",
+      "display": {
+        "kind": "temp_hum",
+        "temp_entity": "sensor.nspanelhallway_temperature",
+        "hum_entity": null,
+        "climate_entity": null
+      }
+    }
+  ],
   "popups": [
     {
       "type": "popup",
@@ -492,11 +503,10 @@
         },
         {
           "type": "room_conditions",
-          "entity": "sensor.hallway_temperature",
+          "entity": "sensor.nspanelhallway_temperature",
           "display": {
             "kind": "temp_hum",
-            "temp_entity": "sensor.hallway_temperature",
-            "climate_entity": "climate.hallway_room"
+            "temp_entity": "sensor.nspanelhallway_temperature"
           }
         },
         {
@@ -530,7 +540,7 @@
                 "decimals": 1,
                 "entity": "sensor.nspanelhallway_temperature",
                 "kind": "number",
-                "suffix": ""
+                "suffix": "°"
               }
             }
           ]
@@ -798,6 +808,61 @@
     ]
   },
   "popup_tab_inserts": [
+    {
+      "popup_hash": "#power",
+      "tab_title": "Live Draw",
+      "insert_before_tab": "Solarcells",
+      "tab": {
+        "title": "Live Draw",
+        "icon": "mdi:lightning-bolt",
+        "cards": [
+          {
+            "type": "auto_entities",
+            "name": "Live Power Draw (Top Consumers)",
+            "filter": {
+              "include": [
+                {
+                  "attributes": {
+                    "device_class": "power"
+                  },
+                  "options": {
+                    "secondary_info": "last-changed"
+                  }
+                }
+              ],
+              "exclude": [
+                {
+                  "state": "<= 1"
+                },
+                {
+                  "state": "unavailable"
+                },
+                {
+                  "state": "unknown"
+                },
+                {
+                  "entity_id": "sensor.housepanel_total_consumption_*"
+                },
+                {
+                  "entity_id": "sensor.envoy_*"
+                },
+                {
+                  "entity_id": "sensor.energy_grid_*"
+                },
+                {
+                  "entity_id": "sensor.inverter_*"
+                }
+              ]
+            },
+            "sort": {
+              "method": "state",
+              "numeric": true,
+              "reverse": true
+            }
+          }
+        ]
+      }
+    },
     {
       "popup_hash": "#power",
       "tab_title": "Battery",

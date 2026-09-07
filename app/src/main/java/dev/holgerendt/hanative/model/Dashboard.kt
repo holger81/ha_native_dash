@@ -127,6 +127,9 @@ data class WidgetNode(
     @SerialName("show_low_temperature") val showLowTemperature: Boolean? = null,
     @SerialName("door_locks") val doorLocks: List<String>? = null,
     @SerialName("window_covers") val windowCovers: List<String>? = null,
+    val title: String? = null,
+    val filter: JsonElement? = null,
+    val sort: JsonElement? = null,
 ) {
     fun columnCount(): Int =
         (columns as? JsonPrimitive)?.intOrNull?.takeIf { it > 0 } ?: 2

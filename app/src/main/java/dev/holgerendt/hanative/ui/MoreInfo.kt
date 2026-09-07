@@ -642,19 +642,6 @@ private fun rememberNowTick(periodMs: Long = 1_000L): Instant {
     return now
 }
 
-private fun Instant.relativeToNow(now: Instant = Instant.now()): String {
-    val seconds = Duration.between(this, now).seconds.coerceAtLeast(0)
-    return when {
-        seconds < 60 -> if (seconds <= 1) "1 second ago" else "$seconds seconds ago"
-        seconds < 90 -> "1 minute ago"
-        seconds < 3600 -> "${seconds / 60} minutes ago"
-        seconds < 5400 -> "1 hour ago"
-        seconds < 86400 -> "${seconds / 3600} hours ago"
-        seconds < 172800 -> "1 day ago"
-        else -> "${seconds / 86400} days ago"
-    }
-}
-
 private fun withLiveSample(buckets: List<HistoryBucket>, entity: EntityState?, nowMs: Long): List<HistoryBucket> {
     val value = liveHistoryValue(entity) ?: return buckets
     if (buckets.isEmpty()) return buckets

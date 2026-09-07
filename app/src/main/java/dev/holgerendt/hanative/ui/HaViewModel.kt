@@ -184,7 +184,7 @@ class HaViewModel(
             client.states
                 .map { it[entityId] }
                 .distinctUntilChanged()
-                .stateIn(viewModelScope, SharingStarted.Lazily, null)
+                .stateIn(viewModelScope, SharingStarted.Lazily, client.states.value[entityId])
         }
     }
 
@@ -319,7 +319,7 @@ class HaViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             credentials.adoptOrCreatePin { newPin() }
             syncPinToUi()
-            if (credentials.isConfigured) {
+        if (credentials.isConfigured) {
                 prefetchWallCameras()
                 launch { connect(credentials.baseUrl, credentials.token) }
             }
@@ -420,7 +420,7 @@ class HaViewModel(
     fun retryRestoreIfNeeded() {
         viewModelScope.launch(Dispatchers.IO) {
             val wasConfigured = credentials.isConfigured
-            credentials.reloadFromExternal()
+        credentials.reloadFromExternal()
             credentials.adoptOrCreatePin { newPin() }
             syncPinToUi()
             if (!credentials.isConfigured) return@launch
@@ -641,7 +641,7 @@ class HaViewModel(
         if (massPlayerId == rootId) return
         musicGroupJob?.cancel()
         musicGroupJob = viewModelScope.launch {
-            runCatching {
+        runCatching {
                 if (grouped) {
                     client.setMassGroupMembers(targetPlayerId = rootId, addIds = listOf(massPlayerId))
                 } else {
@@ -1764,25 +1764,25 @@ class HaViewModel(
                 .debounce(300)
                 .collect { snap ->
                     runCatching {
-                        if (snap.asleep ||
-                            snap.illuminanceEntity.isBlank() ||
-                            snap.brightnessEntity.isBlank()
-                        ) {
+                    if (snap.asleep ||
+                        snap.illuminanceEntity.isBlank() ||
+                        snap.brightnessEntity.isBlank()
+                    ) {
                             pendingDimJob?.cancel()
                             pendingDimJob = null
                             filteredAmbientLux = null
-                            autoBrightnessDesired.value = null
-                            autoBrightnessApplied = null
-                            return@collect
-                        }
+                        autoBrightnessDesired.value = null
+                        autoBrightnessApplied = null
+                        return@collect
+                    }
                         val rawLux = snap.luxState?.toDoubleOrNull()
                         if (rawLux == null || rawLux <= 0) {
                             pendingDimJob?.cancel()
                             pendingDimJob = null
                             filteredAmbientLux = null
-                            autoBrightnessDesired.value = null
-                            return@collect
-                        }
+                        autoBrightnessDesired.value = null
+                        return@collect
+                    }
 
                         val currentAmbient = filteredAmbientLux
                         if (currentAmbient == null) {

@@ -456,9 +456,9 @@
         "path": "#hallway",
         "display": {
           "kind": "temp_hum",
-          "temp_entity": null,
+          "temp_entity": "sensor.nspanelhallway_temperature",
           "hum_entity": null,
-          "climate_entity": "climate.hallway_room"
+          "climate_entity": null
         },
         "accent": "yellow",
         "radius": "36px 6px 6px 36px",
@@ -1087,6 +1087,56 @@
                   {
                     "type": "gap",
                     "height": 30
+                  }
+                ]
+              },
+              {
+                "title": "Live Draw",
+                "icon": "mdi:lightning-bolt",
+                "cards": [
+                  {
+                    "type": "auto_entities",
+                    "name": "Live Power Draw (Top Consumers)",
+                    "filter": {
+                      "include": [
+                        {
+                          "attributes": {
+                            "device_class": "power"
+                          },
+                          "options": {
+                            "secondary_info": "last-changed"
+                          }
+                        }
+                      ],
+                      "exclude": [
+                        {
+                          "state": "<= 1"
+                        },
+                        {
+                          "state": "unavailable"
+                        },
+                        {
+                          "state": "unknown"
+                        },
+                        {
+                          "entity_id": "sensor.housepanel_total_consumption_*"
+                        },
+                        {
+                          "entity_id": "sensor.envoy_*"
+                        },
+                        {
+                          "entity_id": "sensor.energy_grid_*"
+                        },
+                        {
+                          "entity_id": "sensor.inverter_*"
+                        }
+                      ]
+                    },
+                    "sort": {
+                      "method": "state",
+                      "numeric": true,
+                      "reverse": true
+                    }
                   }
                 ]
               },
@@ -2088,11 +2138,10 @@
           },
           {
             "type": "room_conditions",
-            "entity": "sensor.hallway_temperature",
+            "entity": "sensor.nspanelhallway_temperature",
             "display": {
               "kind": "temp_hum",
-              "temp_entity": "sensor.hallway_temperature",
-              "climate_entity": "climate.hallway_room"
+              "temp_entity": "sensor.nspanelhallway_temperature"
             }
           },
           {
@@ -2126,7 +2175,7 @@
                   "decimals": 1,
                   "entity": "sensor.nspanelhallway_temperature",
                   "kind": "number",
-                  "suffix": ""
+                  "suffix": "\u00b0"
                 }
               }
             ]
@@ -2775,7 +2824,6 @@
     "climate.emilias_room_room",
     "climate.great_room_room",
     "climate.guestroom_room",
-    "climate.hallway_room",
     "climate.jonathans_bedroom_room",
     "climate.main_bathroom_room",
     "climate.main_bedroom_room",
@@ -2881,7 +2929,6 @@
     "sensor.front_load_washer",
     "sensor.great_room_4afa_temperature",
     "sensor.guestroom_f628_temperature",
-    "sensor.hallway_temperature",
     "sensor.housepanel_total_consumption_house_consumption_1h_mean",
     "sensor.home_bettina_distance",
     "sensor.home_holger_distance",
@@ -2919,8 +2966,12 @@
     "scene.movie_night",
     "scene.night",
     "sensor.emilias_room_2733_humidity",
+    "sensor.energy_grid_*",
+    "sensor.envoy_*",
     "sensor.great_room_4afa_humidity",
     "sensor.guestroom_f628_humidity",
+    "sensor.housepanel_total_consumption_*",
+    "sensor.inverter_*",
     "sensor.jonathans_bedroom_9b3a_humidity",
     "sensor.main_bathroom_6eca_humidity",
     "sensor.main_bedroom_6671_humidity",

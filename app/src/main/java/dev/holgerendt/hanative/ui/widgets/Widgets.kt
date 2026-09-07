@@ -120,6 +120,7 @@ import dev.holgerendt.hanative.ui.formatState
 import dev.holgerendt.hanative.ui.isOn
 import dev.holgerendt.hanative.ui.isVisible
 import dev.holgerendt.hanative.ui.number
+import dev.holgerendt.hanative.ui.relativeToNow
 import dev.holgerendt.hanative.ui.rememberHaImageLoader
 import dev.holgerendt.hanative.ui.resolveHaImageUrl
 import dev.holgerendt.hanative.ui.roomHum
@@ -134,6 +135,7 @@ import dev.holgerendt.hanative.ui.theme.ThemeBlack
 import dev.holgerendt.hanative.ui.theme.ThemeWhite
 import dev.holgerendt.hanative.ui.theme.activeBigBrush
 import dev.holgerendt.hanative.ui.theme.AccentRed
+import dev.holgerendt.hanative.ui.theme.AccentYellow
 import dev.holgerendt.hanative.ui.theme.ActiveLight
 import dev.holgerendt.hanative.ui.theme.ActiveYellow
 import dev.holgerendt.hanative.ui.theme.CardLight
@@ -153,7 +155,9 @@ import dev.holgerendt.hanative.ui.theme.accentColor
 import dev.holgerendt.hanative.ui.weatherIcon
 import dev.holgerendt.hanative.ui.weatherTint
 import kotlinx.coroutines.delay
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import java.time.Instant
@@ -296,6 +300,7 @@ fun WidgetItem(
             ToggleRow(widget, viewModel, modifier)
         }
         "chart", "mini_graph", "energy_usage_graph", "energy_solar_graph" -> HistoryChart(widget, viewModel, modifier)
+        "auto_entities", "power_consumers" -> AutoEntitiesWidget(widget, viewModel, modifier)
         "energy_date_selection" -> EnergyDateBar(modifier)
         "energy_sources_table", "energy_solar_consumed_gauge", "energy_self_sufficiency_gauge" ->
             EnergyStats(viewModel, modifier)
@@ -2413,6 +2418,242 @@ fun EnergyStats(viewModel: HaViewModel, modifier: Modifier = Modifier) {
             ) {
                 Text(value, color = overlay.text, fontSize = 22.sp, fontWeight = FontWeight.Light)
                 Text(name, color = overlay.muted, fontSize = 13.sp)
+            }
+        }
+    }
+}
+
+private data class AutoEntitiesFilter(
+    val deviceClass: String? = "power",
+    val excludeStates: Set<String> = setOf("unavailable", "unknown"),
+    val minState: Double? = 1.0,
+    val excludeEntityPatterns: List<String> = listOf(
+        "sensor.housepanel_total_consumption_*",
+        "sensor.envoy_*",
+        "sensor.energy_grid_*",
+        "sensor.inverter_*",
+    ),
+)
+
+private data class PowerConsumerItem(
+    val entityId: String,
+    val name: String,
+    val icon: String,
+    val value: Double,
+    val formattedValue: String,
+    val relativeTime: String?,
+)
+
+private fun matchesGlob(id: String, pattern: String): Boolean {
+    return when {
+        pattern.endsWith("*") && pattern.startsWith("*") -> id.contains(pattern.removePrefix("*").removeSuffix("*"))
+        pattern.endsWith("*") -> id.startsWith(pattern.removeSuffix("*"))
+        pattern.startsWith("*") -> id.endsWith(pattern.removePrefix("*"))
+        else -> id == pattern
+    }
+}
+
+private fun parseAutoEntitiesFilter(filterElement: JsonElement?): AutoEntitiesFilter {
+    val obj = filterElement as? JsonObject ?: return AutoEntitiesFilter()
+    var deviceClass: String? = "power"
+    val excludeStates = mutableSetOf("unavailable", "unknown")
+    var minState: Double? = 1.0
+    val excludePatterns = mutableListOf<String>()
+
+    val includeList = obj["include"] as? JsonArray
+    if (includeList != null) {
+        for (item in includeList) {
+            val itemObj = item as? JsonObject ?: continue
+            val attrs = itemObj["attributes"] as? JsonObject
+            val dc = (attrs?.get("device_class") as? JsonPrimitive)?.contentOrNull
+            if (dc != null) deviceClass = dc
+        }
+    }
+
+    val excludeList = obj["exclude"] as? JsonArray
+    if (excludeList != null) {
+        for (item in excludeList) {
+            val itemObj = item as? JsonObject ?: continue
+            val stateStr = (itemObj["state"] as? JsonPrimitive)?.contentOrNull
+            if (stateStr != null) {
+                if (stateStr.startsWith("<=")) {
+                    minState = stateStr.removePrefix("<=").trim().toDoubleOrNull() ?: 1.0
+                } else {
+                    excludeStates.add(stateStr)
+                }
+            }
+            val entId = (itemObj["entity_id"] as? JsonPrimitive)?.contentOrNull
+            if (entId != null) {
+                excludePatterns.add(entId)
+            }
+        }
+    }
+
+    return AutoEntitiesFilter(
+        deviceClass = deviceClass,
+        excludeStates = excludeStates,
+        minState = minState,
+        excludeEntityPatterns = if (excludePatterns.isNotEmpty()) excludePatterns else listOf(
+            "sensor.housepanel_total_consumption_*",
+            "sensor.envoy_*",
+            "sensor.energy_grid_*",
+            "sensor.inverter_*",
+        ),
+    )
+}
+
+@Composable
+fun AutoEntitiesWidget(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
+    val overlay = LocalOverlay.current
+    val allStates by viewModel.states.collectAsState()
+    val filter = remember(widget.filter) { parseAutoEntitiesFilter(widget.filter) }
+
+    val items = remember(allStates, filter) {
+        val now = Instant.now()
+        allStates.values.asSequence()
+            .filter { state ->
+                if (filter.deviceClass != null && state.attrString("device_class") != filter.deviceClass) {
+                    return@filter false
+                }
+                val id = state.entityId
+                if (filter.excludeEntityPatterns.any { pattern -> matchesGlob(id, pattern) }) {
+                    return@filter false
+                }
+                val rawState = state.state
+                if (rawState in filter.excludeStates) {
+                    return@filter false
+                }
+                val num = rawState.toDoubleOrNull() ?: return@filter false
+                if (filter.minState != null && num <= filter.minState) {
+                    return@filter false
+                }
+                true
+            }
+            .mapNotNull { state ->
+                val num = state.state.toDoubleOrNull() ?: return@mapNotNull null
+                val unit = state.attrString("unit_of_measurement") ?: "W"
+                val formatted = if (num >= 100) {
+                    "${num.roundToInt()} $unit"
+                } else {
+                    "${String.format(java.util.Locale.US, "%.1f", num)} $unit"
+                }
+                val rawIcon = state.attrString("icon")
+                val icon = when {
+                    rawIcon != null && rawIcon.startsWith("mdi:") -> rawIcon
+                    state.entityId.contains("fridge") -> "mdi:fridge"
+                    state.entityId.contains("light") -> "mdi:lightbulb"
+                    state.entityId.contains("camera") -> "mdi:cctv"
+                    state.entityId.contains("plug") -> "mdi:power-plug"
+                    else -> "mdi:lightning-bolt"
+                }
+                PowerConsumerItem(
+                    entityId = state.entityId,
+                    name = state.friendlyName,
+                    icon = icon,
+                    value = num,
+                    formattedValue = formatted,
+                    relativeTime = state.lastChanged?.relativeToNow(now),
+                )
+            }
+            .sortedByDescending { it.value }
+            .toList()
+    }
+
+    val totalWatts = remember(items) { items.sumOf { it.value } }
+    val totalText = if (totalWatts >= 1000) {
+        String.format(java.util.Locale.US, "%.2f kW", totalWatts / 1000.0)
+    } else {
+        "${totalWatts.roundToInt()} W"
+    }
+
+    val title = widget.name ?: widget.title ?: "Live Power Draw (Top Consumers)"
+
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = title,
+                color = overlay.text,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (items.isNotEmpty()) {
+                Text(
+                    text = "${items.size} devices • $totalText",
+                    color = overlay.muted,
+                    fontSize = 13.sp,
+                )
+            }
+        }
+
+        if (items.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(overlay.card)
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "No active power consumers (> 1 W)",
+                    color = overlay.muted,
+                    fontSize = 14.sp,
+                )
+            }
+        } else {
+            items.forEach { item ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(overlay.card)
+                        .clickable { viewModel.openMoreInfo(item.entityId) }
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(overlay.well),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        MdiIcon(
+                            name = item.icon,
+                            tint = AccentYellow,
+                            size = 20.dp,
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = item.name,
+                            color = overlay.text,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (!item.relativeTime.isNullOrBlank()) {
+                            Text(
+                                text = item.relativeTime,
+                                color = overlay.muted,
+                                fontSize = 12.sp,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = item.formattedValue,
+                        color = overlay.text,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
         }
     }

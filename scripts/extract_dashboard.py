@@ -394,6 +394,15 @@ def convert_card(card, context: str = "") -> dict | list | None:
     if ctype and str(ctype).startswith("energy-"):
         return {"type": ctype.replace("-", "_"), "title": ctype}
 
+    if ctype == "custom:auto-entities":
+        inner_card = card.get("card") or {}
+        return {
+            "type": "auto_entities",
+            "name": inner_card.get("title") or card.get("title") or "Live Power Draw (Top Consumers)",
+            "filter": card.get("filter"),
+            "sort": card.get("sort"),
+        }
+
     if ctype == "custom:mod-card":
         return convert_card(card.get("card"))
 
@@ -996,6 +1005,15 @@ def merge_overrides(home: dict, overrides: dict) -> None:
     if room_order:
         order = {name: i for i, name in enumerate(room_order)}
         home["rooms"].sort(key=lambda r: order.get(r.get("name"), 999))
+
+    # Override room cards
+    for override in overrides.get("room_overrides", []):
+        path = override.get("path")
+        name = override.get("name")
+        for room in home.get("rooms", []):
+            if (path and room.get("path") == path) or (name and room.get("name") == name):
+                room.update(override)
+                break
 
     # Add extra popups or override existing popups in-place
     for popup in overrides.get("popups", []):

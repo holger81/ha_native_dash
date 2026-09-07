@@ -4,6 +4,8 @@ import dev.holgerendt.hanative.data.EntityState
 import dev.holgerendt.hanative.model.DisplayNode
 import dev.holgerendt.hanative.model.StateFormat
 import dev.holgerendt.hanative.model.WidgetNode
+import java.time.Duration
+import java.time.Instant
 import kotlin.math.roundToInt
 
 fun Map<String, EntityState>.getState(id: String?): EntityState? = id?.let { this[it] }
@@ -96,3 +98,17 @@ fun EntityState?.brightnessPct(): Int {
 }
 
 fun isOn(state: String?): Boolean = state in setOf("on", "open", "opening", "unlocked", "playing", "cleaning")
+
+fun Instant.relativeToNow(now: Instant = Instant.now()): String {
+    val seconds = Duration.between(this, now).seconds.coerceAtLeast(0)
+    return when {
+        seconds < 60 -> if (seconds <= 1) "1 second ago" else "$seconds seconds ago"
+        seconds < 90 -> "1 minute ago"
+        seconds < 3600 -> "${seconds / 60} minutes ago"
+        seconds < 5400 -> "1 hour ago"
+        seconds < 86400 -> "${seconds / 3600} hours ago"
+        seconds < 172800 -> "1 day ago"
+        else -> "${seconds / 86400} days ago"
+    }
+}
+
