@@ -1,0 +1,237 @@
+{
+  "version": 1,
+  "source": "entrance-wall.yaml",
+  "home": {
+    "layout": "entrance",
+    "title": "Home",
+    "people": [],
+    "header": [
+      {
+        "type": "menu_button",
+        "entity": null,
+        "icon": "mdi:menu",
+        "tap": {
+          "type": "menu_toggle"
+        },
+        "hold": null,
+        "grid_area": "menu"
+      },
+      {
+        "type": "clock",
+        "grid_area": "time"
+      },
+      {
+        "type": "chip_row",
+        "chips": [
+          {
+            "type": "status_chip",
+            "name": "Front Door",
+            "icon": "mdi:door",
+            "entity": "lock.front_door",
+            "layout": "icon|name",
+            "tap": {
+              "type": "toggle"
+            },
+            "visibility": {
+              "kind": "always"
+            },
+            "state": {
+              "kind": "state",
+              "entity": "lock.front_door"
+            },
+            "emphasize_unlocked": true,
+            "accent": "dark"
+          }
+        ]
+      }
+    ],
+    "chips": null,
+    "rooms": [],
+    "hero_cameras": [
+      {
+        "type": "camera",
+        "entity": "camera.reolink_video_doorbell_poe_fluent",
+        "name": "Front Door",
+        "stream_server": "http://192.168.10.31:1984/",
+        "stream_name": "frontdoor_sub",
+        "camera_view": "live",
+        "muted": true,
+        "grid_area": "door"
+      },
+      {
+        "type": "camera",
+        "entity": "camera.entrance_fisheye_fluent",
+        "name": "Entrance",
+        "stream_server": "http://192.168.10.31:1984/",
+        "stream_name": "entrance_fisheye_sub",
+        "camera_view": "live",
+        "muted": true,
+        "grid_area": "entrance"
+      }
+    ],
+    "occupancy_entities": [
+      "binary_sensor.frontdoor_person_occupancy_2",
+      "binary_sensor.entrance_person_occupancy"
+    ],
+    "actions": [
+      {
+        "name": "Close Windows",
+        "icon": "mdi:window-closed-variant",
+        "entity": null,
+        "background": null,
+        "type": "action_chip",
+        "style": "chips_big",
+        "tap": {
+          "type": "call_service",
+          "service": "cover.close_cover",
+          "entity_id": [
+            "cover.guestroom_front",
+            "cover.jonathan"
+          ],
+          "data": null
+        },
+        "hold": null,
+        "grid_area": "windows"
+      },
+      {
+        "name": "All Lights Off",
+        "icon": "mdi:lightbulb-off",
+        "entity": null,
+        "background": null,
+        "type": "lights_off",
+        "style": "chips_big",
+        "tap": {
+          "type": "call_service",
+          "service": "script.turn_off_all_lights",
+          "entity_id": null,
+          "data": null
+        },
+        "hold": null,
+        "grid_area": "lights"
+      }
+    ],
+    "popups": [
+      {
+        "type": "popup",
+        "name": "Visitor",
+        "icon": "mdi:video",
+        "hash": "#camera_alert",
+        "accent": "blue",
+        "cards": [
+          {
+            "type": "gap",
+            "height": 12
+          },
+          {
+            "type": "layout_grid",
+            "columns": "1fr",
+            "rows": "minmax(0, 1fr) minmax(0, 1fr)",
+            "areas": "\"door\"\n\"entrance\"\n",
+            "cards": [
+              {
+                "type": "camera",
+                "entity": "camera.reolink_video_doorbell_poe_fluent",
+                "name": "Front Door",
+                "stream_server": "http://192.168.10.31:1984/",
+                "stream_name": "frontdoor_sub",
+                "camera_view": "live",
+                "muted": true,
+                "grid_area": "door"
+              },
+              {
+                "type": "camera",
+                "entity": "camera.entrance_fisheye_fluent",
+                "name": "Entrance",
+                "stream_server": "http://192.168.10.31:1984/",
+                "stream_name": "entrance_fisheye_sub",
+                "camera_view": "live",
+                "muted": true,
+                "grid_area": "entrance"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "calendar": {
+      "type": "week_planner",
+      "calendars": [
+        {
+          "entity": "calendar.besucherkalender",
+          "color": "var(--orange)",
+          "icon": "mdi:bag-suitcase-outline"
+        },
+        {
+          "entity": "calendar.family_2",
+          "color": "var(--blue)",
+          "icon": null
+        },
+        {
+          "entity": "calendar.calendar",
+          "color": null,
+          "icon": null
+        }
+      ],
+      "weather_entity": null,
+      "days": 1,
+      "columns": 1,
+      "show_navigation": false,
+      "combine_similar": true,
+      "locale": "en",
+      "show_condition": false,
+      "show_temperature": false,
+      "show_low_temperature": false,
+      "grid_area": null,
+      "conditions": [
+        {
+          "condition": "and",
+          "conditions": [
+            {
+              "condition": "state",
+              "entity": "binary_sensor.frontdoor_person_occupancy_2",
+              "state": "off"
+            },
+            {
+              "condition": "state",
+              "entity": "binary_sensor.entrance_person_occupancy",
+              "state": "off"
+            }
+          ]
+        }
+      ]
+    },
+    "status": {
+      "type": "open_status",
+      "door_locks": [
+        "lock.front_door",
+        "lock.garage_entrance"
+      ],
+      "window_covers": [
+        "cover.guestroom_front",
+        "cover.jonathan"
+      ],
+      "grid_area": "status"
+    }
+  },
+  "entities": [
+    "binary_sensor.entrance_person_occupancy",
+    "binary_sensor.frontdoor_person_occupancy_2",
+    "calendar.besucherkalender",
+    "calendar.calendar",
+    "calendar.family_2",
+    "camera.entrance_fisheye_fluent",
+    "camera.reolink_video_doorbell_poe_fluent",
+    "cover.guestroom_front",
+    "cover.jonathan",
+    "lock.front_door",
+    "lock.garage_entrance"
+  ],
+  "icons": [
+    "mdi:bag-suitcase-outline",
+    "mdi:door",
+    "mdi:lightbulb-off",
+    "mdi:menu",
+    "mdi:video",
+    "mdi:window-closed-variant"
+  ]
+}

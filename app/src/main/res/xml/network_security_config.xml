@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext + user CAs are needed for http:// Home Assistant URLs, private-IP
+  self-signed HTTPS, and go2rtc. Android cannot scope these to IP ranges in XML,
+  so the "local network only" policy is enforced in code via NetworkGuard
+  (data/NetworkGuard.kt) at every egress point instead.
+-->
 <network-security-config>
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors>

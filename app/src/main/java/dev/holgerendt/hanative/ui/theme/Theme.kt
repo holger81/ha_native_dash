@@ -20,8 +20,6 @@ val ThemeWhite = Color(0xFFF5F7FA)
 val ScreenBackground = Color(0xFFFFFFFF)
 val CardLight = Gray000
 val PopupCard = Color(0xF2EDEFF2)
-/** Solid popup sheet so Lovelace’s 42% mix is not invisible on a white wall. */
-val PopupOverlay = Gray000
 val DockBackground = Color(0xFF2A2A2A)
 val TextDark = ThemeBlack
 val TextMuted = ThemeBlack.copy(alpha = 0.7f)
@@ -61,18 +59,6 @@ val OverlayHome = OverlayColors(
     dark = false,
 )
 
-val OverlayPopup = OverlayColors(
-    sheet = Color(0xFF2C2C2C),
-    card = Color(0xFF3A3A3A),
-    text = Color(0xFFF5F5F5),
-    muted = Color(0xFFB8B8B8),
-    well = Color(0xFF404040),
-    onWell = Color.White,
-    grid = Color.White.copy(alpha = 0.14f),
-    gridZero = Color.White.copy(alpha = 0.32f),
-    dark = true,
-)
-
 /** Warm glass sheet for popups. */
 val OverlayLightPopup = OverlayColors(
     sheet = Color(0xF7FFFCFA),
@@ -88,8 +74,6 @@ val OverlayLightPopup = OverlayColors(
 
 val PopupScrim = Color(0x8C161310)
 
-val OverlayMoreInfo = OverlayPopup.copy(sheet = Color(0xFF1C1C1C), card = Color(0xFF252525))
-
 val LocalOverlay = staticCompositionLocalOf { OverlayHome }
 
 val TabActiveStart = Color(0xFFF3A6C4)
@@ -104,7 +88,7 @@ val VacuumStart = Color(0xFFA5DD9B)
 val VacuumStop = Color(0xFFFF8A8A)
 
 /** Lovelace `--active-big`: peach → pink → blue at 145°. */
-fun activeBigBrush(): Brush = Brush.linearGradient(
+private val ActiveBigGradient: Brush = Brush.linearGradient(
     colorStops = arrayOf(
         0f to Color(0xFFFFDCB2),
         0.6f to Color(0xFFFFB0E9),
@@ -113,6 +97,8 @@ fun activeBigBrush(): Brush = Brush.linearGradient(
     start = Offset.Zero,
     end = Offset(200f, 280f),
 )
+
+fun activeBigBrush(): Brush = ActiveBigGradient
 
 fun accentColor(name: String?): Color = when (name?.removePrefix("var(--")?.removeSuffix(")")) {
     "green" -> AccentGreen

@@ -54,12 +54,15 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import coil.ImageLoader
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -84,11 +87,19 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImagePainter
+import coil.compose.SubcomposeAsyncImage
+import coil.compose.SubcomposeAsyncImageContent
+import coil.request.ImageRequest
+import dev.holgerendt.hanative.PanelConfig
+import dev.holgerendt.hanative.R
 import dev.holgerendt.hanative.data.EntityState
 import dev.holgerendt.hanative.data.HaCalendarEvent
-import dev.holgerendt.hanative.R
-import dev.holgerendt.hanative.data.timelineSnapshotPath
+import dev.holgerendt.hanative.data.KioskCommands
+import dev.holgerendt.hanative.data.NetworkGuard
 import dev.holgerendt.hanative.data.hasLiveCameraSource
+import dev.holgerendt.hanative.data.timelineSnapshotPath
+import dev.holgerendt.hanative.model.DisplayNode
 import dev.holgerendt.hanative.model.PopupNode
 import dev.holgerendt.hanative.model.StateFormat
 import dev.holgerendt.hanative.model.WidgetNode
@@ -109,7 +120,8 @@ import dev.holgerendt.hanative.ui.formatState
 import dev.holgerendt.hanative.ui.isOn
 import dev.holgerendt.hanative.ui.isVisible
 import dev.holgerendt.hanative.ui.number
-import dev.holgerendt.hanative.ui.stateOf
+import dev.holgerendt.hanative.ui.rememberHaImageLoader
+import dev.holgerendt.hanative.ui.resolveHaImageUrl
 import dev.holgerendt.hanative.ui.tempHum
 import dev.holgerendt.hanative.ui.timelineEventStyle
 import dev.holgerendt.hanative.ui.toDoubleOrNullSafe
@@ -155,6 +167,47 @@ import kotlin.math.roundToInt
 private val CardShape = RoundedCornerShape(28.dp)
 private val ChipShape = RoundedCornerShape(24.dp)
 
+private val TabActiveBrush = Brush.horizontalGradient(listOf(TabActiveStart, TabActiveEnd))
+private val PopupSheetSheenBrush = Brush.verticalGradient(
+    0f to Color.White.copy(alpha = 0.42f),
+    0.2f to Color.Transparent,
+)
+
+private val MONTH_FORMAT = DateTimeFormatter.ofPattern("MMMM")
+private val WEEKDAY_FORMAT = DateTimeFormatter.ofPattern("EEEE")
+private val TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm")
+private val MONTH_DAY_FORMAT = DateTimeFormatter.ofPattern("MMM d")
+
+private val BatteryRuntimeEntities = listOf(
+    "binary_sensor.envoy_battery_discharging",
+    "sensor.battery_runtime_remaining",
+    "sensor.housepanel_total_consumption_house_consumption_1h_mean",
+    "input_number.battery_energy_helper",
+    "sensor.envoy_202234122877_reserve_battery_energy",
+)
+
+private val EnergyStatsEntities = listOf(
+    "sensor.envoy_202234122877_current_power_production",
+    "sensor.envoy_202234122877_current_net_power_consumption",
+    "input_number.battery_energy_helper",
+)
+
+private val MmWaveEntities = listOf(
+    "binary_sensor.secondary_living_room_switch_occupancy",
+    "input_number.secondary_living_room_mmwave_target_count",
+    "number.secondary_living_room_switch_mmwave_width_minimum_left",
+    "number.secondary_living_room_switch_mmwave_width_maximum_right",
+    "number.secondary_living_room_switch_mmwave_depth_minimum_near",
+    "number.secondary_living_room_switch_mmwave_depth_maximum_far",
+) + (1..4).flatMap { index ->
+    listOf("x", "y", "z").map { axis ->
+        "input_number.secondary_living_room_mmwave_target_${index}_$axis"
+    }
+}
+
+private fun DisplayNode?.entityIds(): List<String?> =
+    listOf(this?.climateEntity, this?.tempEntity, this?.humEntity)
+
 private fun Modifier.widgetClicks(widget: WidgetNode, viewModel: HaViewModel): Modifier {
     val canHold = widget.hold != null && widget.hold.type != "none"
     return combinedClickable(
@@ -180,7 +233,6 @@ fun WidgetItem(
     viewModel: HaViewModel,
     modifier: Modifier = Modifier,
 ) {
-    val states by viewModel.states.collectAsState()
     when (widget.type) {
         "gap" -> Spacer(modifier.height((widget.height ?: 8).dp))
         "vertical_stack" -> Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -264,7 +316,10 @@ fun WidgetItem(
 
 @Composable
 fun ChipRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
-    val states by viewModel.states.collectAsState()
+    val chipEntities = remember(widget) {
+        widget.chips.flatMap { listOf(it.entity, it.state?.entity, it.visibility?.entity) }
+    }
+    val states by viewModel.entitiesFlow(chipEntities).collectAsState()
     Row(
         modifier = modifier.horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -326,7 +381,7 @@ fun ChipRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Mod
 
 @Composable
 fun PersonCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
-    val states by viewModel.states.collectAsState()
+    val states by viewModel.entitiesFlow(listOf(widget.entity, widget.homeSensor)).collectAsState()
     val person = states[widget.entity]
     val home = person?.state == "home"
     val minutes = states[widget.homeSensor]?.state
@@ -351,10 +406,12 @@ fun PersonCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = 
 
 @Composable
 fun WeatherHeader(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
-    val states by viewModel.states.collectAsState()
+    val tempEntity = widget.tempEntity ?: "sensor.st_00063154_temperature"
+    val sunEntity = widget.sunEntity ?: "sun.sun"
+    val states by viewModel.entitiesFlow(listOf(widget.entity, tempEntity, sunEntity)).collectAsState()
     val weather = states[widget.entity]
-    val temp = states[widget.tempEntity ?: "sensor.st_00063154_temperature"]?.state?.toDoubleOrNull()
-    val day = states[widget.sunEntity ?: "sun.sun"]?.state == "above_horizon"
+    val temp = states[tempEntity]?.state?.toDoubleOrNull()
+    val day = states[sunEntity]?.state == "above_horizon"
     val condition = weather?.state?.replace("sunny", "clear")?.replace('-', ' ') ?: ""
     Row(
         modifier = modifier.widgetClicks(widget, viewModel),
@@ -371,7 +428,7 @@ fun WeatherHeader(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier
 
 @Composable
 fun RoomCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
-    val states by viewModel.states.collectAsState()
+    val states by viewModel.entitiesFlow(widget.display.entityIds()).collectAsState()
     val radii = parseRadius(widget.radius)
     val shape = RoundedCornerShape(radii[0], radii[1], radii[2], radii[3])
     Box(
@@ -483,6 +540,13 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
         }
     }
     val weatherEntity = widget.weatherEntity ?: "weather.forecast_tankerland_ct"
+    var now by remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30_000)
+            now = Instant.now()
+        }
+    }
     LaunchedEffect(Unit) { viewModel.refreshCalendars() }
     LaunchedEffect(sources, dayOffset, calendarRevision, viewModel.client.currentBaseUrl) {
         loaded = false
@@ -520,8 +584,16 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
             delay(60_000)
         }
     }
-    val today = LocalDate.now(zone)
+    val today = now.atZone(zone).toLocalDate()
     val days = (0 until dayCount).map { today.plusDays(dayOffset.toLong() + it) }
+    // Pre-index so the day columns don't each re-filter and re-sort the whole event list.
+    val eventsByDay = remember(events, days, zone) {
+        days.associateWith { day ->
+            events.filter { eventOverlapsDay(it, day, zone) }
+                .sortedWith(compareBy<HaCalendarEvent> { !it.allDay }.thenBy { it.start ?: Instant.EPOCH })
+        }
+    }
+    val canCreateEvents = PanelConfig.ALLOW_CALENDAR_CREATE
     val openAddDialog: (LocalDate) -> Unit = { date ->
         addDialogDate = date
         showAddDialog = true
@@ -564,15 +636,17 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                 CalendarTodayIcon(onClick = { dayOffset = 0 })
                 CalendarNavIcon(left = false, onClick = { dayOffset += dayCount })
                 Text(
-                    text = days.firstOrNull()?.format(DateTimeFormatter.ofPattern("MMMM")) ?: "",
+                    text = days.firstOrNull()?.format(MONTH_FORMAT) ?: "",
                     color = TextDark,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.padding(start = 6.dp).weight(1f),
                 )
-                CalendarAddIcon(onClick = { openAddDialog(today) })
+                if (canCreateEvents) {
+                    CalendarAddIcon(onClick = { openAddDialog(today) })
+                }
             }
-        } else if (plannerCalendars.isNotEmpty()) {
+        } else if (canCreateEvents && plannerCalendars.isNotEmpty()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
@@ -597,8 +671,7 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                         WeekPlannerDay(
                             day = day,
                             today = today,
-                            events = events.filter { eventOverlapsDay(it, day, zone) }
-                                .sortedWith(compareBy<HaCalendarEvent> { !it.allDay }.thenBy { it.start ?: Instant.EPOCH }),
+                            events = eventsByDay[day].orEmpty(),
                             forecast = forecasts.firstOrNull { it["datetime"].orEmpty().startsWith(day.toString()) },
                             showCondition = widget.showCondition != false,
                             showTemperature = widget.showTemperature == true,
@@ -606,7 +679,7 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                             loading = false,
                             viewModel = viewModel,
                             weatherEntity = weatherEntity,
-                            onAddEvent = if (plannerCalendars.isNotEmpty()) {
+                            onAddEvent = if (canCreateEvents && plannerCalendars.isNotEmpty()) {
                                 { openAddDialog(day) }
                             } else {
                                 null
@@ -614,7 +687,8 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                             onEventClick = { event ->
                                 manageOverlay = WeekPlannerManageOverlay.ChooseAction(event)
                             },
-                            modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 280.dp),
+                            now = now,
+                            modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = if ((widget.days ?: 10) <= 2) 140.dp else 280.dp),
                         )
                     }
                     repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
@@ -622,7 +696,7 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
             }
         }
     }
-    if (showAddDialog) {
+    if (showAddDialog && canCreateEvents) {
         AddCalendarEventDialog(
             viewModel = viewModel,
             calendars = plannerCalendars,
@@ -744,13 +818,14 @@ private fun WeekPlannerDay(
     weatherEntity: String,
     onAddEvent: (() -> Unit)? = null,
     onEventClick: ((HaCalendarEvent) -> Unit)? = null,
+    now: Instant = Instant.now(),
     modifier: Modifier = Modifier,
 ) {
     val weekday = when (day) {
         today -> "Today"
         today.plusDays(1) -> "Tomorrow"
         today.minusDays(1) -> "Yesterday"
-        else -> day.format(DateTimeFormatter.ofPattern("EEEE"))
+        else -> day.format(WEEKDAY_FORMAT)
     }
     val high = forecastC(forecast?.get("temp"))
     val low = forecastC(forecast?.get("templow"))
@@ -833,31 +908,37 @@ private fun WeekPlannerDay(
             else -> {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     events.forEach { event ->
+                        val isPast = isPastCalendarEvent(event, day, today, now)
                         val stripe = accentColor(event.color?.removePrefix("var(--")?.removeSuffix(")"))
                             .takeIf { event.color != null } ?: AccentBlue
+                        val stripeColor = if (isPast) stripe.copy(alpha = 0.35f) else stripe
+                        val cardBackground = if (isPast) CardLight.copy(alpha = 0.55f) else CardLight
+                        val timeColor = if (isPast) TextMuted.copy(alpha = 0.45f) else TextMuted
+                        val summaryColor = if (isPast) TextDark.copy(alpha = 0.45f) else TextDark
+                        val summaryWeight = if (isPast) FontWeight.Normal else FontWeight.Medium
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(IntrinsicSize.Min)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(CardLight)
+                                .background(cardBackground)
                                 .clickable(enabled = onEventClick != null) {
                                     onEventClick?.invoke(event)
                                 },
                         ) {
-                            Box(Modifier.width(3.dp).fillMaxHeight().background(stripe))
+                            Box(Modifier.width(3.dp).fillMaxHeight().background(stripeColor))
                             Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp).weight(1f)) {
                                 Text(
                                     text = eventTimeLabel(event),
-                                    color = TextMuted,
+                                    color = timeColor,
                                     fontSize = 11.sp,
                                     maxLines = 1,
                                 )
                                 Text(
                                     text = event.summary,
-                                    color = TextDark,
+                                    color = summaryColor,
                                     fontSize = 14.sp,
-                                    fontWeight = FontWeight.Medium,
+                                    fontWeight = summaryWeight,
                                     maxLines = 3,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -872,15 +953,17 @@ private fun WeekPlannerDay(
 
 @Composable
 fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
-    val states by viewModel.states.collectAsState()
+    val timelineRevision by viewModel.visionTimelineRevision.collectAsState()
     val limit = widget.numberOfEvents ?: 5
     val hours = widget.numberOfHours ?: widget.hours
     val days = widget.days
     val entityId = widget.entity ?: "calendar.llm_vision_timeline"
     var events by remember { mutableStateOf(listOf<HaCalendarEvent>()) }
     var loaded by remember { mutableStateOf(false) }
-    LaunchedEffect(entityId, limit, hours, days, viewModel.client.currentBaseUrl) {
+    LaunchedEffect(entityId, limit, hours, days) {
         loaded = false
+    }
+    LaunchedEffect(entityId, limit, hours, days, timelineRevision, viewModel.client.currentBaseUrl) {
         while (true) {
             if (viewModel.client.currentBaseUrl.isBlank()) {
                 delay(400)
@@ -891,7 +974,7 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
             }.getOrDefault(emptyList())
             events = fetched.sortedByDescending { it.start ?: Instant.EPOCH }.take(limit)
             loaded = true
-            delay(20_000)
+            delay(15_000)
         }
     }
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -932,10 +1015,12 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
                 }
                 dayEvents.forEach { event ->
                     val start = event.start?.atZone(ZoneId.systemDefault())
+                    // One-shot read: camera friendly names don't change between the 15 s
+                    // refreshes, so this doesn't need a state subscription.
                     val cameraLabel = event.cameraName?.let { id ->
-                        states[id]?.friendlyName ?: id.substringAfter('.').replace('_', ' ')
+                        viewModel.entity(id)?.friendlyName ?: id.substringAfter('.').replace('_', ' ')
                     }
-                    val timeLabel = start?.format(DateTimeFormatter.ofPattern("HH:mm")).orEmpty()
+                    val timeLabel = start?.format(TIME_FORMAT).orEmpty()
                     val subtitle = listOfNotNull(
                         timeLabel.takeIf { it.isNotBlank() },
                         cameraLabel?.takeIf { it.isNotBlank() && it != "clip" },
@@ -950,18 +1035,21 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
                             .clickable {
                                 val frame = event.keyFrame
                                 val clip = event.clipPath
+                                val snapshot = timelineSnapshotPath(frame, clip)
                                 when {
                                     !clip.isNullOrBlank() -> viewModel.openVideo(
                                         path = clip,
                                         title = event.summary,
                                         subtitle = subtitle.takeIf { it.isNotBlank() },
                                         description = event.description,
+                                        previewPath = snapshot,
                                     )
                                     !frame.isNullOrBlank() -> viewModel.openMedia(
                                         path = frame,
                                         title = event.summary,
                                         subtitle = subtitle.takeIf { it.isNotBlank() },
                                         description = event.description,
+                                        previewPath = snapshot,
                                     )
                                     else -> {
                                         val camera = event.cameraName?.takeIf { '.' in it }
@@ -1013,21 +1101,42 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
 
 @Composable
 private fun TimelineSnapshot(path: String?, viewModel: HaViewModel, modifier: Modifier) {
-    var bytes by remember(path) { mutableStateOf<ByteArray?>(null) }
-    var loaded by remember(path) { mutableStateOf(path.isNullOrBlank()) }
+    val context = LocalContext.current
+    val loader = rememberHaImageLoader(viewModel.client)
+    // `media-source://` paths need a websocket resolve first; only the resulting URL goes to Coil.
+    var url by remember(path) { mutableStateOf<String?>(null) }
+    var resolved by remember(path) { mutableStateOf(path.isNullOrBlank()) }
     LaunchedEffect(path, viewModel.client.currentBaseUrl) {
         if (!path.isNullOrBlank()) {
-            bytes = runCatching { viewModel.client.mediaBytes(path) }.getOrNull()
+            url = runCatching { viewModel.client.authenticatedMediaUrl(path) }.getOrNull()
         }
-        loaded = true
+        resolved = true
     }
-    val bitmap = remember(bytes) { bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
+    val placeholder = CardLight.copy(alpha = 0.12f)
+    val model = url
     when {
-        bitmap != null -> Image(bitmap, contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop)
-        !loaded -> Box(modifier.background(CardLight.copy(alpha = 0.12f)), contentAlignment = Alignment.Center) {
+        model != null -> SubcomposeAsyncImage(
+            model = ImageRequest.Builder(context).data(model).crossfade(true).build(),
+            contentDescription = null,
+            imageLoader = loader,
+            modifier = modifier,
+            contentScale = ContentScale.Crop,
+        ) {
+            when (painter.state) {
+                is AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
+                is AsyncImagePainter.State.Error -> Box(Modifier.fillMaxSize().background(placeholder))
+                else -> Box(
+                    modifier = Modifier.fillMaxSize().background(placeholder),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    LoadingSpinner(indicatorSize = 16.dp)
+                }
+            }
+        }
+        !resolved -> Box(modifier.background(placeholder), contentAlignment = Alignment.Center) {
             LoadingSpinner(indicatorSize = 16.dp)
         }
-        else -> Box(modifier.background(CardLight.copy(alpha = 0.12f)))
+        else -> Box(modifier.background(placeholder))
     }
 }
 
@@ -1042,8 +1151,8 @@ fun MediaImageDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
     }
     val bitmap = remember(bytes) { bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
     Box(
-        modifier = popupSheetModifier(PopupSheetKind.Detail)
-            .padding(horizontal = 10.dp, vertical = 8.dp)
+        modifier = popupSheetModifier(PopupSheetKind.Camera)
+            .padding(horizontal = 8.dp, vertical = 6.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -1098,13 +1207,31 @@ fun MediaImageDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
 @Composable
 fun MediaVideoDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val imageLoader = rememberHaImageLoader(viewModel.client)
     var videoUrl by remember(preview.path) { mutableStateOf<String?>(null) }
     var loadFailed by remember(preview.path) { mutableStateOf(false) }
+
+    val snapshotPath = preview.previewPath
+    var snapshotUrl by remember(snapshotPath) { mutableStateOf<String?>(null) }
+    var snapshotResolved by remember(snapshotPath) { mutableStateOf(snapshotPath.isNullOrBlank()) }
+
     LaunchedEffect(preview.path, viewModel.client.currentBaseUrl) {
         loadFailed = false
-        videoUrl = runCatching { viewModel.client.authenticatedMediaUrl(preview.path) }.getOrNull()
+        videoUrl = runCatching { viewModel.client.authenticatedMediaUrl(preview.path) }
+            .getOrNull()
+            ?.takeIf { NetworkGuard.hostOf(it)?.let(NetworkGuard::isPrivateHost) == true }
         if (videoUrl.isNullOrBlank()) loadFailed = true
     }
+
+    LaunchedEffect(snapshotPath, viewModel.client.currentBaseUrl) {
+        if (!snapshotPath.isNullOrBlank()) {
+            snapshotUrl = runCatching { viewModel.client.authenticatedMediaUrl(snapshotPath) }.getOrNull()
+        }
+        snapshotResolved = true
+    }
+
+    var videoAspectRatio by remember { mutableStateOf<Float?>(null) }
+
     val exoPlayer = remember(videoUrl) {
         val url = videoUrl ?: return@remember null
         val factory = DefaultHttpDataSource.Factory()
@@ -1121,12 +1248,32 @@ fun MediaVideoDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
                 playWhenReady = true
             }
     }
+
     DisposableEffect(exoPlayer) {
-        onDispose { exoPlayer?.release() }
+        if (exoPlayer == null) return@DisposableEffect onDispose {}
+        val listener = object : Player.Listener {
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    videoAspectRatio = videoSize.width.toFloat() / videoSize.height.toFloat()
+                }
+            }
+        }
+        exoPlayer.addListener(listener)
+        val currentSize = exoPlayer.videoSize
+        if (currentSize.width > 0 && currentSize.height > 0) {
+            videoAspectRatio = currentSize.width.toFloat() / currentSize.height.toFloat()
+        }
+        onDispose {
+            exoPlayer.removeListener(listener)
+            exoPlayer.release()
+        }
     }
+
+    val playerAspect = videoAspectRatio?.coerceIn(0.6f, 2.4f) ?: (16f / 9f)
+
     Box(
-        modifier = popupSheetModifier(PopupSheetKind.Detail)
-            .padding(horizontal = 10.dp, vertical = 8.dp)
+        modifier = popupSheetModifier(PopupSheetKind.Camera)
+            .padding(horizontal = 8.dp, vertical = 6.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -1140,7 +1287,7 @@ fun MediaVideoDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
                 .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp)
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             PopupSheetChrome(
                 title = preview.title.orEmpty().ifBlank { "Clip" },
@@ -1148,32 +1295,78 @@ fun MediaVideoDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
                 overlay = OverlayLightPopup,
                 subtitle = preview.subtitle,
             )
-            when {
-                exoPlayer != null -> AndroidView(
-                    factory = { ctx ->
-                        (LayoutInflater.from(ctx).inflate(R.layout.camera_player_view, null) as PlayerView).apply {
-                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                            useController = true
-                            player = exoPlayer
+
+            MediaVideoPlayerSurface(
+                exoPlayer = exoPlayer,
+                loadFailed = loadFailed,
+                snapshotUrl = snapshotUrl,
+                imageLoader = imageLoader,
+                aspectRatio = playerAspect,
+            )
+
+            if (!snapshotUrl.isNullOrBlank()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = "Detection image",
+                        color = OverlayLightPopup.muted,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    SubcomposeAsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(snapshotUrl)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = "Event detection preview",
+                        imageLoader = imageLoader,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 140.dp, max = 280.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(Color.Black.copy(alpha = 0.06f)),
+                        contentScale = ContentScale.Fit,
+                    ) {
+                        when (painter.state) {
+                            is AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
+                            is AsyncImagePainter.State.Error -> Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(100.dp)
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(Color.Black.copy(alpha = 0.04f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text("Can't load detection image", color = OverlayLightPopup.muted, fontSize = 12.sp)
+                            }
+                            else -> Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(140.dp)
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(Color.Black.copy(alpha = 0.04f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                LoadingSpinner(indicatorSize = 20.dp)
+                            }
                         }
-                    },
-                    update = { view ->
-                        view.player = exoPlayer
-                        view.useController = true
-                    },
+                    }
+                }
+            } else if (!snapshotPath.isNullOrBlank() && !snapshotResolved) {
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .aspectRatio(16f / 9f)
-                        .clip(RoundedCornerShape(22.dp)),
-                )
-                loadFailed -> Text("Can't load video", color = OverlayLightPopup.muted, fontSize = 14.sp)
-                else -> Box(
-                    modifier = Modifier.fillMaxWidth().height(220.dp),
+                        .height(120.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color.Black.copy(alpha = 0.06f)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    LoadingSpinner(color = TextMuted)
+                    LoadingSpinner(color = TextMuted, indicatorSize = 22.dp)
                 }
             }
+
             if (!preview.description.isNullOrBlank()) {
                 Text(
                     text = preview.description,
@@ -1186,12 +1379,67 @@ fun MediaVideoDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
     }
 }
 
+@androidx.annotation.OptIn(UnstableApi::class)
+@Composable
+private fun MediaVideoPlayerSurface(
+    exoPlayer: ExoPlayer?,
+    loadFailed: Boolean,
+    snapshotUrl: String?,
+    imageLoader: ImageLoader,
+    aspectRatio: Float,
+) {
+    when {
+        exoPlayer != null -> AndroidView(
+            factory = { ctx ->
+                (LayoutInflater.from(ctx).inflate(R.layout.camera_player_view, null) as PlayerView).apply {
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    useController = true
+                    player = exoPlayer
+                }
+            },
+            update = { view ->
+                view.player = exoPlayer
+                view.useController = true
+                view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(aspectRatio)
+                .clip(RoundedCornerShape(22.dp))
+                .background(Color.Black),
+        )
+        loadFailed -> Text("Can't load video", color = OverlayLightPopup.muted, fontSize = 14.sp)
+        else -> Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(aspectRatio)
+                .clip(RoundedCornerShape(22.dp))
+                .background(Color.Black.copy(alpha = 0.08f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (!snapshotUrl.isNullOrBlank()) {
+                SubcomposeAsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(snapshotUrl)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = null,
+                    imageLoader = imageLoader,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit,
+                )
+            }
+            LoadingSpinner(color = TextMuted)
+        }
+    }
+}
+
 private fun visionDateLabel(date: LocalDate): String {
     val today = LocalDate.now()
     return when (date) {
         today -> "Today"
         today.minusDays(1) -> "Yesterday"
-        else -> date.format(DateTimeFormatter.ofPattern("MMM d"))
+        else -> date.format(MONTH_DAY_FORMAT)
     }
 }
 
@@ -1213,6 +1461,21 @@ private fun eventOverlapsDay(event: HaCalendarEvent, day: LocalDate, zone: ZoneI
     return !day.isBefore(start) && !day.isAfter(endInclusive)
 }
 
+internal fun isPastCalendarEvent(
+    event: HaCalendarEvent,
+    day: LocalDate,
+    today: LocalDate,
+    now: Instant = Instant.now(),
+): Boolean {
+    if (day.isBefore(today)) return true
+    if (day.isAfter(today)) return false
+    if (event.allDay || (event.startDate != null && event.start == null)) {
+        return false
+    }
+    val endInstant = event.end ?: event.start ?: return false
+    return now.isAfter(endInstant)
+}
+
 private fun forecastC(raw: String?): String? {
     if (raw.isNullOrBlank()) return null
     val number = raw.trim('"').toDoubleOrNull()
@@ -1222,9 +1485,8 @@ private fun forecastC(raw: String?): String? {
 private fun eventTimeLabel(event: HaCalendarEvent): String {
     if (event.allDay || (event.startDate != null && event.start == null)) return "Entire day"
     val zone = ZoneId.systemDefault()
-    val fmt = DateTimeFormatter.ofPattern("HH:mm")
-    val start = event.start?.atZone(zone)?.format(fmt) ?: return ""
-    val end = event.end?.atZone(zone)?.format(fmt) ?: return start
+    val start = event.start?.atZone(zone)?.format(TIME_FORMAT) ?: return ""
+    val end = event.end?.atZone(zone)?.format(TIME_FORMAT) ?: return start
     return if (end == start) start else "$start - $end"
 }
 
@@ -1236,7 +1498,7 @@ private fun primitiveContent(element: JsonElement): String {
 @Composable
 fun LightSlider(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
-    val states by viewModel.states.collectAsState()
+    val states by viewModel.entitiesFlow(listOf(widget.entity)).collectAsState()
     val entity = states[widget.entity]
     val on = entity?.state == "on"
     val pct = states.brightnessPct(widget.entity)
@@ -1331,8 +1593,7 @@ fun LightSlider(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
 @Composable
 fun ToggleRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
-    val states by viewModel.states.collectAsState()
-    val entity = states[widget.entity]
+    val entity by viewModel.entityFlow(widget.entity).collectAsState()
     val on = isOn(entity?.state)
     val label = entity?.state?.replaceFirstChar { it.uppercase() } ?: widget.label ?: "Unknown"
     Row(
@@ -1356,7 +1617,7 @@ fun ToggleRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = M
 @Composable
 fun VentRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier, ids: List<String>) {
     val overlay = LocalOverlay.current
-    val states by viewModel.states.collectAsState()
+    val states by viewModel.entitiesFlow(ids).collectAsState()
     val open = ids.any { states[it]?.state in setOf("open", "opening") }
     val label = when {
         open -> "Open"
@@ -1394,7 +1655,7 @@ fun VentRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier, ids:
 @Composable
 fun ClimateCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
-    val states by viewModel.states.collectAsState()
+    val states by viewModel.entitiesFlow(listOf(widget.entity, widget.activityEntity)).collectAsState()
     val climate = states[widget.entity]
     val current = climate?.attrDouble("current_temperature")
     val target = climate?.attrDouble("temperature") ?: climate?.attrDouble("target_temp_high")
@@ -1431,11 +1692,40 @@ fun ClimateCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
 @Composable
 fun RoomConditions(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
-    val states by viewModel.states.collectAsState()
-    var points by remember { mutableStateOf(listOf<Pair<Long, Double>>()) }
-    LaunchedEffect(widget.entity) {
-        widget.entity?.let { points = viewModel.client.history(it, 12) }
+    val entityId = widget.entity ?: widget.display?.tempEntity
+    val watchedEntities = remember(widget, entityId) {
+        (widget.display.entityIds() + listOfNotNull(entityId)).distinct()
     }
+    val states by viewModel.entitiesFlow(watchedEntities).collectAsState()
+    val entityState = entityId?.let { states[it] }
+
+    var points by remember(entityId) { mutableStateOf(listOf<Pair<Long, Double>>()) }
+
+    suspend fun refreshHistory() {
+        if (entityId.isNullOrBlank()) return
+        val fresh = runCatching { viewModel.client.history(entityId, 12) }.getOrNull()
+        if (!fresh.isNullOrEmpty()) {
+            points = fresh
+        }
+    }
+
+    LaunchedEffect(entityId, viewModel.client.currentBaseUrl) {
+        while (true) {
+            refreshHistory()
+            delay(30_000L)
+        }
+    }
+
+    LaunchedEffect(entityState?.state, entityState?.lastChanged) {
+        if (entityState == null || entityId.isNullOrBlank()) return@LaunchedEffect
+        delay(1_000L)
+        refreshHistory()
+    }
+
+    val plottedPoints = remember(points, entityState?.state, entityState?.lastChanged) {
+        withLivePoint(points, entityState, System.currentTimeMillis())
+    }
+
     Box(
         modifier = modifier
             .height(140.dp)
@@ -1444,15 +1734,42 @@ fun RoomConditions(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
             .widgetClicks(widget, viewModel)
             .padding(20.dp),
     ) {
-        Sparkline(points, Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(70.dp), AccentRed.copy(alpha = 0.7f))
+        Sparkline(
+            plottedPoints,
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(70.dp),
+            AccentRed.copy(alpha = 0.7f),
+        )
         Text(states.tempHum(widget.display), color = overlay.text, fontSize = 48.sp, fontWeight = FontWeight.Light)
     }
+}
+
+private fun withLivePoint(
+    points: List<Pair<Long, Double>>,
+    entity: EntityState?,
+    nowMs: Long,
+): List<Pair<Long, Double>> {
+    val currentVal = entity?.state?.toDoubleOrNull() ?: return points
+    if (points.isEmpty()) {
+        val startMs = nowMs - 12L * 3600_000L
+        return listOf(startMs to currentVal, nowMs to currentVal)
+    }
+    val out = ArrayList<Pair<Long, Double>>(points.size + 2)
+    out.addAll(points)
+    val last = points.last()
+    val changeMs = entity.lastChanged?.toEpochMilli() ?: nowMs
+    if (changeMs > last.first && changeMs < nowMs) {
+        out += changeMs to currentVal
+    }
+    if (nowMs > last.first) {
+        out += nowMs to currentVal
+    }
+    return out
 }
 
 @Composable
 fun SensorCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
-    val states by viewModel.states.collectAsState()
+    val states by viewModel.entitiesFlow(listOf(widget.entity, widget.state?.entity)).collectAsState()
     val entityId = widget.entity ?: widget.state?.entity
     val value = when {
         widget.state != null -> states.formatState(widget.state)
@@ -1487,8 +1804,8 @@ fun SensorCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = 
 @Composable
 fun ButtonToggle(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
-    val states by viewModel.states.collectAsState()
-    val on = states[widget.entity]?.state == "on"
+    val entity by viewModel.entityFlow(widget.entity).collectAsState()
+    val on = entity?.state == "on"
     Box(
         modifier = modifier
             .height(if (widget.type == "button_toggle_small") 66.dp else 160.dp)
@@ -1524,8 +1841,8 @@ fun ActionChip(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = 
 @Composable
 fun VacuumButton(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
-    val states by viewModel.states.collectAsState()
-    val on = isOn(states[widget.entity]?.state)
+    val entity by viewModel.entityFlow(widget.entity).collectAsState()
+    val on = isOn(entity?.state)
     val stop = widget.name.equals("Stop", ignoreCase = true)
     val start = widget.name.equals("Start", ignoreCase = true)
     val accented = start || stop || on
@@ -1546,16 +1863,17 @@ fun VacuumButton(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier 
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
         MdiIcon(widget.icon ?: "mdi:vacuum", tint = tint, size = 24.dp)
-        Text(widget.name ?: states[widget.entity]?.friendlyName.orEmpty(), color = tint, fontSize = 14.sp)
+        Text(widget.name ?: entity?.friendlyName.orEmpty(), color = tint, fontSize = 14.sp)
     }
 }
 
 @Composable
 fun MediaCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
-    val states by viewModel.states.collectAsState()
+    val companionEntity = widget.companionEntity ?: "media_player.living_room_appletv"
+    val states by viewModel.entitiesFlow(listOf(widget.entity, companionEntity)).collectAsState()
     val tv = states[widget.entity]
-    val apple = states[widget.companionEntity ?: "media_player.living_room_appletv"]
+    val apple = states[companionEntity]
     val playing = apple?.state in setOf("playing", "paused")
     val on = tv?.state == "on" || playing
     val tint = if (on) Color.Black else overlay.text
@@ -1595,7 +1913,13 @@ fun HistoryChart(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier 
     }
     var points by remember(entity) { mutableStateOf(listOf<Pair<Long, Double>>()) }
     LaunchedEffect(entity, viewModel.client.currentBaseUrl) {
-        entity?.let { points = runCatching { viewModel.client.history(it, 24) }.getOrDefault(emptyList()) }
+        while (true) {
+            entity?.let {
+                val fresh = runCatching { viewModel.client.history(it, 24) }.getOrNull()
+                if (!fresh.isNullOrEmpty()) points = fresh
+            }
+            delay(45_000L)
+        }
     }
     Column(
         modifier = modifier
@@ -1613,7 +1937,7 @@ fun HistoryChart(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier 
 @Composable
 fun BatteryRuntimePanel(viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
-    val states by viewModel.states.collectAsState()
+    val states by viewModel.entitiesFlow(BatteryRuntimeEntities).collectAsState()
     val discharging = states["binary_sensor.envoy_battery_discharging"]?.state == "on"
     val runtime = states.formatState(
         StateFormat(kind = "text", entity = "sensor.battery_runtime_remaining"),
@@ -1794,7 +2118,7 @@ private fun MmWaveZoneMap(
 @Composable
 fun MmWaveTargetsPanel(viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
-    val states by viewModel.states.collectAsState()
+    val states by viewModel.entitiesFlow(MmWaveEntities).collectAsState()
     val live by viewModel.mmWaveLive.collectAsState()
     val occupancyEntity = "binary_sensor.secondary_living_room_switch_occupancy"
     val countEntity = "input_number.secondary_living_room_mmwave_target_count"
@@ -1885,7 +2209,7 @@ private fun TargetRow(target: MmWaveTarget, overlay: OverlayColors) {
 @Composable
 fun EnergyStats(viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
-    val states by viewModel.states.collectAsState()
+    val states by viewModel.entitiesFlow(EnergyStatsEntities).collectAsState()
     val solar = states.number("sensor.envoy_202234122877_current_power_production", 2, " kW")
     val net = states.number("sensor.envoy_202234122877_current_net_power_consumption", 2, " kW")
     val battery = states.number("input_number.battery_energy_helper", 3, " kWh", 0.001)
@@ -1914,7 +2238,7 @@ fun EnergyStats(viewModel: HaViewModel, modifier: Modifier = Modifier) {
 @Composable
 fun EnergyDateBar(modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
-    val today = LocalDate.now().format(DateTimeFormatter.ofPattern("MMM d"))
+    val today = LocalDate.now().format(MONTH_DAY_FORMAT)
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -1947,7 +2271,7 @@ fun TabsWidget(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = 
     val overlay = LocalOverlay.current
     val initial = (widget.defaultTab ?: 1).let { if (it > 0) it - 1 else 0 }.coerceIn(0, (widget.tabs.size - 1).coerceAtLeast(0))
     var selected by remember { mutableIntStateOf(initial) }
-    val activeBrush = Brush.horizontalGradient(listOf(TabActiveStart, TabActiveEnd))
+    val activeBrush = TabActiveBrush
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -2002,36 +2326,80 @@ private fun SensorValueText(value: String, color: Color, size: androidx.compose.
 fun Sparkline(points: List<Pair<Long, Double>>, modifier: Modifier, color: Color) {
     Canvas(modifier) {
         if (points.size < 2) return@Canvas
-        val min = points.minOf { it.second }
-        val max = points.maxOf { it.second }
-        val span = (max - min).takeIf { it != 0.0 } ?: 1.0
-        val path = Path()
-        points.forEachIndexed { index, point ->
-            val x = size.width * index / (points.size - 1).toFloat()
-            val y = size.height - ((point.second - min) / span * size.height).toFloat()
-            if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        var min = points.minOf { it.second }
+        var max = points.maxOf { it.second }
+        if (min == max) {
+            min -= 1.0
+            max += 1.0
         }
-        path.lineTo(size.width, size.height)
-        path.lineTo(0f, size.height)
-        path.close()
-        drawPath(path, color.copy(alpha = 0.35f), style = Fill)
+        val pad = ((max - min) * 0.1).coerceAtLeast(0.2)
+        min -= pad
+        max += pad
+        val span = max - min
+
+        val tMin = points.minOf { it.first }
+        val tMax = points.maxOf { it.first }
+        val tSpan = (tMax - tMin).takeIf { it > 0 }
+        val pts = if (tSpan != null) points.sortedBy { it.first } else points
+
+        val linePath = Path()
+        val fillPath = Path()
+
+        pts.forEachIndexed { index, point ->
+            val x = if (tSpan != null) {
+                ((point.first - tMin).toDouble() / tSpan * size.width).toFloat().coerceIn(0f, size.width)
+            } else {
+                size.width * index / (pts.size - 1).toFloat()
+            }
+            val y = (size.height - ((point.second - min) / span * size.height).toFloat()).coerceIn(0f, size.height)
+            if (index == 0) {
+                linePath.moveTo(x, y)
+                fillPath.moveTo(x, y)
+            } else {
+                linePath.lineTo(x, y)
+                fillPath.lineTo(x, y)
+            }
+        }
+        fillPath.lineTo(size.width, size.height)
+        fillPath.lineTo(0f, size.height)
+        fillPath.close()
+
+        drawPath(fillPath, color.copy(alpha = 0.35f), style = Fill)
+        drawPath(
+            linePath,
+            color,
+            style = Stroke(
+                width = 2.5.dp.toPx(),
+                cap = StrokeCap.Round,
+                join = StrokeJoin.Round,
+            ),
+        )
     }
 }
 
 @Composable
 fun EntityPicture(path: String?, viewModel: HaViewModel, modifier: Modifier) {
-    var bytes by remember(path) { mutableStateOf<ByteArray?>(null) }
-    LaunchedEffect(path, viewModel.client.currentBaseUrl) {
-        if (!path.isNullOrBlank()) {
-            bytes = viewModel.client.authenticatedBytes(path)
-        }
-    }
-    val bitmap = remember(bytes) { bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
-    if (bitmap != null) {
-        Image(bitmap, contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop)
-    } else {
+    val context = LocalContext.current
+    val loader = rememberHaImageLoader(viewModel.client)
+    val url = resolveHaImageUrl(path, viewModel.client.currentBaseUrl)
+    if (url.isNullOrBlank()) {
         Box(modifier.background(ChipDark), contentAlignment = Alignment.Center) {
             MdiIcon("mdi:home", tint = ChipOnDark, size = 20.dp)
+        }
+        return
+    }
+    SubcomposeAsyncImage(
+        model = ImageRequest.Builder(context).data(url).crossfade(true).build(),
+        contentDescription = null,
+        imageLoader = loader,
+        modifier = modifier,
+        contentScale = ContentScale.Crop,
+    ) {
+        when (painter.state) {
+            is AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
+            else -> Box(Modifier.fillMaxSize().background(ChipDark), contentAlignment = Alignment.Center) {
+                MdiIcon("mdi:home", tint = ChipOnDark, size = 20.dp)
+            }
         }
     }
 }
@@ -2048,12 +2416,7 @@ fun Modifier.popupSheetLook(sheet: Color): Modifier =
     )
         .clip(PopupSheetShape)
         .background(sheet)
-        .background(
-            Brush.verticalGradient(
-                0f to Color.White.copy(alpha = 0.42f),
-                0.2f to Color.Transparent,
-            ),
-        )
+        .background(PopupSheetSheenBrush)
         .border(1.dp, Color.White.copy(alpha = 0.7f), PopupSheetShape)
 
 @Composable
@@ -2153,8 +2516,8 @@ fun PopupSheetChrome(
 enum class PopupSheetKind { Room, Camera, Utility, Settings, Detail }
 
 fun popupSheetKind(hash: String?): PopupSheetKind = when (hash) {
-    "#camerafront_view", "#music" -> PopupSheetKind.Camera
-    "#settings" -> PopupSheetKind.Settings
+    KioskCommands.CAMERA_POPUP, "#music", "#camerafront_view", "#camera_alert" -> PopupSheetKind.Camera
+    "#settings", "#changelog" -> PopupSheetKind.Settings
     "#weather", "#power", "#bil", "#staubinator" -> PopupSheetKind.Utility
     else -> PopupSheetKind.Room
 }
@@ -2166,7 +2529,6 @@ fun PopupScaffold(
     scrollContent: Boolean = true,
     denseContent: Boolean = false,
     overlay: OverlayColors = OverlayLightPopup,
-    titleOverride: String? = null,
     subtitleOverride: String? = null,
     content: @Composable () -> Unit,
 ) {
@@ -2194,7 +2556,7 @@ fun PopupScaffold(
                 .padding(innerPadding),
         ) {
             PopupSheetChrome(
-                title = titleOverride ?: popup.name.orEmpty(),
+                title = popup.name.orEmpty(),
                 onClose = { viewModel.closePopup() },
                 overlay = overlay,
                 icon = popup.icon,

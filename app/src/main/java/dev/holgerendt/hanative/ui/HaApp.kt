@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,9 +25,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalDrawerSheet
@@ -47,6 +51,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +61,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -64,7 +70,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.holgerendt.hanative.PanelConfig
+import dev.holgerendt.hanative.data.Changelog
+import dev.holgerendt.hanative.data.CrashLogger
 import dev.holgerendt.hanative.data.ConnectionState
+import dev.holgerendt.hanative.data.KioskCommands
+import dev.holgerendt.hanative.data.LightAllowlist
 import dev.holgerendt.hanative.data.QrCodes
 import dev.holgerendt.hanative.model.PopupNode
 import dev.holgerendt.hanative.ui.brightnessPct
@@ -79,13 +90,11 @@ import dev.holgerendt.hanative.ui.theme.PopupScrim
 import dev.holgerendt.hanative.ui.theme.ScreenBackground
 import dev.holgerendt.hanative.ui.theme.TextDark
 import dev.holgerendt.hanative.ui.theme.TextMuted
-import dev.holgerendt.hanative.ui.theme.accentColor
 import dev.holgerendt.hanative.ui.widgets.CameraPopup
 import dev.holgerendt.hanative.ui.widgets.ChipRow
 import dev.holgerendt.hanative.ui.widgets.MediaImageDialog
 import dev.holgerendt.hanative.ui.widgets.MediaVideoDialog
 import dev.holgerendt.hanative.ui.widgets.PersonCard
-import dev.holgerendt.hanative.ui.widgets.personCameraStripHeight
 import dev.holgerendt.hanative.ui.widgets.PersonCameraOverlay
 import dev.holgerendt.hanative.ui.widgets.PopupScaffold
 import dev.holgerendt.hanative.ui.widgets.RoomGrid
@@ -94,6 +103,9 @@ import dev.holgerendt.hanative.ui.widgets.WeatherHeader
 import dev.holgerendt.hanative.ui.widgets.WeekPlanner
 import dev.holgerendt.hanative.ui.widgets.WidgetTree
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 @Composable
 fun HaApp(viewModel: HaViewModel) {
@@ -136,7 +148,7 @@ fun HaApp(viewModel: HaViewModel) {
                         modifier = Modifier.align(Alignment.TopCenter).padding(8.dp),
                     )
                 }
-                if (ui.popupHash.isNullOrBlank()) {
+                if (!PanelConfig.IS_ENTRANCE && ui.popupHash.isNullOrBlank()) {
                     BottomDock(
                         viewModel = viewModel,
                         modifier = Modifier.align(Alignment.BottomCenter),
@@ -144,7 +156,7 @@ fun HaApp(viewModel: HaViewModel) {
                 }
             }
         }
-        val popup = viewModel.popup(ui.popupHash)
+        val popup = remember(ui.popupHash) { viewModel.popup(ui.popupHash) }
         if (popup != null) {
             InWindowOverlay(
                 onDismiss = { viewModel.closePopup() },
@@ -197,39 +209,32 @@ fun HaApp(viewModel: HaViewModel) {
 
 @Composable
 private fun DrawerMenu(viewModel: HaViewModel) {
-    val items = listOf(
-        "Weather" to "#weather",
-        "Power" to "#power",
-        "Presence" to "#presence",
-        "Cars" to "#bil",
-        "Staubinator" to "#staubinator",
-        "Camera" to "#camerafront_view",
-        "Music" to "#music",
-        "Settings" to "#settings",
-    )
+    val items = PanelConfig.DRAWER_ITEMS
     Column(Modifier.fillMaxHeight().width(280.dp).padding(20.dp)) {
-        Text("Greatroom Wall", color = TextDark, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        Text(PanelConfig.DISPLAY_NAME, color = TextDark, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(24.dp))
-        items.forEach { (label, hash) ->
+        items.forEach { item ->
             Text(
-                text = label,
+                text = item.label,
                 color = TextDark,
                 fontSize = 16.sp,
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .clickable { viewModel.openPopup(hash) }
+                    .clickable { viewModel.openPopup(item.hash) }
                     .padding(vertical = 12.dp, horizontal = 8.dp),
             )
         }
         Spacer(Modifier.weight(1f))
-        val ui by viewModel.ui.collectAsState()
+        val remoteUrls by remember(viewModel) {
+            viewModel.ui.map { it.remoteUrls }.distinctUntilChanged()
+        }.collectAsState(viewModel.ui.value.remoteUrls)
         Text("Remote setup", color = TextMuted, fontSize = 12.sp)
-        ui.remoteUrls.firstOrNull()?.let {
+        remoteUrls.firstOrNull()?.let {
             Text(it, color = TextDark, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
         }
-        Text("PIN ${ui.remotePin}", color = TextDark, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 4.dp, bottom = 4.dp))
-        Text("Stays until you change it in Settings", color = TextMuted, fontSize = 12.sp, modifier = Modifier.padding(bottom = 12.dp))
+        // The drawer is permanently rendered on a wall panel, so the admin PIN lives in Settings.
+        Text("PIN in Settings", color = TextMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
         Text(
             "Home Assistant connection",
             color = TextDark,
@@ -240,8 +245,16 @@ private fun DrawerMenu(viewModel: HaViewModel) {
 
 @Composable
 private fun HomeScreen(viewModel: HaViewModel) {
-    val ui by viewModel.ui.collectAsState()
-    val home = ui.dashboard?.home ?: return
+    // Only the dashboard tree matters here; collecting all of UiState would recompose the room
+    // grid, planner, and timeline every time a popup or more-info dialog opened on top of them.
+    val homeNode by remember(viewModel) {
+        viewModel.ui.map { it.dashboard?.home }.distinctUntilChanged()
+    }.collectAsState(viewModel.ui.value.dashboard?.home)
+    val home = homeNode ?: return
+    if (home.isEntrance || PanelConfig.IS_ENTRANCE) {
+        EntranceHomeScreen(home, viewModel)
+        return
+    }
     val menu = home.header.firstOrNull { it.type == "menu_button" }
     val weather = home.header.firstOrNull { it.type == "weather_header" }
     Column(
@@ -283,27 +296,29 @@ private fun HomeScreen(viewModel: HaViewModel) {
             WeekPlanner(it, viewModel, Modifier.fillMaxWidth())
         }
         Spacer(Modifier.height(12.dp))
-        // Lovelace `(min-width: 1024px)`: 50% rooms | 50% timeline. 1080px portrait qualifies.
+        // Lovelace `(min-width: 1024px)`: 50% rooms | 50% timeline. Backyard person cams stack
+        // below the vision timeline in the right column instead of replacing it.
         val activePersonCameras by viewModel.activePersonCameras.collectAsState()
-        Column(modifier = Modifier.fillMaxWidth()) {
-            if (activePersonCameras.isNotEmpty()) {
-                PersonCameraOverlay(
-                    cameras = activePersonCameras,
-                    viewModel = viewModel,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(personCameraStripHeight(activePersonCameras.size)),
-                )
-                Spacer(Modifier.height(8.dp))
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.Top,
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            RoomGrid(home.rooms, viewModel, Modifier.weight(1f))
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                RoomGrid(home.rooms, viewModel, Modifier.weight(1f))
                 home.timeline?.let {
-                    VisionTimeline(it, viewModel, Modifier.weight(1f))
+                    VisionTimeline(it, viewModel, Modifier.fillMaxWidth())
+                }
+                if (activePersonCameras.isNotEmpty()) {
+                    PersonCameraOverlay(
+                        cameras = activePersonCameras,
+                        viewModel = viewModel,
+                        fitContent = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
         }
@@ -368,14 +383,14 @@ private fun DockButton(item: DockItem, onClick: () -> Unit, modifier: Modifier =
 
 @Composable
 private fun PopupHost(popup: PopupNode, viewModel: HaViewModel) {
-    val cameraPopup = popup.hash == "#camerafront_view"
+    val cameraPopup = popup.hash == KioskCommands.CAMERA_POPUP
     val musicPopup = popup.hash == "#music"
     val weatherPopup = popup.hash == "#weather"
     val ui by viewModel.ui.collectAsState()
-    val states by viewModel.states.collectAsState()
     val weatherEntity = ui.weatherPopupContext?.entityId ?: "weather.forecast_tankerland_ct"
+    val weatherState by viewModel.entityFlow(if (weatherPopup) weatherEntity else null).collectAsState()
     val weatherSubtitle = if (weatherPopup) {
-        states[weatherEntity]?.friendlyName?.takeIf { it.isNotBlank() }
+        weatherState?.friendlyName?.takeIf { it.isNotBlank() }
     } else {
         null
     }
@@ -388,10 +403,79 @@ private fun PopupHost(popup: PopupNode, viewModel: HaViewModel) {
     ) {
         when (popup.hash) {
             "#weather" -> WeatherPopup(popup, viewModel)
-            "#camerafront_view" -> CameraPopup(popup, viewModel)
+            KioskCommands.CAMERA_POPUP -> CameraPopup(popup, viewModel)
             "#music" -> MusicAssistantPopup(popup, viewModel)
             "#settings" -> SettingsPopup(popup, viewModel)
+            "#changelog" -> ChangelogPopup()
             else -> WidgetTree(popup.cards, viewModel)
+        }
+    }
+}
+
+@Composable
+private fun ChangelogPopup() {
+    val context = LocalContext.current
+    val overlay = LocalOverlay.current
+    val entries = remember(context) { Changelog.load(context, limit = 5) }
+    val installedVersion = remember(context) {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull().orEmpty()
+    }
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (installedVersion.isNotBlank()) {
+            Text(
+                text = "Installed $installedVersion",
+                color = TextMuted,
+                fontSize = 13.sp,
+            )
+        }
+        if (entries.isEmpty()) {
+            Text("No changelog entries yet.", color = TextMuted, fontSize = 14.sp)
+        } else {
+            entries.forEach { entry ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(overlay.card)
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = entry.version,
+                            color = TextDark,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        entry.date?.takeIf { it.isNotBlank() }?.let { date ->
+                            Text(date, color = TextMuted, fontSize = 13.sp)
+                        }
+                    }
+                    entry.notes.forEach { note ->
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("•", color = TextDark, fontSize = 14.sp)
+                            Text(
+                                text = note,
+                                color = TextDark,
+                                fontSize = 14.sp,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -400,10 +484,80 @@ private fun PopupHost(popup: PopupNode, viewModel: HaViewModel) {
 private fun SettingsPopup(popup: PopupNode, viewModel: HaViewModel) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ScreenTimeoutCard(viewModel)
+        Go2rtcUrlCard(viewModel)
         ManagementPinCard(viewModel)
         CalendarSubscriptionsCard(viewModel)
-        DebugPersonCamerasCard(viewModel)
+        if (PanelConfig.IS_ENTRANCE) {
+            LightsAllowlistCard(viewModel)
+        } else {
+            DebugPersonCamerasCard(viewModel)
+        }
+        CrashLogCard()
         WidgetTree(popup.cards, viewModel)
+    }
+}
+
+@Composable
+private fun CrashLogCard() {
+    val overlay = LocalOverlay.current
+    var crashText by remember { mutableStateOf(CrashLogger.latestCrash) }
+    var expanded by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .background(overlay.card)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("Diagnostics & crash log", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        val text = crashText
+        if (text.isNullOrBlank()) {
+            Text(
+                "No crash reports recorded. Uncaught errors are automatically preserved across relaunches.",
+                color = overlay.muted,
+                fontSize = 14.sp,
+            )
+        } else {
+            Text(
+                "A previous crash was captured and preserved for troubleshooting.",
+                color = Color(0xFFFF8A80),
+                fontSize = 14.sp,
+            )
+            if (expanded) {
+                SelectionContainer {
+                    Text(
+                        text = text,
+                        color = overlay.text,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFF1E1E1E))
+                            .padding(12.dp),
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = { expanded = !expanded },
+                    colors = ButtonDefaults.buttonColors(containerColor = overlay.well, contentColor = overlay.text),
+                ) {
+                    Text(if (expanded) "Hide details" else "View stack trace")
+                }
+                Button(
+                    onClick = {
+                        CrashLogger.clearCrash()
+                        crashText = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A1515), contentColor = Color(0xFFFF8A80)),
+                ) {
+                    Text("Clear report")
+                }
+            }
+        }
     }
 }
 
@@ -411,7 +565,8 @@ private fun SettingsPopup(popup: PopupNode, viewModel: HaViewModel) {
 private fun ScreenTimeoutCard(viewModel: HaViewModel) {
     val overlay = LocalOverlay.current
     val ui by viewModel.ui.collectAsState()
-    val states by viewModel.states.collectAsState()
+    val brightnessEntity = ui.displayBrightnessEntity.takeIf { it.isNotBlank() }
+    val brightnessState by viewModel.entityFlow(brightnessEntity).collectAsState()
     var secondsText by remember { mutableStateOf(ui.screenTimeoutSeconds.toString()) }
     var timeoutError by remember { mutableStateOf<String?>(null) }
     var timeoutMessage by remember { mutableStateOf<String?>(null) }
@@ -477,7 +632,7 @@ private fun ScreenTimeoutCard(viewModel: HaViewModel) {
             label = "Turn off display entity",
             hint = "switch.uc_display turns the panel off on sleep and on when waking",
             selected = ui.displayOffEntity,
-            choices = viewModel.displayOffEntityChoices(),
+            choices = remember(viewModel) { viewModel.displayOffEntityChoices() },
             noneLabel = "None (app overlay only)",
             fieldColors = fieldColors,
             onSelect = viewModel::setDisplayOffEntity,
@@ -486,7 +641,7 @@ private fun ScreenTimeoutCard(viewModel: HaViewModel) {
             label = "Brightness entity",
             hint = "number.uc_display_brightness controls panel backlight",
             selected = ui.displayBrightnessEntity,
-            choices = viewModel.displayBrightnessEntityChoices(),
+            choices = remember(viewModel) { viewModel.displayBrightnessEntityChoices() },
             noneLabel = "None",
             fieldColors = fieldColors,
             onSelect = viewModel::setDisplayBrightnessEntity,
@@ -495,17 +650,16 @@ private fun ScreenTimeoutCard(viewModel: HaViewModel) {
             label = "Auto-brightness sensor",
             hint = "Room illuminance (lx) maps to backlight while the panel is awake",
             selected = ui.displayIlluminanceEntity,
-            choices = viewModel.displayIlluminanceEntityChoices(),
+            choices = remember(viewModel) { viewModel.displayIlluminanceEntityChoices() },
             noneLabel = "None (manual only)",
             fieldColors = fieldColors,
             onSelect = viewModel::setDisplayIlluminanceEntity,
         )
-        val brightnessEntity = ui.displayBrightnessEntity.takeIf { it.isNotBlank() }
         if (brightnessEntity != null) {
-            val entity = states[brightnessEntity]
+            val entity = brightnessState
             val domain = brightnessEntity.substringBefore('.')
             val (rawMin, rawMax, rawLive) = when (domain) {
-                "light" -> Triple(0f, 100f, states.brightnessPct(brightnessEntity).toFloat())
+                "light" -> Triple(0f, 100f, entity.brightnessPct().toFloat())
                 else -> Triple(
                     entity?.attrDouble("min")?.toFloat() ?: 0f,
                     entity?.attrDouble("max")?.toFloat() ?: 255f,
@@ -694,6 +848,97 @@ private fun DebugPersonCamerasCard(viewModel: HaViewModel) {
 }
 
 @Composable
+private fun LightsAllowlistCard(viewModel: HaViewModel) {
+    val overlay = LocalOverlay.current
+    val stored by viewModel.monitoredLights.collectAsState()
+    val states by viewModel.states.collectAsState()
+    val choices = remember(states) {
+        states.entries
+            .asSequence()
+            .filter { LightAllowlist.isPickerCandidate(it.key) }
+            .map { it.key to it.value.friendlyName }
+            .sortedBy { it.second.lowercase() }
+            .toList()
+    }
+    val selected = remember(stored, states) {
+        LightAllowlist.resolved(stored, states).toSet()
+    }
+    var filter by remember { mutableStateOf("") }
+    val filtered = remember(filter, choices) {
+        val q = filter.trim().lowercase()
+        if (q.isEmpty()) choices
+        else choices.filter { (id, name) ->
+            id.lowercase().contains(q) || name.lowercase().contains(q)
+        }
+    }
+    val fieldColors = settingsFieldColors(overlay)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .background(overlay.card)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("Lights & switches", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            "Checked entities appear in the status list when on, and All Lights Off turns them off. UniFi/device LEDs are off by default.",
+            color = overlay.muted,
+            fontSize = 14.sp,
+        )
+        OutlinedTextField(
+            value = filter,
+            onValueChange = { filter = it },
+            label = { Text("Search lights and switches") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = fieldColors,
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 320.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            filtered.forEach { (id, name) ->
+                val checked = id in selected
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            val next = selected.toMutableSet()
+                            if (checked) next.remove(id) else next.add(id)
+                            viewModel.setMonitoredLights(next.sorted())
+                        }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = checked,
+                        onCheckedChange = { on ->
+                            val next = selected.toMutableSet()
+                            if (on) next.add(id) else next.remove(id)
+                            viewModel.setMonitoredLights(next.sorted())
+                        },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = overlay.text,
+                            uncheckedColor = overlay.muted,
+                        ),
+                    )
+                    Column(Modifier.padding(start = 4.dp)) {
+                        Text(name, color = overlay.text, fontSize = 14.sp)
+                        Text(id, color = overlay.muted, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+        TextButton(onClick = { viewModel.setMonitoredLights(null) }) {
+            Text("Reset to default lights", color = overlay.text)
+        }
+    }
+}
+
+@Composable
 private fun CalendarSubscriptionsCard(viewModel: HaViewModel) {
     val overlay = LocalOverlay.current
     val available by viewModel.availableCalendars.collectAsState()
@@ -748,6 +993,89 @@ private fun CalendarSubscriptionsCard(viewModel: HaViewModel) {
 }
 
 @Composable
+private fun Go2rtcUrlCard(viewModel: HaViewModel) {
+    val overlay = LocalOverlay.current
+    val ui by viewModel.ui.collectAsState()
+    var urlText by remember { mutableStateOf(ui.go2rtcUrl) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var message by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(ui.go2rtcUrl) {
+        urlText = ui.go2rtcUrl
+    }
+    val fieldColors = settingsFieldColors(overlay)
+    val scope = rememberCoroutineScope()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .background(overlay.card)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("go2rtc", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            "Base URL for live camera streams when a popup has no stream_server. Leave blank to use dashboard stream_server values.",
+            color = overlay.muted,
+            fontSize = 14.sp,
+        )
+        OutlinedTextField(
+            value = urlText,
+            onValueChange = {
+                urlText = it
+                error = null
+                message = null
+            },
+            label = { Text("go2rtc base URL") },
+            placeholder = { Text("http://192.168.10.31:1984/") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = fieldColors,
+        )
+        error?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 13.sp) }
+        message?.let { Text(it, color = Color(0xFFC5E1A5), fontSize = 13.sp) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = {
+                    scope.launch {
+                        val result = viewModel.setGo2rtcUrl(urlText)
+                        if (result.isSuccess) {
+                            error = null
+                            message = if (urlText.isBlank()) "Using dashboard stream_server" else "go2rtc URL saved"
+                        } else {
+                            message = null
+                            error = result.exceptionOrNull()?.message ?: "Could not save URL"
+                        }
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(ActiveYellow),
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Save URL", color = Color.Black)
+            }
+            if (ui.go2rtcUrl.isNotBlank() || urlText.isNotBlank()) {
+                TextButton(
+                    onClick = {
+                        urlText = ""
+                        scope.launch {
+                            val result = viewModel.setGo2rtcUrl("")
+                            if (result.isSuccess) {
+                                error = null
+                                message = "Using dashboard stream_server"
+                            } else {
+                                message = null
+                                error = result.exceptionOrNull()?.message ?: "Could not clear URL"
+                            }
+                        }
+                    },
+                ) {
+                    Text("Clear", color = overlay.text)
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ManagementPinCard(viewModel: HaViewModel) {
     val overlay = LocalOverlay.current
     val ui by viewModel.ui.collectAsState()
@@ -778,7 +1106,18 @@ private fun ManagementPinCard(viewModel: HaViewModel) {
             color = overlay.muted,
             fontSize = 14.sp,
         )
-        Text("Current PIN ${ui.remotePin}", color = overlay.text, fontSize = 16.sp, fontFamily = FontFamily.Monospace)
+        var revealed by remember { mutableStateOf(false) }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "Current PIN " + if (revealed) ui.remotePin else "•".repeat(ui.remotePin.length.coerceAtLeast(6)),
+                color = overlay.text,
+                fontSize = 16.sp,
+                fontFamily = FontFamily.Monospace,
+            )
+            TextButton(onClick = { revealed = !revealed }) {
+                Text(if (revealed) "Hide" else "Show", color = overlay.text)
+            }
+        }
         OutlinedTextField(
             value = pin,
             onValueChange = { value ->
@@ -823,6 +1162,23 @@ private fun ManagementPinCard(viewModel: HaViewModel) {
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(if (ui.pinIsUserSet) "Change PIN" else "Save PIN", color = Color.Black)
+        }
+        TextButton(
+            onClick = {
+                val result = viewModel.resetManagementPin()
+                result.onSuccess { fresh ->
+                    error = null
+                    message = "New PIN $fresh — use this on the admin page"
+                    pin = ""
+                    confirm = ""
+                }.onFailure {
+                    message = null
+                    error = it.message ?: "Could not reset PIN"
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Generate new PIN", color = overlay.text)
         }
     }
 }
@@ -921,7 +1277,7 @@ fun SetupScreen(viewModel: HaViewModel) {
                 fontFamily = FontFamily.Monospace,
             )
             Text("This PIN stays until you change it in Settings.", color = ChipOnDark, fontSize = 13.sp)
-            ui.managementError?.let { Text("Management server: $it", color = Color(0xFFFF8A80), fontSize = 12.sp) }
+            ui.managementError?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 12.sp) }
             if (!showOnDevice && error != null) {
                 Text(error, color = Color(0xFFFF8A80), fontSize = 13.sp, textAlign = TextAlign.Center)
             }

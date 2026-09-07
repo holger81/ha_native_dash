@@ -1,10 +1,12 @@
 package dev.holgerendt.hanative.ui
 
 import android.app.Application
+import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import dev.holgerendt.hanative.HaNativeApp
+import dev.holgerendt.hanative.PanelConfig
 import dev.holgerendt.hanative.data.CalendarInfo
 import dev.holgerendt.hanative.data.CameraStreams
 import dev.holgerendt.hanative.data.ConnectionState
@@ -12,20 +14,28 @@ import dev.holgerendt.hanative.data.CredentialsStore
 import dev.holgerendt.hanative.data.DashboardLoader
 import dev.holgerendt.hanative.data.EntityState
 import dev.holgerendt.hanative.data.HaClient
-import dev.holgerendt.hanative.data.IngressLoad
 import dev.holgerendt.hanative.data.KioskCommand
 import dev.holgerendt.hanative.data.KioskCommands
 import dev.holgerendt.hanative.data.KioskSnapshot
 import dev.holgerendt.hanative.data.LanAddresses
+import dev.holgerendt.hanative.data.LightAllowlist
 import dev.holgerendt.hanative.data.LiveCameraHub
 import dev.holgerendt.hanative.data.LiveCameraView
 import dev.holgerendt.hanative.data.ManagementServer
 import dev.holgerendt.hanative.data.ManagementTls
-import dev.holgerendt.hanative.data.MusicAssistantLoadMode
-import dev.holgerendt.hanative.data.MusicAssistantLoadTarget
-import dev.holgerendt.hanative.data.MusicAssistantPanelResolution
+import dev.holgerendt.hanative.data.MusicAssistantPlayer
+import dev.holgerendt.hanative.data.MusicAssistantQueue
+import dev.holgerendt.hanative.data.MassMediaItem
+import dev.holgerendt.hanative.data.MassSearchResults
 import dev.holgerendt.hanative.data.MmWaveLiveTargets
 import dev.holgerendt.hanative.data.MmWaveLiveTracker
+import dev.holgerendt.hanative.data.NetworkGuard
+import dev.holgerendt.hanative.data.isShuffleOn
+import dev.holgerendt.hanative.data.mediaArtist
+import dev.holgerendt.hanative.data.mediaPositionSec
+import dev.holgerendt.hanative.data.mediaPositionUpdatedAtMs
+import dev.holgerendt.hanative.data.mediaTitle
+import dev.holgerendt.hanative.data.repeatMode
 import dev.holgerendt.hanative.model.ActionNode
 import dev.holgerendt.hanative.model.CalendarSourceNode
 import dev.holgerendt.hanative.model.DashboardFile
@@ -34,6 +44,7 @@ import dev.holgerendt.hanative.model.PopupNode
 import dev.holgerendt.hanative.model.WidgetNode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,19 +53,25 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import java.security.SecureRandom
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -64,10 +81,56 @@ data class WeatherPopupContext(
     val initialTab: String? = null,
 )
 
-data class MusicAssistantPanelState(
-    val resolved: Boolean = false,
-    val targets: List<MusicAssistantLoadTarget> = emptyList(),
-    val debugInfo: List<String> = emptyList(),
+private val DEFAULT_MUSIC_SEARCH_TYPES = setOf("track", "album", "playlist", "artist")
+
+private val MUSIC_POPUP = PopupNode(
+    name = "Music Assistant",
+    icon = "mdi:music-note",
+    hash = "#music",
+)
+
+private val CHANGELOG_POPUP = PopupNode(
+    name = "Changelog",
+    icon = "mdi:information",
+    hash = "#changelog",
+)
+
+private val SETTINGS_POPUP = PopupNode(
+    name = "Settings",
+    icon = "mdi:tune-variant",
+    hash = "#settings",
+)
+
+data class MusicBrowseFrame(
+    val title: String,
+    val path: String,
+    val items: List<MassMediaItem> = emptyList(),
+    val loading: Boolean = false,
+    val error: String? = null,
+)
+
+data class MusicDiscoveryState(
+    val loading: Boolean = false,
+    val recentlyPlayed: List<MassMediaItem> = emptyList(),
+    val newMusic: List<MassMediaItem> = emptyList(),
+    val stationsForYou: List<MassMediaItem> = emptyList(),
+    val searchQuery: String = "",
+    val searchTypes: Set<String> = DEFAULT_MUSIC_SEARCH_TYPES,
+    val searchLoading: Boolean = false,
+    val searchResults: MassSearchResults? = null,
+    val browseStack: List<MusicBrowseFrame> = emptyList(),
+    val error: String? = null,
+    val playingUri: String? = null,
+)
+
+data class MusicWallState(
+    val loading: Boolean = true,
+    val players: List<MusicAssistantPlayer> = emptyList(),
+    val selectedEntityId: String? = null,
+    val queue: MusicAssistantQueue? = null,
+    val error: String? = null,
+    val tab: String = "now",
+    val discovery: MusicDiscoveryState = MusicDiscoveryState(),
 )
 
 data class UiState(
@@ -89,6 +152,8 @@ data class UiState(
     val displayOffEntity: String = "",
     val displayBrightnessEntity: String = "",
     val displayIlluminanceEntity: String = "",
+    /** Blank keeps dashboard `stream_server` / existing camera fallbacks. */
+    val go2rtcUrl: String = "",
 )
 
 data class MediaPreview(
@@ -97,6 +162,7 @@ data class MediaPreview(
     val subtitle: String? = null,
     val description: String? = null,
     val isVideo: Boolean = false,
+    val previewPath: String? = null,
 )
 
 class HaViewModel(
@@ -110,18 +176,66 @@ class HaViewModel(
     val connection: StateFlow<ConnectionState> = client.connection
         .stateIn(viewModelScope, SharingStarted.Eagerly, ConnectionState.Disconnected)
 
+    private val noEntityFlow: StateFlow<EntityState?> = MutableStateFlow(null)
+    private val entityFlows = ConcurrentHashMap<String, StateFlow<EntityState?>>()
+    fun entityFlow(entityId: String?): StateFlow<EntityState?> {
+        if (entityId == null) return noEntityFlow
+        return entityFlows.getOrPut(entityId) {
+            client.states
+                .map { it[entityId] }
+                .distinctUntilChanged()
+                .stateIn(viewModelScope, SharingStarted.Lazily, null)
+        }
+    }
+
+    private val noEntitiesFlow: StateFlow<Map<String, EntityState>> = MutableStateFlow(emptyMap())
+    private val entityMapFlows = ConcurrentHashMap<Set<String>, StateFlow<Map<String, EntityState>>>()
+
+    /**
+     * A view of [states] narrowed to [entityIds]. Widgets collect this instead of the whole map so
+     * the 80 ms `state_changed` flush only recomposes the widgets whose own entities changed.
+     */
+    fun entitiesFlow(entityIds: Collection<String?>): StateFlow<Map<String, EntityState>> {
+        val ids = entityIds.mapNotNullTo(HashSet()) { it?.takeIf(String::isNotBlank) }
+        if (ids.isEmpty()) return noEntitiesFlow
+        return entityMapFlows.getOrPut(ids) {
+            client.states
+                .map { all -> narrow(all, ids) }
+                .distinctUntilChanged()
+                .stateIn(viewModelScope, SharingStarted.Lazily, narrow(client.states.value, ids))
+        }
+    }
+
+    private fun narrow(all: Map<String, EntityState>, ids: Set<String>): Map<String, EntityState> =
+        buildMap(ids.size) {
+            ids.forEach { id -> all[id]?.let { put(id, it) } }
+        }
+
     private val _ui = MutableStateFlow(
         UiState(showSetup = !credentials.isConfigured),
     )
     val ui: StateFlow<UiState> = _ui
 
     private var reconnectJob: Job? = null
-    private var managementServer: ManagementServer? = null
+    private var displayWakeJob: Job? = null
+    @Volatile private var managementServer: ManagementServer? = null
     private val random = SecureRandom()
-    @Volatile private var currentPin: String = credentials.adoptOrCreatePin { newPin() }
 
     private val _subscribedCalendars = MutableStateFlow(credentials.subscribedCalendars)
     val subscribedCalendars: StateFlow<List<String>?> = _subscribedCalendars
+
+    private val _monitoredLights = MutableStateFlow(credentials.monitoredLightEntities)
+    val monitoredLights: StateFlow<List<String>?> = _monitoredLights
+
+    private val _tabletMotion = MutableStateFlow(false)
+
+    val occupancyActive: StateFlow<Boolean> = combine(
+        _ui.map { it.dashboard?.home?.occupancyEntities.orEmpty() }.distinctUntilChanged(),
+        states,
+        _tabletMotion,
+    ) { ids, all, local ->
+        local || occupancyEntityIds(ids).any { id -> all[id]?.state == "on" }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private val _mmWaveLive = MutableStateFlow(MmWaveLiveTargets())
     val mmWaveLive: StateFlow<MmWaveLiveTargets> = _mmWaveLive
@@ -132,12 +246,15 @@ class HaViewModel(
     private val _calendarEventsRevision = MutableStateFlow(0)
     val calendarEventsRevision: StateFlow<Int> = _calendarEventsRevision
 
+    private val _visionTimelineRevision = MutableStateFlow(0)
+    val visionTimelineRevision: StateFlow<Int> = _visionTimelineRevision
+
     private val _activePersonCameras = MutableStateFlow<List<WidgetNode>>(emptyList())
     val activePersonCameras: StateFlow<List<WidgetNode>> = _activePersonCameras
     private val _debugPersonCamerasEnabled = MutableStateFlow(false)
     val debugPersonCamerasEnabled: StateFlow<Boolean> = _debugPersonCamerasEnabled
     private var personCameraCooldownJob: Job? = null
-    private var popupAutoDismissJob: Job? = null
+    private var roomPopupDismissJob: Job? = null
 
     private var lastActivityMs = System.currentTimeMillis()
     private var sleptAtMs = 0L
@@ -145,6 +262,10 @@ class HaViewModel(
     /** Lux-mapped brightness the ramp is easing toward; null while auto-brightness is idle. */
     private val autoBrightnessDesired = MutableStateFlow<Int?>(null)
     private var autoBrightnessApplied: Int? = null
+    /** Filtered ambient lux that rejects transient shadows. */
+    private var filteredAmbientLux: Double? = null
+    /** Job confirming sustained dimming before lowering ambient lux. */
+    private var pendingDimJob: Job? = null
 
     private val extraCalendarColors = listOf(
         "var(--blue)",
@@ -155,20 +276,26 @@ class HaViewModel(
         "var(--yellow)",
     )
 
+    private fun syncPinToUi() {
+        _ui.value = _ui.value.copy(
+            remotePin = credentials.managementPin,
+            pinIsUserSet = credentials.managementPin.isNotBlank() && !credentials.isGeneratedPin,
+        )
+    }
+
     init {
+        syncPinToUi()
         val (dashboard, loadError) = DashboardLoader.loadOrNull(app)
         _ui.value = _ui.value.copy(
             dashboard = dashboard,
             showSetup = !credentials.isConfigured,
             setupError = loadError,
-            remotePin = currentPin,
-            pinIsUserSet = credentials.managementPin.isNotBlank(),
             screenTimeoutSeconds = credentials.screenTimeoutSeconds,
             displayOffEntity = credentials.displayOffEntity,
             displayBrightnessEntity = credentials.displayBrightnessEntity,
             displayIlluminanceEntity = credentials.displayIlluminanceEntity,
+            go2rtcUrl = credentials.go2rtcUrl,
         )
-        startManagementServer()
         client.onKioskEvent = { params ->
             if (KioskCommands.panelAllowed(params)) {
                 KioskCommands.fromParams(params)?.let { applyKioskCommand(it) }
@@ -184,19 +311,36 @@ class HaViewModel(
         watchDisplayPower()
         watchAutoDisplayBrightness()
         watchPresenceScreen()
-        if (credentials.isConfigured) {
-            viewModelScope.launch { connect(credentials.baseUrl, credentials.token) }
+        watchWallCamerasOnReconnect()
+        watchVisionTimelineRefresh()
+        // PIN adoption reads and reseals the Documents recovery file, and TLS setup generates an
+        // RSA-2048 keypair on first launch; neither belongs on the main thread. Connecting is
+        // chained after the PIN so it can't race `adoptOrCreatePin` on the credentials store.
+        viewModelScope.launch(Dispatchers.IO) {
+            credentials.adoptOrCreatePin { newPin() }
+            syncPinToUi()
+            if (credentials.isConfigured) {
+                prefetchWallCameras()
+                launch { connect(credentials.baseUrl, credentials.token) }
+            }
+            startManagementServer()
         }
     }
 
     override fun onCleared() {
         liveCameras.release()
         managementServer?.stop()
+        client.release()
         super.onCleared()
     }
 
     fun liveCamera(widget: WidgetNode): StateFlow<LiveCameraView> =
         liveCameras.view(CameraStreams.fromWidget(widget))
+
+    /** Stream lifecycle must be driven by an effect, not by a read during composition. */
+    fun startLiveCamera(widget: WidgetNode) {
+        liveCameras.start(CameraStreams.fromWidget(widget))
+    }
 
     fun attachCameraSurface(widget: WidgetNode) {
         liveCameras.markAttached(CameraStreams.fromWidget(widget))
@@ -217,13 +361,49 @@ class HaViewModel(
         }
         val normalized = pin.trim()
         credentials.managementPin = normalized
-        currentPin = normalized
-        _ui.value = _ui.value.copy(remotePin = currentPin, pinIsUserSet = true)
+        credentials.commitPinToRecovery()
+        managementServer?.onPinChanged()
+        syncPinToUi()
         return Result.success(Unit)
     }
 
+    fun resetManagementPin(): Result<String> {
+        val fresh = newPin()
+        CredentialsStore.pinError(fresh)?.let {
+            return Result.failure(IllegalArgumentException(it))
+        }
+        credentials.managementPin = fresh
+        credentials.commitPinToRecovery()
+        managementServer?.onPinChanged()
+        syncPinToUi()
+        return Result.success(fresh)
+    }
+
+    private var localPinFailures = 0
+    private var localPinLockedUntilMs = 0L
+
+    /** Seconds still to wait before the on-device PIN gate accepts another attempt; 0 when open. */
+    fun managementPinLockoutSeconds(): Int {
+        val remaining = localPinLockedUntilMs - System.currentTimeMillis()
+        return if (remaining > 0) ((remaining + 999) / 1_000).toInt() else 0
+    }
+
     fun verifyManagementPin(pin: String): Boolean {
-        return credentials.managementPin.isNotBlank() && pin.trim() == credentials.managementPin
+        if (managementPinLockoutSeconds() > 0) return false
+        val ok = credentials.managementPin.isNotBlank() && pin.trim() == credentials.managementPin
+        if (ok) {
+            localPinFailures = 0
+            localPinLockedUntilMs = 0L
+            return true
+        }
+        localPinFailures++
+        if (localPinFailures >= LOCAL_PIN_MAX_FAILURES) {
+            val rounds = localPinFailures / LOCAL_PIN_MAX_FAILURES
+            val backoff = LOCAL_PIN_LOCKOUT_BASE_MS shl (rounds - 1).coerceAtMost(5)
+            localPinLockedUntilMs = System.currentTimeMillis() +
+                backoff.coerceAtMost(LOCAL_PIN_LOCKOUT_MAX_MS)
+        }
+        return false
     }
 
     private var calendarManagementUnlockedUntilMs: Long = 0
@@ -236,19 +416,32 @@ class HaViewModel(
         calendarManagementUnlockedUntilMs = System.currentTimeMillis() + durationMs
     }
 
+    /** Runs on every host resume: the recovery-file read and reseal must stay off the main thread. */
     fun retryRestoreIfNeeded() {
-        if (credentials.isConfigured && credentials.managementPin.isNotBlank()) return
-        credentials.reloadFromExternal()
-        currentPin = credentials.adoptOrCreatePin { currentPin.ifBlank { newPin() } }
-        if (currentPin != _ui.value.remotePin || credentials.managementPin.isNotBlank() != _ui.value.pinIsUserSet) {
-            _ui.value = _ui.value.copy(
-                remotePin = currentPin,
-                pinIsUserSet = credentials.managementPin.isNotBlank(),
-            )
+        viewModelScope.launch(Dispatchers.IO) {
+            val wasConfigured = credentials.isConfigured
+            credentials.reloadFromExternal()
+            credentials.adoptOrCreatePin { newPin() }
+            syncPinToUi()
+            if (!credentials.isConfigured) return@launch
+            val state = connection.value
+            val shouldConnect = _ui.value.showSetup ||
+                !wasConfigured ||
+                (state !is ConnectionState.Connected && state !is ConnectionState.Connecting)
+            if (shouldConnect) connect(credentials.baseUrl, credentials.token)
         }
-        if (credentials.isConfigured && _ui.value.showSetup) {
-            viewModelScope.launch { connect(credentials.baseUrl, credentials.token) }
-        }
+    }
+
+    /**
+     * Keystore setup can fail, in which case [CredentialsStore] falls back to plaintext prefs.
+     * Fold that into the management banner so a panel in that state is diagnosable.
+     */
+    private fun managementBanner(error: String?): String? {
+        val plaintext = "Secure storage unavailable — token and PIN are stored unencrypted"
+            .takeIf { !credentials.prefsAreEncrypted }
+        return listOfNotNull(plaintext, error?.let { "Management server: $it" })
+            .joinToString(" · ")
+            .takeIf { it.isNotEmpty() }
     }
 
     private fun startManagementServer() {
@@ -257,15 +450,18 @@ class HaViewModel(
         val ssl = runCatching { ManagementTls(app).sslServerSocketFactory() }
         if (ssl.isFailure) {
             _ui.value = _ui.value.copy(
-                managementError = "Could not enable HTTPS for remote setup",
+                managementError = managementBanner("Could not enable HTTPS for remote setup"),
             )
             return
         }
+        val apkInstaller = (app as HaNativeApp).apkInstaller
         val server = ManagementServer(
-            pinProvider = { currentPin },
+            pinProvider = { credentials.managementPin },
             savedUrlProvider = { credentials.baseUrl },
             screenshotProvider = { capture.captureJpeg() },
-            onSubmit = { _, url, token ->
+            // Blocks the NanoHTTPD worker (thread-per-request) because the admin page renders the
+            // success/failure of this exact attempt; the 20s cap bounds it.
+            onSubmit = { url, token ->
                 runBlocking {
                     withTimeout(20_000) { connect(url, token) }
                 }
@@ -278,12 +474,27 @@ class HaViewModel(
                     screenAsleep = _ui.value.screenAsleep,
                 )
             },
+            panelName = PanelConfig.DISPLAY_NAME,
+            appVersionProvider = ::installedAppVersion,
+            updateStatusProvider = { apkInstaller.state },
+            onApkUpload = { file ->
+                wakeScreen()
+                val staged = java.io.File(app.cacheDir, "pending-update.apk")
+                try {
+                    if (file.canonicalFile != staged.canonicalFile) {
+                        file.copyTo(staged, overwrite = true)
+                    }
+                    apkInstaller.install(staged)
+                } finally {
+                    staged.delete()
+                }
+            },
             sslSocketFactory = ssl.getOrThrow(),
         )
-        val started = runCatching { server.start(5000, false) }
+        val started = runCatching { server.start(120_000, false) }
         managementServer = if (started.isSuccess) server else null
         _ui.value = _ui.value.copy(
-            managementError = started.exceptionOrNull()?.message,
+            managementError = managementBanner(started.exceptionOrNull()?.message),
         )
         viewModelScope.launch {
             while (true) {
@@ -291,6 +502,17 @@ class HaViewModel(
                 delay(15_000)
             }
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun installedAppVersion(): Pair<Long, String> {
+        val info = app.packageManager.getPackageInfo(app.packageName, 0)
+        val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            info.versionCode.toLong()
+        }
+        return code to (info.versionName ?: "")
     }
 
     private fun refreshLanUrls() {
@@ -302,55 +524,84 @@ class HaViewModel(
 
     fun entity(id: String?): EntityState? = id?.let { states.value[it] }
 
-    fun popup(hash: String?): PopupNode? {
-        if (hash == "#music") {
-            return PopupNode(
-                name = "Music Assistant",
-                icon = "mdi:music-note",
-                hash = "#music",
-            )
-        }
-        return _ui.value.dashboard?.home?.popups?.firstOrNull { it.hash == hash }
+    // Stable instances: strong skipping compares PopupNode by identity, so returning a fresh
+    // one per recomposition would stop PopupHost and the whole music subtree from ever skipping.
+    fun popup(hash: String?): PopupNode? = when (hash) {
+        "#music" -> MUSIC_POPUP
+        "#changelog" -> CHANGELOG_POPUP
+        "#settings" -> _ui.value.dashboard?.home?.popups?.firstOrNull { it.hash == hash } ?: SETTINGS_POPUP
+        else -> _ui.value.dashboard?.home?.popups?.firstOrNull { it.hash == hash }
     }
 
     suspend fun connect(url: String, token: String): Result<Unit> {
         _ui.value = _ui.value.copy(setupBusy = true, setupError = null)
-        val result = withContext(Dispatchers.IO) { client.testRest(url, token) }
-        if (result.isFailure) {
-            val message = result.exceptionOrNull()?.message ?: "Connection failed"
+        val trimmedUrl = url.trim().trimEnd('/')
+        val trimmedToken = token.trim()
+        val host = withContext(Dispatchers.IO) { NetworkGuard.hostOf(trimmedUrl) }
+        val privateHost = withContext(Dispatchers.IO) {
+            host != null && NetworkGuard.isPrivateHost(host)
+        }
+        if (!privateHost) {
+            val message = NetworkGuard.hostRejectionReason(host)
             _ui.value = _ui.value.copy(setupBusy = false, setupError = message)
             return Result.failure(IllegalStateException(message))
         }
-        credentials.baseUrl = url
-        credentials.token = token
+        val result = withContext(Dispatchers.IO) { client.testRest(trimmedUrl, trimmedToken) }
+        // Always keep URL/token and retry — HA may be briefly unreachable at boot (VLAN/DNS).
+        credentials.baseUrl = trimmedUrl
+        credentials.token = trimmedToken
         if (credentials.managementPin.isBlank()) {
-            credentials.managementPin = currentPin
-        } else {
-            currentPin = credentials.managementPin
+            credentials.adoptOrCreatePin { newPin() }
         }
-        client.connect(url, token)
+        syncPinToUi()
+        client.connect(trimmedUrl, trimmedToken)
+        ensureReconnectLoop()
+        if (result.isFailure) {
+            val message = result.exceptionOrNull()?.message ?: "Connection failed"
+            _ui.value = _ui.value.copy(
+                showSetup = false,
+                setupBusy = false,
+                setupError = message,
+                drawerOpen = false,
+            )
+            syncPinToUi()
+            return Result.failure(IllegalStateException(message))
+        }
         refreshCalendars()
-        refreshMusicAssistantPanelPaths()
-        prefetchWallCameras()
         _ui.value = _ui.value.copy(
             showSetup = false,
             setupBusy = false,
             setupError = null,
-            remotePin = currentPin,
-            pinIsUserSet = credentials.managementPin.isNotBlank(),
             drawerOpen = false,
         )
+        syncPinToUi()
+        return Result.success(Unit)
+    }
+
+    private fun ensureReconnectLoop() {
+        if (reconnectJob?.isActive == true) return
         reconnectJob?.cancel()
         reconnectJob = viewModelScope.launch {
             while (true) {
                 delay(4000)
                 val state = client.connection.value
                 if (state is ConnectionState.Disconnected || state is ConnectionState.Error) {
-                    runCatching { client.connect(credentials.baseUrl, credentials.token) }
+                    val url = credentials.baseUrl
+                    val token = credentials.token
+                    if (url.isBlank() || token.isBlank()) continue
+                    // A DNS miss while the VLAN was still coming up must not keep the HA host
+                    // pinned as "not private" and fail the guard instead of the network.
+                    NetworkGuard.clearCache()
+                    try {
+                        client.connect(url, token)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // retry on next tick
+                    }
                 }
             }
         }
-        return Result.success(Unit)
     }
 
     fun connectFromUi(url: String, token: String) {
@@ -360,16 +611,677 @@ class HaViewModel(
     val savedUrl: String get() = credentials.baseUrl
     val savedToken: String get() = credentials.token
 
-    private val _musicAssistantPanelState = MutableStateFlow(MusicAssistantPanelState())
-    val musicAssistantPanelState: StateFlow<MusicAssistantPanelState> = _musicAssistantPanelState
+    private val _musicWall = MutableStateFlow(MusicWallState(selectedEntityId = credentials.musicPlayerEntity.ifBlank { null }))
+    val musicWall: StateFlow<MusicWallState> = _musicWall
+    private var musicWallJob: Job? = null
+    private var musicMediaWatchJob: Job? = null
+    private var musicDiscoveryJob: Job? = null
+    private var musicSearchJob: Job? = null
+    private var musicBrowseJob: Job? = null
+    private var musicVolumeDebounceJob: Job? = null
+    private var pendingMusicVolume: Pair<Float, String>? = null
+    private var pendingMemberVolume: Pair<String, Float>? = null
+    private var volumeRequestSeq = 0
+    private var musicGroupJob: Job? = null
+    /** One automatic retry when Discover only got Recently played. */
+    private var musicDiscoveryPartialRetryDone = false
 
-    suspend fun resolveMusicAssistantIngress(addonSlug: String): IngressLoad? =
-        runCatching {
-            val session = client.createIngressSession()
-            val ingressUrl = client.fetchAddonIngressUrl(addonSlug) ?: return null
-            if (!client.verifyIngressLoad(ingressUrl, session)) return null
-            IngressLoad(session = session, ingressUrl = ingressUrl)
-        }.getOrNull()
+    fun selectMusicPlayer(entityId: String) {
+        val normalized = CredentialsStore.normalizeEntityId(entityId)
+        if (normalized.isBlank()) return
+        credentials.musicPlayerEntity = normalized
+        _musicWall.value = _musicWall.value.copy(selectedEntityId = normalized, error = null)
+        refreshMusicQueue()
+    }
+
+    fun setPlayerGrouped(massPlayerId: String, grouped: Boolean) {
+        val wall = _musicWall.value
+        val selected = wall.players.firstOrNull { it.entityId == wall.selectedEntityId } ?: return
+        val rootId = selected.groupRootId ?: selected.massPlayerId ?: return
+        if (massPlayerId == rootId) return
+        musicGroupJob?.cancel()
+        musicGroupJob = viewModelScope.launch {
+            runCatching {
+                if (grouped) {
+                    client.setMassGroupMembers(targetPlayerId = rootId, addIds = listOf(massPlayerId))
+                } else {
+                    client.ungroupMassPlayer(massPlayerId)
+                }
+            }.onFailure { error ->
+                if (!isBenignVolumeError(error)) {
+                    _musicWall.value = _musicWall.value.copy(
+                        error = error.message ?: "Could not update player group",
+                    )
+                }
+            }
+            delay(250)
+            refreshMusicWall(forcePlayers = true)
+        }
+    }
+
+    fun setMusicVolume(level: Float, mode: String = "auto") {
+        pendingMemberVolume = null
+        pendingMusicVolume = level.coerceIn(0f, 1f) to mode
+        _musicWall.value = _musicWall.value.copy(error = null)
+        scheduleVolumeApply()
+    }
+
+    fun setMemberVolume(massPlayerId: String, level: Float) {
+        pendingMusicVolume = null
+        pendingMemberVolume = massPlayerId to level.coerceIn(0f, 1f)
+        _musicWall.value = _musicWall.value.copy(error = null)
+        scheduleVolumeApply()
+    }
+
+    private fun scheduleVolumeApply() {
+        musicVolumeDebounceJob?.cancel()
+        musicVolumeDebounceJob = viewModelScope.launch {
+            delay(45)
+            launchVolumeApply()
+        }
+    }
+
+    private fun launchVolumeApply() {
+        val requestId = ++volumeRequestSeq
+        viewModelScope.launch {
+            runCatching {
+                when (val member = pendingMemberVolume) {
+                    null -> {
+                        val pending = pendingMusicVolume ?: return@runCatching
+                        applyMusicVolumeRequest(pending.first, pending.second)
+                    }
+                    else -> client.setMassPlayerVolume(member.first, (member.second * 100).toInt())
+                }
+            }.onFailure { error ->
+                if (!isBenignVolumeError(error) && requestId == volumeRequestSeq) {
+                    _musicWall.value = _musicWall.value.copy(
+                        error = error.message ?: "Volume change failed",
+                    )
+                }
+            }.onSuccess {
+                if (requestId == volumeRequestSeq) {
+                    _musicWall.value = _musicWall.value.copy(error = null)
+                }
+            }
+        }
+    }
+
+    private suspend fun applyMusicVolumeRequest(level: Float, mode: String) {
+        val wall = _musicWall.value
+        val selected = wall.players.firstOrNull { it.entityId == wall.selectedEntityId }
+            ?: error("No player selected")
+        when (mode) {
+            "group" -> {
+                val root = selected.groupRootId ?: selected.massPlayerId
+                    ?: error("No Music Assistant group player")
+                client.setMassGroupVolume(root, (level * 100).toInt())
+            }
+            "player" -> {
+                val massId = selected.massPlayerId
+                if (massId != null) {
+                    client.setMassPlayerVolume(massId, (level * 100).toInt())
+                } else {
+                    client.setMediaVolume(selected.entityId, level)
+                }
+            }
+            else -> {
+                val root = selected.groupRootId
+                if (selected.isGrouped && root != null) {
+                    client.setMassGroupVolume(root, (level * 100).toInt())
+                } else if (selected.massPlayerId != null) {
+                    client.setMassPlayerVolume(selected.massPlayerId, (level * 100).toInt())
+                } else {
+                    client.setMediaVolume(selected.entityId, level)
+                }
+            }
+        }
+    }
+
+    private fun isBenignVolumeError(error: Throwable): Boolean {
+        if (error is CancellationException) return true
+        val message = error.message.orEmpty()
+        return message.contains("cancel", ignoreCase = true) ||
+            message.contains("coroutine", ignoreCase = true) ||
+            message.equals("Canceled", ignoreCase = true)
+    }
+
+    fun setMusicWallTab(tab: String) {
+        val normalized = if (tab == "discover") "discover" else "now"
+        _musicWall.value = _musicWall.value.copy(tab = normalized)
+        if (normalized == "discover") {
+            val discovery = _musicWall.value.discovery
+            val emptyShelves = discovery.recentlyPlayed.isEmpty() &&
+                discovery.newMusic.isEmpty() &&
+                discovery.stationsForYou.isEmpty()
+            // Retry when last load failed, nothing loaded, or shelves are only partially filled.
+            if (!discovery.loading && (discovery.error != null || emptyShelves || discoveryShelvesIncomplete(discovery))) {
+                loadMusicDiscovery()
+            }
+        }
+    }
+
+    fun setMusicSearchQuery(query: String) {
+        _musicWall.value = _musicWall.value.copy(
+            discovery = _musicWall.value.discovery.copy(searchQuery = query),
+        )
+        scheduleMusicSearch()
+    }
+
+    fun setMusicSearchTypes(types: Set<String>) {
+        val normalized = types.map { it.lowercase() }.filter { it in DEFAULT_MUSIC_SEARCH_TYPES }.toSet()
+            .ifEmpty { DEFAULT_MUSIC_SEARCH_TYPES }
+        _musicWall.value = _musicWall.value.copy(
+            discovery = _musicWall.value.discovery.copy(searchTypes = normalized),
+        )
+        scheduleMusicSearch()
+    }
+
+    fun toggleMusicSearchType(type: String) {
+        val key = type.lowercase()
+        if (key !in DEFAULT_MUSIC_SEARCH_TYPES) return
+        val current = _musicWall.value.discovery.searchTypes
+        val next = if (key in current) {
+            if (current.size <= 1) current else current - key
+        } else {
+            current + key
+        }
+        setMusicSearchTypes(next)
+    }
+
+    private fun scheduleMusicSearch() {
+        musicSearchJob?.cancel()
+        val discovery = _musicWall.value.discovery
+        val trimmed = discovery.searchQuery.trim()
+        if (trimmed.length < 2) {
+            val emptyShelves = discovery.recentlyPlayed.isEmpty() &&
+                discovery.newMusic.isEmpty() &&
+                discovery.stationsForYou.isEmpty()
+            val looksPartial = discovery.recentlyPlayed.isNotEmpty() &&
+                discovery.newMusic.isEmpty() &&
+                discovery.stationsForYou.isEmpty()
+            _musicWall.value = _musicWall.value.copy(
+                discovery = discovery.copy(
+                    searchLoading = false,
+                    searchResults = null,
+                    // Search failures must not stick on Discover shelves after clear.
+                    error = null,
+                ),
+            )
+            if (!discovery.loading && (emptyShelves || looksPartial)) {
+                musicDiscoveryPartialRetryDone = false
+                loadMusicDiscovery()
+            }
+            return
+        }
+        val types = discovery.searchTypes
+        musicSearchJob = viewModelScope.launch {
+            _musicWall.value = _musicWall.value.copy(
+                discovery = _musicWall.value.discovery.copy(searchLoading = true, error = null),
+            )
+            delay(350)
+            try {
+                val results = client.musicSearch(trimmed, mediaTypes = types)
+                _musicWall.value = _musicWall.value.copy(
+                    discovery = _musicWall.value.discovery.copy(
+                        searchLoading = false,
+                        searchResults = results,
+                        error = null,
+                    ),
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _musicWall.value = _musicWall.value.copy(
+                    discovery = _musicWall.value.discovery.copy(
+                        searchLoading = false,
+                        searchResults = null,
+                        error = error.message ?: "Search failed",
+                    ),
+                )
+            }
+        }
+    }
+
+    fun openAppleMusicBrowse() {
+        viewModelScope.launch {
+            val path = runCatching { client.musicAppleMusicRootPath() }.getOrElse { "apple_music://" }
+            openMusicBrowse(path = path, title = "Apple Music", replaceStack = true)
+        }
+    }
+
+    fun openAppleMusicSeeAll(shelf: String) {
+        viewModelScope.launch {
+            val root = runCatching { client.musicAppleMusicRootPath() }.getOrElse { "apple_music://" }
+            when (shelf) {
+                "new_music" -> {
+                    val path = runCatching { client.musicAppleMusicChildPath("playlists") }.getOrElse {
+                        massBrowseFallback(root, "playlists")
+                    }
+                    openMusicBrowse(path = path, title = "Playlists", replaceStack = true)
+                }
+                "stations" -> {
+                    val path = runCatching { client.musicAppleMusicChildPath("radio") }.getOrElse {
+                        massBrowseFallback(root, "radio")
+                    }
+                    openMusicBrowse(path = path, title = "Radio", replaceStack = true)
+                }
+                else -> openMusicBrowse(path = root, title = "Apple Music", replaceStack = true)
+            }
+        }
+    }
+
+    private fun massBrowseFallback(root: String, child: String): String = when {
+        root.endsWith("://") -> "$root$child"
+        root.endsWith("/") -> "$root$child"
+        else -> "$root/$child"
+    }
+
+    fun openMusicBrowse(path: String, title: String, replaceStack: Boolean = false) {
+        musicBrowseJob?.cancel()
+        val frame = MusicBrowseFrame(title = title, path = path, loading = true)
+        val stack = if (replaceStack) {
+            listOf(frame)
+        } else {
+            _musicWall.value.discovery.browseStack + frame
+        }
+        _musicWall.value = _musicWall.value.copy(
+            discovery = _musicWall.value.discovery.copy(
+                browseStack = stack,
+                searchResults = null,
+                searchLoading = false,
+                error = null,
+            ),
+        )
+        musicBrowseJob = viewModelScope.launch {
+            try {
+                val items = client.musicBrowse(path)
+                val current = _musicWall.value.discovery.browseStack.toMutableList()
+                if (current.isEmpty()) return@launch
+                val idx = current.indexOfLast { it.path == path }
+                if (idx < 0) return@launch
+                current[idx] = current[idx].copy(
+                    items = items,
+                    loading = false,
+                    error = if (items.isEmpty()) "Nothing here" else null,
+                )
+                _musicWall.value = _musicWall.value.copy(
+                    discovery = _musicWall.value.discovery.copy(browseStack = current),
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                val current = _musicWall.value.discovery.browseStack.toMutableList()
+                if (current.isEmpty()) return@launch
+                val idx = current.indexOfLast { it.path == path }
+                if (idx < 0) return@launch
+                current[idx] = current[idx].copy(
+                    loading = false,
+                    error = error.message ?: "Browse failed",
+                )
+                _musicWall.value = _musicWall.value.copy(
+                    discovery = _musicWall.value.discovery.copy(browseStack = current),
+                )
+            }
+        }
+    }
+
+    fun browseMusicBack() {
+        musicBrowseJob?.cancel()
+        val stack = _musicWall.value.discovery.browseStack
+        if (stack.isEmpty()) return
+        _musicWall.value = _musicWall.value.copy(
+            discovery = _musicWall.value.discovery.copy(browseStack = stack.dropLast(1)),
+        )
+    }
+
+    fun onMusicBrowseItem(item: MassMediaItem) {
+        when {
+            item.canBrowse -> {
+                val path = item.browsePath ?: return
+                openMusicBrowse(path = path, title = item.name, replaceStack = false)
+            }
+            item.canPlay -> playMusicDiscoveryItem(item)
+            !item.browsePath.isNullOrBlank() -> {
+                openMusicBrowse(path = item.browsePath, title = item.name, replaceStack = false)
+            }
+        }
+    }
+
+    fun playMusicDiscoveryItem(item: MassMediaItem) {
+        if (!item.canPlay) {
+            if (!item.browsePath.isNullOrBlank()) {
+                openMusicBrowse(path = item.browsePath, title = item.name, replaceStack = false)
+            }
+            return
+        }
+        val wall = _musicWall.value
+        val selected = wall.players.firstOrNull { it.entityId == wall.selectedEntityId }
+        val queueId = selected?.massPlayerId
+        if (queueId.isNullOrBlank()) {
+            _musicWall.value = wall.copy(
+                discovery = wall.discovery.copy(
+                    error = "Select a Music Assistant player to play from Discover.",
+                ),
+            )
+            return
+        }
+        viewModelScope.launch {
+            _musicWall.value = _musicWall.value.copy(
+                discovery = _musicWall.value.discovery.copy(playingUri = item.uri, error = null),
+                tab = "now",
+            )
+            runCatching { client.playMassMedia(queueId, item.uri) }
+                .onFailure { error ->
+                    _musicWall.value = _musicWall.value.copy(
+                        discovery = _musicWall.value.discovery.copy(
+                            playingUri = null,
+                            error = error.message ?: "Could not play ${item.name}",
+                        ),
+                        tab = "discover",
+                    )
+                }
+                .onSuccess {
+                    delay(500)
+                    refreshMusicWall(forcePlayers = false)
+                    _musicWall.value = _musicWall.value.copy(
+                        discovery = _musicWall.value.discovery.copy(playingUri = null),
+                    )
+                }
+        }
+    }
+
+    fun mediaPlayPause() {
+        val entityId = _musicWall.value.selectedEntityId ?: return
+        viewModelScope.launch {
+            runCatching { client.mediaPlayerCommand(entityId, "media_play_pause") }
+            refreshMusicQueueSoon()
+        }
+    }
+
+    fun mediaNext() {
+        val entityId = _musicWall.value.selectedEntityId ?: return
+        viewModelScope.launch {
+            runCatching { client.mediaPlayerCommand(entityId, "media_next_track") }
+            refreshMusicQueueSoon()
+        }
+    }
+
+    fun mediaPrevious() {
+        val entityId = _musicWall.value.selectedEntityId ?: return
+        viewModelScope.launch {
+            runCatching { client.mediaPlayerCommand(entityId, "media_previous_track") }
+            refreshMusicQueueSoon()
+        }
+    }
+
+    fun mediaStop() {
+        val entityId = _musicWall.value.selectedEntityId ?: return
+        viewModelScope.launch {
+            runCatching { client.mediaPlayerCommand(entityId, "media_stop") }
+            refreshMusicQueueSoon()
+        }
+    }
+
+    fun toggleMusicShuffle() {
+        val entityId = _musicWall.value.selectedEntityId ?: return
+        val current = client.state(entityId)?.isShuffleOn()
+            ?: _musicWall.value.queue?.shuffle
+            ?: false
+        viewModelScope.launch {
+            runCatching { client.setMediaShuffle(entityId, !current) }
+            refreshMusicQueueSoon()
+        }
+    }
+
+    fun cycleMusicRepeat() {
+        val entityId = _musicWall.value.selectedEntityId ?: return
+        val current = client.state(entityId)?.repeatMode()
+            ?: _musicWall.value.queue?.repeatMode?.lowercase()
+            ?: "off"
+        val next = when (current) {
+            "off" -> "all"
+            "all" -> "one"
+            else -> "off"
+        }
+        viewModelScope.launch {
+            runCatching { client.setMediaRepeat(entityId, next) }
+            refreshMusicQueueSoon()
+        }
+    }
+
+    fun seekMusic(positionSec: Double) {
+        val entityId = _musicWall.value.selectedEntityId ?: return
+        viewModelScope.launch {
+            runCatching { client.seekMedia(entityId, positionSec) }
+        }
+    }
+
+    fun transferMusicToSelected(sourceEntityId: String? = null) {
+        val target = _musicWall.value.selectedEntityId ?: return
+        viewModelScope.launch {
+            runCatching { client.transferMusicQueue(target, sourceEntityId, autoPlay = true) }
+                .onFailure { error ->
+                    _musicWall.value = _musicWall.value.copy(error = error.message ?: "Transfer failed")
+                }
+            refreshMusicQueueSoon()
+        }
+    }
+
+    @OptIn(FlowPreview::class)
+    private fun openMusicWall() {
+        musicWallJob?.cancel()
+        musicMediaWatchJob?.cancel()
+        _musicWall.value = _musicWall.value.copy(loading = true, error = null)
+        musicDiscoveryPartialRetryDone = false
+        loadMusicDiscovery()
+        musicMediaWatchJob = viewModelScope.launch {
+            combine(states, _musicWall) { map, wall ->
+                wall.players.joinToString("|") { player ->
+                    val entity = map[player.entityId]
+                    listOf(
+                        player.entityId,
+                        entity?.state,
+                        entity?.mediaTitle(),
+                        entity?.mediaArtist(),
+                        entity?.mediaPositionSec(),
+                        entity?.mediaPositionUpdatedAtMs(),
+                    ).joinToString(",")
+                }
+            }
+                .distinctUntilChanged()
+                .debounce(150)
+                .collect {
+                    if (_ui.value.popupHash == "#music") {
+                        refreshMusicWall(forcePlayers = false)
+                    }
+                }
+        }
+        musicWallJob = viewModelScope.launch {
+            var tick = 0
+            while (_ui.value.popupHash == "#music") {
+                val forcePlayers = tick == 0 || tick % 5 == 0
+                refreshMusicWall(forcePlayers = forcePlayers)
+                // The now-playing position is interpolated locally and the debounced `states`
+                // watcher above covers real transport changes, so polling faster buys nothing.
+                val interval = when (_musicWall.value.tab) {
+                    "now" -> 2_000L
+                    else -> 4_000L
+                }
+                delay(interval)
+                tick++
+            }
+        }
+    }
+
+    private fun closeMusicWall() {
+        musicWallJob?.cancel()
+        musicWallJob = null
+        musicMediaWatchJob?.cancel()
+        musicMediaWatchJob = null
+        musicDiscoveryJob?.cancel()
+        musicDiscoveryJob = null
+        musicSearchJob?.cancel()
+        musicSearchJob = null
+        musicBrowseJob?.cancel()
+        musicBrowseJob = null
+        musicVolumeDebounceJob?.cancel()
+        musicVolumeDebounceJob = null
+        musicGroupJob?.cancel()
+        musicGroupJob = null
+        musicDiscoveryPartialRetryDone = false
+    }
+
+    private fun discoveryShelvesIncomplete(discovery: MusicDiscoveryState): Boolean =
+        // Recently played alone often succeeds while New music / stations fail transiently.
+        !musicDiscoveryPartialRetryDone &&
+            discovery.recentlyPlayed.isNotEmpty() &&
+            discovery.newMusic.isEmpty() &&
+            discovery.stationsForYou.isEmpty() &&
+            discovery.error == null &&
+            !discovery.loading
+
+    private fun loadMusicDiscovery() {
+        musicDiscoveryJob?.cancel()
+        musicDiscoveryJob = viewModelScope.launch {
+            _musicWall.value = _musicWall.value.copy(
+                discovery = _musicWall.value.discovery.copy(loading = true, error = null),
+            )
+            try {
+                val recently = softMass(emptyList()) { client.musicDiscoveryRecentlyPlayed() }
+                val recommendations = softMass(emptyList()) { client.musicDiscoveryRecommendations() }
+                val newMusicFromBrowse = softMass(emptyList()) { client.musicDiscoveryNewMusicTracks() }
+                val appleRecently = recommendations
+                    .firstOrNull {
+                        it.name.equals("Recently Played", ignoreCase = true) &&
+                            it.provider?.contains("apple_music", ignoreCase = true) == true
+                    }
+                    ?.items
+                    .orEmpty()
+                val stations = recommendations
+                    .firstOrNull {
+                        it.name.equals("Stations for You", ignoreCase = true)
+                    }
+                    ?.items
+                    .orEmpty()
+                val newMusicFallback = recommendations
+                    .firstOrNull { section ->
+                        val name = section.name
+                        name.equals("New Music", ignoreCase = true) ||
+                            name.contains("New Music", ignoreCase = true)
+                    }
+                    ?.items
+                    .orEmpty()
+                val newMusic = newMusicFromBrowse.ifEmpty { newMusicFallback }
+                val mergedRecent = (recently + appleRecently)
+                    .distinctBy { it.uri }
+                if (mergedRecent.isNotEmpty() && newMusic.isEmpty() && stations.isEmpty()) {
+                    musicDiscoveryPartialRetryDone = true
+                } else if (newMusic.isNotEmpty() || stations.isNotEmpty()) {
+                    musicDiscoveryPartialRetryDone = false
+                }
+                _musicWall.value = _musicWall.value.copy(
+                    discovery = _musicWall.value.discovery.copy(
+                        loading = false,
+                        recentlyPlayed = mergedRecent,
+                        newMusic = newMusic,
+                        stationsForYou = stations,
+                        error = when {
+                            mergedRecent.isEmpty() && newMusic.isEmpty() && stations.isEmpty() ->
+                                "Could not load Apple Music discovery from Music Assistant."
+                            else -> null
+                        },
+                    ),
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _musicWall.value = _musicWall.value.copy(
+                    discovery = _musicWall.value.discovery.copy(
+                        loading = false,
+                        error = error.message ?: "Discovery failed to load",
+                    ),
+                )
+            }
+        }
+    }
+
+    /** Soft-fail one MASS call without treating cancellation as an empty result. */
+    private suspend fun <T> softMass(fallback: T, block: suspend () -> T): T =
+        try {
+            block()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            fallback
+        }
+
+    private fun refreshMusicQueue() {
+        viewModelScope.launch { refreshMusicWall(forcePlayers = false) }
+    }
+
+    private fun refreshMusicQueueSoon() {
+        viewModelScope.launch {
+            delay(350)
+            refreshMusicWall(forcePlayers = false)
+        }
+    }
+
+    private suspend fun refreshMusicWall(forcePlayers: Boolean) {
+        try {
+            val current = _musicWall.value
+            val players = when {
+                forcePlayers || current.players.isEmpty() -> {
+                    runCatching { client.musicAssistantPlayers() }
+                        .getOrElse { error ->
+                            _musicWall.value = current.copy(
+                                loading = false,
+                                error = error.message ?: "Could not load media players",
+                            )
+                            return
+                        }
+                }
+                else -> runCatching { client.refreshMusicPlayerTelemetry(current.players) }
+                    .getOrElse { current.players }
+            }
+            val preferred = current.selectedEntityId
+                ?: credentials.musicPlayerEntity.takeIf { it.isNotBlank() }
+            val selected = when {
+                preferred != null && players.any { it.entityId == preferred } -> preferred
+                players.isEmpty() -> null
+                else -> {
+                    players.firstOrNull { client.state(it.entityId)?.state == "playing" }?.entityId
+                        ?: players.firstOrNull { client.state(it.entityId)?.state == "paused" }?.entityId
+                        ?: players.first().entityId
+                }
+            }
+            if (selected != null && selected != credentials.musicPlayerEntity) {
+                credentials.musicPlayerEntity = selected
+            }
+            val queue = if (selected != null) {
+                runCatching { client.musicAssistantQueue(selected, players) }.getOrNull()
+            } else {
+                null
+            }
+            _musicWall.value = current.copy(
+                loading = false,
+                players = players,
+                selectedEntityId = selected,
+                queue = queue,
+                error = when {
+                    players.isEmpty() ->
+                        "No media players found. Add the Music Assistant integration in Home Assistant for the full wall player."
+                    else -> null
+                },
+            )
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            _musicWall.value = _musicWall.value.copy(
+                loading = false,
+                error = error.message ?: "Music player failed to load",
+            )
+        }
+    }
 
     fun openSetup() {
         _ui.value = _ui.value.copy(showSetup = true, drawerOpen = false)
@@ -386,15 +1298,17 @@ class HaViewModel(
     }
 
     fun openPopup(hash: String?) {
-        if (hash == "#music") {
-            refreshMusicAssistantPanelPaths()
-        }
+        val previous = _ui.value.popupHash
         _ui.value = _ui.value.copy(
             popupHash = hash,
             drawerOpen = false,
             weatherPopupContext = null,
         )
-        schedulePopupAutoDismiss(hash)
+        when {
+            hash == "#music" -> openMusicWall()
+            previous == "#music" -> closeMusicWall()
+        }
+        scheduleRoomPopupDismiss()
     }
 
     fun openWeatherPopup(
@@ -407,24 +1321,33 @@ class HaViewModel(
             drawerOpen = false,
             weatherPopupContext = WeatherPopupContext(focusDate, entityId, initialTab),
         )
-        schedulePopupAutoDismiss("#weather")
+        scheduleRoomPopupDismiss()
     }
 
     fun closePopup() {
-        popupAutoDismissJob?.cancel()
-        popupAutoDismissJob = null
+        roomPopupDismissJob?.cancel()
+        roomPopupDismissJob = null
+        closeMusicWall()
         _ui.value = _ui.value.copy(popupHash = null, weatherPopupContext = null)
     }
 
-    /** Auto-close dock/drawer popups after idle; camera stays open until dismissed. */
-    private fun schedulePopupAutoDismiss(hash: String?) {
-        popupAutoDismissJob?.cancel()
-        popupAutoDismissJob = null
-        if (hash.isNullOrBlank() || hash == CAMERA_POPUP_HASH) return
-        popupAutoDismissJob = viewModelScope.launch {
-            delay(POPUP_AUTO_DISMISS_MS)
-            if (_ui.value.popupHash == hash) {
+    fun isRoomPopup(hash: String?): Boolean {
+        if (hash.isNullOrBlank()) return false
+        val rooms = _ui.value.dashboard?.home?.rooms ?: return false
+        return rooms.any { (it.tap?.hash ?: it.hash) == hash }
+    }
+
+    private fun scheduleRoomPopupDismiss() {
+        roomPopupDismissJob?.cancel()
+        if (!isRoomPopup(_ui.value.popupHash)) {
+            roomPopupDismissJob = null
+            return
+        }
+        roomPopupDismissJob = viewModelScope.launch {
+            delay(ROOM_POPUP_TIMEOUT_MS)
+            if (isRoomPopup(_ui.value.popupHash)) {
                 closePopup()
+                closeMoreInfo()
             }
         }
     }
@@ -444,10 +1367,18 @@ class HaViewModel(
         subtitle: String? = null,
         description: String? = null,
         isVideo: Boolean = false,
+        previewPath: String? = null,
     ) {
         if (path.isNullOrBlank()) return
         _ui.value = _ui.value.copy(
-            mediaPreview = MediaPreview(path, title, subtitle, description, isVideo),
+            mediaPreview = MediaPreview(
+                path = path,
+                title = title,
+                subtitle = subtitle,
+                description = description,
+                isVideo = isVideo,
+                previewPath = previewPath?.trim()?.takeIf { it.isNotBlank() },
+            ),
         )
     }
 
@@ -456,7 +1387,15 @@ class HaViewModel(
         title: String? = null,
         subtitle: String? = null,
         description: String? = null,
-    ) = openMedia(path, title, subtitle, description, isVideo = true)
+        previewPath: String? = null,
+    ) = openMedia(
+        path = path,
+        title = title,
+        subtitle = subtitle,
+        description = description,
+        isVideo = true,
+        previewPath = previewPath,
+    )
 
     fun closeMedia() {
         _ui.value = _ui.value.copy(mediaPreview = null)
@@ -488,6 +1427,26 @@ class HaViewModel(
 
     fun noteUserActivity() {
         lastActivityMs = System.currentTimeMillis()
+        if (pendingDimJob != null) {
+            pendingDimJob?.cancel()
+            pendingDimJob = null
+        }
+        scheduleRoomPopupDismiss()
+    }
+
+    fun onTabletMotion(active: Boolean) {
+        if (!PanelConfig.USE_TABLET_MOTION) return
+        if (_tabletMotion.value == active) return
+        _tabletMotion.value = active
+        if (active) {
+            lastActivityMs = System.currentTimeMillis()
+            if (_ui.value.screenAsleep) wakeScreen()
+        }
+        val entity = PanelConfig.MOTION_ENTITY
+        if (entity.isBlank() || client.currentBaseUrl.isBlank()) return
+        viewModelScope.launch {
+            runCatching { client.setEntityPower(entity, on = active) }
+        }
     }
 
     fun onHostResumed() {
@@ -513,9 +1472,43 @@ class HaViewModel(
         return Result.success(Unit)
     }
 
+    suspend fun setGo2rtcUrl(url: String): Result<Unit> {
+        val trimmed = url.trim().trimEnd('/')
+        if (trimmed.isNotBlank()) {
+            if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+                return Result.failure(
+                    IllegalArgumentException("URL must start with http:// or https://"),
+                )
+            }
+            val host = NetworkGuard.hostOf(trimmed)
+                ?: return Result.failure(IllegalArgumentException("Enter a valid go2rtc base URL"))
+            // Same policy as connect(): a public host would otherwise be accepted here and only
+            // surface later as a dead camera when the candidate filter drops it.
+            val privateHost = withContext(Dispatchers.IO) { NetworkGuard.isPrivateHost(host) }
+            if (!privateHost) {
+                return Result.failure(IllegalArgumentException(NetworkGuard.hostRejectionReason(host)))
+            }
+        }
+        credentials.go2rtcUrl = trimmed
+        _ui.value = _ui.value.copy(go2rtcUrl = credentials.go2rtcUrl)
+        return Result.success(Unit)
+    }
+
     fun sleepScreen(commandDisplay: Boolean = true) {
         if (_ui.value.screenAsleep || _ui.value.showSetup) return
         sleptAtMs = System.currentTimeMillis()
+        displayWakeJob?.cancel()
+        pendingDimJob?.cancel()
+        pendingDimJob = null
+        roomPopupDismissJob?.cancel()
+        roomPopupDismissJob = null
+        if (isRoomPopup(_ui.value.popupHash)) {
+            closePopup()
+            closeMoreInfo()
+        }
+        filteredAmbientLux = null
+        autoBrightnessDesired.value = null
+        autoBrightnessApplied = null
         if (commandDisplay && connection.value is ConnectionState.Connected) {
             _ui.value.displayOffEntity.takeIf { it.isNotBlank() }?.let { entityId ->
                 viewModelScope.launch { runCatching { client.setEntityPower(entityId, on = false) } }
@@ -527,14 +1520,31 @@ class HaViewModel(
 
     fun wakeScreen(commandDisplay: Boolean = true) {
         lastActivityMs = System.currentTimeMillis()
+        pendingDimJob?.cancel()
+        pendingDimJob = null
         if (commandDisplay && connection.value is ConnectionState.Connected) {
             _ui.value.displayOffEntity.takeIf { it.isNotBlank() }?.let { entityId ->
-                viewModelScope.launch { runCatching { client.setEntityPower(entityId, on = true) } }
+                commandDisplayOnWithRetry(entityId)
             }
         }
         if (_ui.value.screenAsleep) {
             _ui.value = _ui.value.copy(screenAsleep = false)
             liveCameras.resume()
+        }
+    }
+
+    private fun commandDisplayOnWithRetry(entityId: String) {
+        displayWakeJob?.cancel()
+        displayWakeJob = viewModelScope.launch {
+            repeat(3) { attempt ->
+                if (states.value[entityId]?.state == "on") return@launch
+                runCatching { client.setEntityPower(entityId, on = true) }
+                if (attempt == 2) return@launch
+                val flipped = withTimeoutOrNull(3_000) {
+                    states.filter { all -> all[entityId]?.state == "on" }.first()
+                } != null
+                if (flipped) return@launch
+            }
         }
     }
 
@@ -554,6 +1564,11 @@ class HaViewModel(
         }
         val normalized = CredentialsStore.normalizeEntityId(entityId)
         credentials.displayBrightnessEntity = normalized
+        pendingDimJob?.cancel()
+        pendingDimJob = null
+        filteredAmbientLux = null
+        autoBrightnessDesired.value = null
+        autoBrightnessApplied = null
         _ui.value = _ui.value.copy(displayBrightnessEntity = normalized)
         return Result.success(Unit)
     }
@@ -577,6 +1592,11 @@ class HaViewModel(
         }
         val normalized = CredentialsStore.normalizeEntityId(entityId)
         credentials.displayIlluminanceEntity = normalized
+        pendingDimJob?.cancel()
+        pendingDimJob = null
+        filteredAmbientLux = null
+        autoBrightnessDesired.value = null
+        autoBrightnessApplied = null
         _ui.value = _ui.value.copy(displayIlluminanceEntity = normalized)
         return Result.success(Unit)
     }
@@ -592,49 +1612,78 @@ class HaViewModel(
             .sortedBy { it.second.lowercase() }
             .toList()
 
-    private fun refreshMusicAssistantPanelPaths() {
-        _musicAssistantPanelState.value = MusicAssistantPanelState(resolved = false)
-        viewModelScope.launch {
-            val resolution = runCatching { client.musicAssistantLoadTargets() }
-                .getOrElse { error ->
-                    MusicAssistantPanelResolution(
-                        targets = listOf(
-                            MusicAssistantLoadTarget(
-                                mode = MusicAssistantLoadMode.INGRESS,
-                                label = "addon ingress (d5369777_music_assistant)",
-                                addonSlug = "d5369777_music_assistant",
-                            ),
-                            MusicAssistantLoadTarget(
-                                mode = MusicAssistantLoadMode.SPA_BOOTSTRAP,
-                                label = "frontend navigate /d5369777_music_assistant",
-                                path = "/d5369777_music_assistant",
-                            ),
-                            MusicAssistantLoadTarget(
-                                mode = MusicAssistantLoadMode.SPA_ROUTE,
-                                label = "panel route /d5369777_music_assistant",
-                                path = "/d5369777_music_assistant",
-                            ),
-                        ),
-                        debugInfo = listOf("Detection failed: ${error.message ?: error.javaClass.simpleName}"),
-                    )
-                }
-            _musicAssistantPanelState.value = MusicAssistantPanelState(
-                resolved = true,
-                targets = resolution.targets,
-                debugInfo = resolution.debugInfo,
-            )
-        }
+    private fun wallCameraWidgets(): List<WidgetNode> {
+        val home = _ui.value.dashboard?.home
+        val hero = home?.heroCameras.orEmpty()
+        if (hero.isNotEmpty()) return hero
+        return home?.popups
+            ?.firstOrNull { it.hash == KioskCommands.CAMERA_POPUP }
+            ?.let { popup -> CameraStreams.camerasForPopup(popup, credentials.go2rtcUrl) }
+            ?: CameraStreams.wallPanelCameras(credentials.go2rtcUrl)
     }
 
     private fun prefetchWallCameras() {
         viewModelScope.launch {
-            if (client.currentBaseUrl.isBlank()) return@launch
-            val widgets = _ui.value.dashboard?.home?.popups
-                ?.firstOrNull { it.hash == KioskCommands.CAMERA_POPUP }
-                ?.let { popup -> CameraStreams.camerasForPopup(popup) }
-                ?: CameraStreams.wallPanelCameras
-            runCatching { client.prefetchCameraSnapshots(widgets.mapNotNull { it.entity }) }
+            val widgets = wallCameraWidgets()
+            // Wall cameras stay warm (placeholder) after the last viewer leaves
+            // so a door-triggered popup opens instantly.
+            liveCameras.setWarmTargets(widgets.map { CameraStreams.fromWidget(it) })
             liveCameras.ensureRunning(widgets.map { CameraStreams.fromWidget(it) })
+            if (client.currentBaseUrl.isBlank()) return@launch
+            runCatching { client.prefetchCameraSnapshots(widgets.mapNotNull { it.entity }) }
+            runCatching { CameraStreams.prefetch(client, widgets.map { CameraStreams.fromWidget(it) }) }
+        }
+    }
+
+    private fun watchWallCamerasOnReconnect() {
+        viewModelScope.launch {
+            var wasConnected = connection.value is ConnectionState.Connected
+            connection.collect { state ->
+                val connected = state is ConnectionState.Connected
+                if (connected && !wasConnected) {
+                    prefetchWallCameras()
+                    bumpVisionTimelineRevision()
+                }
+                wasConnected = connected
+            }
+        }
+    }
+
+    private fun bumpVisionTimelineRevision() {
+        _visionTimelineRevision.value++
+    }
+
+    private fun watchVisionTimelineRefresh() {
+        viewModelScope.launch {
+            var previousCalendarUpdated: Instant? = null
+            val previousSensorStates = mutableMapOf<String, String>()
+            combine(
+                states.map { it["calendar.llm_vision_timeline"]?.lastUpdated }.distinctUntilChanged(),
+                _ui.map { it.dashboard?.home?.personCameras?.bindings.orEmpty() }.distinctUntilChanged(),
+                states,
+            ) { calendarUpdated, bindings, allStates ->
+                Triple(
+                    calendarUpdated,
+                    bindings,
+                    bindings.mapNotNull { binding ->
+                        binding.sensor?.let { sensor -> sensor to allStates[sensor]?.state }
+                    },
+                )
+            }.distinctUntilChanged().collect { (calendarUpdated, bindings, _) ->
+                if (calendarUpdated != null && calendarUpdated != previousCalendarUpdated) {
+                    if (previousCalendarUpdated != null) bumpVisionTimelineRevision()
+                    previousCalendarUpdated = calendarUpdated
+                }
+                val allStates = states.value
+                bindings.forEach { binding ->
+                    val sensor = binding.sensor ?: return@forEach
+                    val state = allStates[sensor]?.state ?: return@forEach
+                    val previous = previousSensorStates.put(sensor, state)
+                    if (previous != null && previous != state && personSensorActive(binding, allStates)) {
+                        bumpVisionTimelineRevision()
+                    }
+                }
+            }
         }
     }
 
@@ -643,7 +1692,8 @@ class HaViewModel(
             while (true) {
                 val seconds = _ui.value.screenTimeoutSeconds
                 if (seconds <= 0 || _ui.value.screenAsleep || _ui.value.showSetup) {
-                    delay(1_000)
+                    // Nothing to time out: park on the flow instead of polling once a second.
+                    _ui.first { it.screenTimeoutSeconds > 0 && !it.screenAsleep && !it.showSetup }
                     continue
                 }
                 if (peoplePresent(states.value, _mmWaveLive.value)) {
@@ -694,38 +1744,110 @@ class HaViewModel(
                 _ui.map { Triple(it.displayIlluminanceEntity, it.displayBrightnessEntity, it.screenAsleep) }
                     .distinctUntilChanged(),
                 states,
-            ) { (illumEntity, brightEntity, asleep), allStates ->
+                mmWaveLive,
+            ) { (illumEntity, brightEntity, asleep), allStates, live ->
                 AutoBrightnessSnapshot(
                     illuminanceEntity = illumEntity,
                     brightnessEntity = brightEntity,
                     asleep = asleep,
                     luxState = illumEntity.takeIf { it.isNotBlank() }?.let { allStates[it]?.state },
-                    currentBrightness = brightEntity.takeIf { it.isNotBlank() }
-                        ?.let { allStates[it]?.state?.toFloatOrNull() },
+                    inFront = personInFrontOfDisplay(allStates, live),
                 )
             }
                 .distinctUntilChanged { a, b ->
                     a.asleep == b.asleep &&
                         a.illuminanceEntity == b.illuminanceEntity &&
                         a.brightnessEntity == b.brightnessEntity &&
-                        a.luxState == b.luxState
+                        a.luxState == b.luxState &&
+                        a.inFront == b.inFront
                 }
-                .debounce(400)
+                .debounce(300)
                 .collect { snap ->
-                    if (snap.asleep ||
-                        snap.illuminanceEntity.isBlank() ||
-                        snap.brightnessEntity.isBlank()
-                    ) {
-                        autoBrightnessDesired.value = null
-                        autoBrightnessApplied = null
-                        return@collect
+                    runCatching {
+                        if (snap.asleep ||
+                            snap.illuminanceEntity.isBlank() ||
+                            snap.brightnessEntity.isBlank()
+                        ) {
+                            pendingDimJob?.cancel()
+                            pendingDimJob = null
+                            filteredAmbientLux = null
+                            autoBrightnessDesired.value = null
+                            autoBrightnessApplied = null
+                            return@collect
+                        }
+                        val rawLux = snap.luxState?.toDoubleOrNull()
+                        if (rawLux == null || rawLux <= 0) {
+                            pendingDimJob?.cancel()
+                            pendingDimJob = null
+                            filteredAmbientLux = null
+                            autoBrightnessDesired.value = null
+                            return@collect
+                        }
+
+                        val currentAmbient = filteredAmbientLux
+                        if (currentAmbient == null) {
+                            filteredAmbientLux = rawLux
+                            pendingDimJob?.cancel()
+                            pendingDimJob = null
+                            autoBrightnessDesired.value = luxToDisplayBrightness(rawLux)
+                            return@collect
+                        }
+
+                        if (rawLux >= currentAmbient) {
+                            // Room brightened (lights turned on, daylight, or person stepped away)
+                            pendingDimJob?.cancel()
+                            pendingDimJob = null
+                            filteredAmbientLux = rawLux
+                            autoBrightnessDesired.value = luxToDisplayBrightness(rawLux)
+                            return@collect
+                        }
+
+                        if (rawLux >= currentAmbient * SHADOW_TOLERANCE_RATIO) {
+                            // Trivial light dip or normal sensor noise (< 10% drop): keep steady
+                            pendingDimJob?.cancel()
+                            pendingDimJob = null
+                            return@collect
+                        }
+
+                        // Significant drop (rawLux < currentAmbient * 0.90)
+                        val isPitchDark = rawLux <= PITCH_DARK_LUX_THRESHOLD
+                        if (snap.inFront && !isPitchDark) {
+                            // Person is standing in front of or interacting with the tablet in a lit room.
+                            // This drop is their shadow blocking the sensor — hold the unshadowed ambient baseline!
+                            pendingDimJob?.cancel()
+                            pendingDimJob = null
+                            return@collect
+                        }
+
+                        // Drop without person in front, or lights completely turned off (< 15 lx):
+                        // Confirm lower level before dimming so momentary shadows from people walking by don't dim.
+                        val targetConfirmMs = if (isPitchDark) BRIGHTNESS_DARK_CONFIRM_MS else BRIGHTNESS_DIM_CONFIRM_MS
+                        if (pendingDimJob != null && isPitchDark) {
+                            pendingDimJob?.cancel()
+                            pendingDimJob = null
+                        }
+                        if (pendingDimJob == null) {
+                            pendingDimJob = viewModelScope.launch {
+                                runCatching {
+                                    delay(targetConfirmMs)
+                                    if (_ui.value.screenAsleep) return@launch
+                                    val liveStates = states.value
+                                    val liveIllum = _ui.value.displayIlluminanceEntity
+                                    val liveLux = liveIllum.takeIf { it.isNotBlank() }
+                                        ?.let { liveStates[it]?.state?.toDoubleOrNull() }
+                                        ?: return@launch
+                                    val liveInFront = personInFrontOfDisplay(liveStates, _mmWaveLive.value)
+                                    val curAmb = filteredAmbientLux ?: liveLux
+                                    val dark = liveLux <= PITCH_DARK_LUX_THRESHOLD
+                                    if ((!liveInFront || dark) && liveLux < curAmb * SHADOW_TOLERANCE_RATIO) {
+                                        filteredAmbientLux = liveLux
+                                        autoBrightnessDesired.value = luxToDisplayBrightness(liveLux)
+                                    }
+                                }
+                                pendingDimJob = null
+                            }
+                        }
                     }
-                    val lux = snap.luxState?.toDoubleOrNull()
-                    if (lux == null || lux <= 0) {
-                        autoBrightnessDesired.value = null
-                        return@collect
-                    }
-                    autoBrightnessDesired.value = luxToDisplayBrightness(lux)
                 }
         }
         viewModelScope.launch { rampAutoDisplayBrightness() }
@@ -733,14 +1855,20 @@ class HaViewModel(
 
     private suspend fun rampAutoDisplayBrightness() {
         while (true) {
+            // Auto-brightness is idle far more often than not; suspend on whichever input is
+            // missing rather than waking ~11×/s for the process lifetime.
             val desired = autoBrightnessDesired.value
-            if (desired == null || _ui.value.screenAsleep) {
-                delay(AUTO_BRIGHTNESS_RAMP_MS)
+            if (desired == null) {
+                autoBrightnessDesired.filterNotNull().first()
+                continue
+            }
+            if (_ui.value.screenAsleep) {
+                _ui.first { !it.screenAsleep }
                 continue
             }
             val entityId = _ui.value.displayBrightnessEntity.takeIf { it.isNotBlank() }
             if (entityId == null) {
-                delay(AUTO_BRIGHTNESS_RAMP_MS)
+                _ui.first { it.displayBrightnessEntity.isNotBlank() }
                 continue
             }
             val live = states.value[entityId]?.state?.toFloatOrNull()?.roundToInt()
@@ -751,7 +1879,14 @@ class HaViewModel(
                     setDisplayBrightness(desired.toFloat())
                     autoBrightnessApplied = desired
                 }
-                delay(AUTO_BRIGHTNESS_RAMP_MS)
+                // Target brightness reached. Suspend until desired brightness changes,
+                // screen sleeps, or the target brightness entity changes.
+                combine(
+                    autoBrightnessDesired,
+                    _ui.map { Pair(it.screenAsleep, it.displayBrightnessEntity) }.distinctUntilChanged(),
+                ) { newDesired, (asleep, entity) ->
+                    newDesired != desired || asleep || entity != entityId
+                }.first { it }
                 continue
             }
             val step = brightnessRampStep(abs(delta)).coerceAtMost(abs(delta))
@@ -799,10 +1934,18 @@ class HaViewModel(
         allStates: Map<String, EntityState>,
         live: MmWaveLiveTargets,
     ): Boolean {
+        if (_tabletMotion.value) return true
+        val occupancyIds = occupancyEntityIds(_ui.value.dashboard?.home?.occupancyEntities.orEmpty())
+        if (occupancyIds.any { isOn(allStates[it]?.state) }) return true
         if (isOn(allStates[MMWAVE_OCCUPANCY_ENTITY]?.state)) return true
         if (live.count > 0 || live.slots.isNotEmpty()) return true
         val helperCount = allStates[MMWAVE_TARGET_COUNT_ENTITY]?.state?.toDoubleOrNull()?.roundToInt() ?: 0
         return helperCount > 0
+    }
+
+    private fun occupancyEntityIds(homeIds: List<String>): List<String> {
+        val extra = PanelConfig.MOTION_ENTITY
+        return if (extra.isBlank() || extra in homeIds) homeIds else homeIds + extra
     }
 
     private data class AutoBrightnessSnapshot(
@@ -810,8 +1953,38 @@ class HaViewModel(
         val brightnessEntity: String,
         val asleep: Boolean,
         val luxState: String?,
-        val currentBrightness: Float?,
+        val inFront: Boolean,
     )
+
+    private fun personInFrontOfDisplay(
+        allStates: Map<String, EntityState>,
+        live: MmWaveLiveTargets,
+        now: Long = System.currentTimeMillis(),
+    ): Boolean = runCatching {
+        // 1. User interacted with UI recently (touch, popup, navigation within last 60s)
+        if (now - lastActivityMs < RECENT_ACTIVITY_HOLD_MS) return@runCatching true
+
+        // 2. mmWave live targets in close proximity to switch/tablet (depth 1..220 cm, |x| <= 150 cm)
+        if (live.slots.values.any { it.y in 1..220 && abs(it.x) <= 150 }) return@runCatching true
+
+        // 3. HA mmWave target depth helpers in close proximity (depth 1..220 cm, |x| <= 150 cm)
+        for (i in 1..4) {
+            val y = allStates["input_number.secondary_living_room_mmwave_target_${i}_y"]?.state?.toDoubleOrNull()
+            val x = allStates["input_number.secondary_living_room_mmwave_target_${i}_x"]?.state?.toDoubleOrNull() ?: 0.0
+            if (y != null && y in 1.0..220.0 && abs(x) <= 150.0) return@runCatching true
+        }
+
+        // 4. Target count > 0 with unknown depth while live slots are empty
+        val count = live.count.coerceAtLeast(
+            allStates[MMWAVE_TARGET_COUNT_ENTITY]?.state?.toDoubleOrNull()?.roundToInt() ?: 0
+        )
+        if (count > 0 && live.slots.isEmpty()) {
+            val y1 = allStates["input_number.secondary_living_room_mmwave_target_1_y"]?.state?.toDoubleOrNull()
+            if (y1 == null || y1 in 1.0..220.0) return@runCatching true
+        }
+
+        false
+    }.getOrDefault(false)
 
     private fun watchMmWaveClear() {
         viewModelScope.launch {
@@ -826,9 +1999,11 @@ class HaViewModel(
     }
 
     private fun watchCameraFlag() {
+        val flag = KioskCommands.CAMERA_FLAG
+        if (flag.isBlank()) return
         viewModelScope.launch {
             var previous: String? = null
-            states.map { it[KioskCommands.CAMERA_FLAG]?.state }.distinctUntilChanged().collect { state ->
+            states.map { it[flag]?.state }.distinctUntilChanged().collect { state ->
                 val last = previous
                 previous = state
                 if (state == "on" && last != "on") {
@@ -854,23 +2029,24 @@ class HaViewModel(
                 _ui.map { it.dashboard?.home?.personCameras }.distinctUntilChanged(),
                 _debugPersonCamerasEnabled,
             ) { allStates, config, debugEnabled ->
-                Triple(config, allStates, debugEnabled)
-            }.collect { (config, allStates, debugEnabled) ->
+                // Resolve the active bindings inside the combine so the 80 ms state flush is
+                // filtered out here instead of rebuilding widgets and re-running the update.
+                val bindings = config?.bindings.orEmpty()
+                val active = when {
+                    bindings.isEmpty() -> emptyList()
+                    debugEnabled -> bindings
+                    else -> bindings.filter { binding -> personSensorActive(binding, allStates) }
+                }
+                Triple(config, active, debugEnabled)
+            }.distinctUntilChanged().collect { (config, active, debugEnabled) ->
                 if (config == null || config.bindings.isEmpty()) {
                     personCameraCooldownJob?.cancel()
                     personCameraCooldownJob = null
                     _activePersonCameras.value = emptyList()
                     return@collect
                 }
-                val active = if (debugEnabled) {
-                    config.bindings.map { it.toCameraWidget() }
-                } else {
-                    config.bindings
-                        .filter { binding -> personSensorActive(binding, allStates) }
-                        .map { it.toCameraWidget() }
-                }
                 updateActivePersonCameras(
-                    active,
+                    active.map { it.toCameraWidget() },
                     if (debugEnabled) 0 else config.cooldownSeconds,
                     ignoreCooldown = debugEnabled,
                 )
@@ -890,6 +2066,7 @@ class HaViewModel(
         val previous = _activePersonCameras.value
         if (previous.isEmpty()) return
         _activePersonCameras.value = emptyList()
+        bumpVisionTimelineRevision()
         viewModelScope.launch {
             liveCameras.stopTargets(previous.map { CameraStreams.fromWidget(it) })
         }
@@ -937,11 +2114,6 @@ class HaViewModel(
         }
     }
 
-    fun isCalendarSubscribed(entityId: String, defaults: List<CalendarSourceNode>): Boolean {
-        val selected = _subscribedCalendars.value ?: defaults.mapNotNull { it.entity }
-        return entityId in selected
-    }
-
     fun setCalendarSubscribed(entityId: String, enabled: Boolean) {
         val defaults = _ui.value.dashboard?.home?.calendar?.calendars?.mapNotNull { it.entity }.orEmpty()
         val current = (_subscribedCalendars.value ?: defaults).toMutableList()
@@ -954,6 +2126,33 @@ class HaViewModel(
     fun resetCalendarSubscriptions() {
         credentials.subscribedCalendars = null
         _subscribedCalendars.value = null
+    }
+
+    fun setMonitoredLights(ids: List<String>?) {
+        credentials.monitoredLightEntities = ids
+        _monitoredLights.value = credentials.monitoredLightEntities
+    }
+
+    fun lightSwitchChoices(): List<Pair<String, String>> =
+        entityChoices(setOf("light", "switch"))
+
+    fun currentlyOnAllowlistedLights(): List<String> =
+        LightAllowlist.currentlyOn(_monitoredLights.value, states.value)
+
+    fun turnOffAllowlistedLights() {
+        viewModelScope.launch {
+            val ids = currentlyOnAllowlistedLights()
+            if (ids.isEmpty()) return@launch
+            ids.forEach { client.applyOptimisticState(it, "off") }
+            client.callService("homeassistant", "turn_off", ids)
+        }
+    }
+
+    fun turnOffEntity(entityId: String) {
+        viewModelScope.launch {
+            client.applyOptimisticState(entityId, "off")
+            client.callService("homeassistant", "turn_off", listOf(entityId))
+        }
     }
 
     fun refreshCalendars() {
@@ -981,6 +2180,10 @@ class HaViewModel(
         allDay: Boolean,
         onResult: (Result<Unit>) -> Unit,
     ) {
+        if (!PanelConfig.ALLOW_CALENDAR_CREATE) {
+            onResult(Result.failure(IllegalStateException("This panel cannot create calendar events")))
+            return
+        }
         viewModelScope.launch {
             val result = runCalendarEventMutation {
                 createCalendarEventPayload(entityId, title, date, startTime, endTime, allDay)
@@ -1094,6 +2297,10 @@ class HaViewModel(
     }
 
     fun onTap(widget: WidgetNode) {
+        if (widget.type == "lights_off") {
+            turnOffAllowlistedLights()
+            return
+        }
         val action = widget.tap ?: ActionNode(type = "more_info")
         dispatch(action, widget.entity)
     }
@@ -1124,9 +2331,6 @@ class HaViewModel(
                 val ids = action.entityIds().ifEmpty { listOfNotNull(entity) }
                 val data = action.data?.mapValues { it.value } ?: emptyMap()
                 client.callService(domain, name, ids.ifEmpty { null }, data)
-            }
-            "fire-dom-event" -> {
-                // Weather now/today swap is handled natively in the weather popup.
             }
         }
     }
@@ -1180,9 +2384,16 @@ class HaViewModel(
     }
 
     companion object {
+        private const val ROOM_POPUP_TIMEOUT_MS = 60_000L
         private const val AUTO_BRIGHTNESS_RAMP_MS = 90L
-        private const val POPUP_AUTO_DISMISS_MS = 120_000L
-        private const val CAMERA_POPUP_HASH = "#camerafront_view"
+        private const val BRIGHTNESS_DIM_CONFIRM_MS = 45_000L
+        private const val BRIGHTNESS_DARK_CONFIRM_MS = 15_000L
+        private const val PITCH_DARK_LUX_THRESHOLD = 15.0
+        private const val RECENT_ACTIVITY_HOLD_MS = 60_000L
+        private const val SHADOW_TOLERANCE_RATIO = 0.90
+        private const val LOCAL_PIN_MAX_FAILURES = 5
+        private const val LOCAL_PIN_LOCKOUT_BASE_MS = 30_000L
+        private const val LOCAL_PIN_LOCKOUT_MAX_MS = 15 * 60_000L
         private const val MMWAVE_OCCUPANCY_ENTITY = "binary_sensor.secondary_living_room_switch_occupancy"
         private const val MMWAVE_TARGET_COUNT_ENTITY = "input_number.secondary_living_room_mmwave_target_count"
 

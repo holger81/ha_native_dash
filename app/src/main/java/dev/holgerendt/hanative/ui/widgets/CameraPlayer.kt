@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import dev.holgerendt.hanative.R
 import dev.holgerendt.hanative.data.CameraStreams
@@ -47,10 +48,14 @@ import dev.holgerendt.hanative.ui.theme.ChipOnDark
 import kotlinx.coroutines.delay
 
 private val CameraShape = RoundedCornerShape(24.dp)
+private const val SNAPSHOT_REFRESH_MS = 30_000L
+private const val SNAPSHOT_RETRY_MS = 2_000L
 
 @Composable
 fun CameraPopup(popup: PopupNode, viewModel: HaViewModel) {
-    val cameras = remember(popup) { CameraStreams.camerasForPopup(popup) }
+    val ui by viewModel.ui.collectAsState()
+    val go2rtcUrl = ui.go2rtcUrl
+    val cameras = remember(popup, go2rtcUrl) { CameraStreams.camerasForPopup(popup, go2rtcUrl) }
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -74,20 +79,27 @@ fun CameraCard(
     viewModel: HaViewModel,
     modifier: Modifier = Modifier,
     fill: Boolean = false,
+    fitContent: Boolean = false,
 ) {
     val boxModifier = modifier
-        .then(if (fill) Modifier.fillMaxSize() else Modifier.aspectRatio(16f / 9f))
+        .then(
+            when {
+                fill -> Modifier.fillMaxSize()
+                fitContent -> Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                else -> Modifier.aspectRatio(16f / 9f)
+            },
+        )
         .clip(CameraShape)
         .background(ChipDark)
         .then(
-            if (fill) Modifier else Modifier.clickable {
+            if (fill || fitContent) Modifier else Modifier.clickable {
                 widget.entity?.let { viewModel.openMoreInfo(it) }
             },
         )
     if (widget.hasLiveCameraSource()) {
-        LiveCameraSurface(widget, viewModel, boxModifier)
+        LiveCameraSurface(widget, viewModel, boxModifier, fitContent = fitContent)
     } else {
-        SnapshotCameraSurface(widget, viewModel, boxModifier)
+        SnapshotCameraSurface(widget, viewModel, boxModifier, fitContent = fitContent)
     }
 }
 
@@ -96,6 +108,7 @@ private fun SnapshotCameraSurface(
     widget: WidgetNode,
     viewModel: HaViewModel,
     modifier: Modifier,
+    fitContent: Boolean = false,
 ) {
     var bytes by remember(widget.entity) { mutableStateOf<ByteArray?>(null) }
     var error by remember(widget.entity) { mutableStateOf<String?>(null) }
@@ -122,7 +135,9 @@ private fun SnapshotCameraSurface(
                     }
                 }
             }
-            delay(1000)
+            // Snapshots are TTL-cached in HaClient, so polling faster than the TTL only
+            // re-serves the same bytes. Retry quickly while failing, then settle down.
+            delay(if (next == null) SNAPSHOT_RETRY_MS else SNAPSHOT_REFRESH_MS)
         }
     }
     val bitmap = remember(bytes) {
@@ -134,7 +149,7 @@ private fun SnapshotCameraSurface(
                 bitmap = bitmap,
                 contentDescription = widget.name,
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
+                contentScale = if (fitContent) ContentScale.Fit else ContentScale.Crop,
             )
         }
         when {
@@ -150,8 +165,10 @@ private fun LiveCameraSurface(
     widget: WidgetNode,
     viewModel: HaViewModel,
     modifier: Modifier,
+    fitContent: Boolean = false,
 ) {
-    val live by viewModel.liveCamera(widget).collectAsState()
+    val live by remember(widget) { viewModel.liveCamera(widget) }.collectAsState()
+    LaunchedEffect(widget) { viewModel.startLiveCamera(widget) }
     var surfaceReady by remember(widget) { mutableStateOf(false) }
     val player = live.player
     val still = live.bitmap
@@ -161,11 +178,21 @@ private fun LiveCameraSurface(
                 factory = { ctx ->
                     viewModel.attachCameraSurface(widget)
                     val view = LayoutInflater.from(ctx).inflate(R.layout.camera_player_view, null) as PlayerView
+                    view.resizeMode = if (fitContent) {
+                        AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    } else {
+                        AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    }
                     view.useController = false
                     view.player = player
                     view
                 },
                 update = { view ->
+                    view.resizeMode = if (fitContent) {
+                        AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    } else {
+                        AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    }
                     view.player = player
                     view.useController = false
                 },
@@ -180,9 +207,22 @@ private fun LiveCameraSurface(
         if (showStill) {
             AndroidView(
                 factory = { ctx ->
-                    ImageView(ctx).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+                    ImageView(ctx).apply {
+                        scaleType = if (fitContent) {
+                            ImageView.ScaleType.FIT_CENTER
+                        } else {
+                            ImageView.ScaleType.CENTER_CROP
+                        }
+                    }
                 },
-                update = { view -> view.setImageBitmap(still) },
+                update = { view ->
+                    view.scaleType = if (fitContent) {
+                        ImageView.ScaleType.FIT_CENTER
+                    } else {
+                        ImageView.ScaleType.CENTER_CROP
+                    }
+                    view.setImageBitmap(still)
+                },
                 modifier = Modifier.fillMaxSize(),
             )
         } else if (player == null && still == null) {

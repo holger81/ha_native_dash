@@ -2,6 +2,7 @@
   "version": 1,
   "source": "greatroom-wall.yaml",
   "home": {
+    "layout": "greatroom",
     "title": "Home",
     "people": [
       {
@@ -3258,6 +3259,7 @@
     "mdi:lightning-bolt",
     "mdi:menu",
     "mdi:metronome-tick",
+    "mdi:motion-sensor",
     "mdi:movie-open",
     "mdi:pot-steam-outline",
     "mdi:power",

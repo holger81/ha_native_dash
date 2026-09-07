@@ -127,13 +127,15 @@ private val ToggleDomains = setOf(
     "siren",
 )
 
+private val HistoryTimeFormat = DateTimeFormatter.ofPattern("h:mm a", Locale.US)
+private val HistoryDateFormat = DateTimeFormatter.ofPattern("MMM d", Locale.US)
+private val LastChangedFormat = DateTimeFormatter.ofPattern("EEE d MMM HH:mm")
+
 @Composable
 fun MoreInfoDialog(entityId: String, viewModel: HaViewModel) {
     val overlay = OverlayLightPopup
-    val states by viewModel.states.collectAsState()
-    val entity = states[entityId]
+    val entity by viewModel.entityFlow(entityId).collectAsState()
     val domain = entityId.substringBefore('.')
-    val now = rememberNowTick()
     CompositionLocalProvider(LocalOverlay provides overlay) {
         InWindowOverlay(
             onDismiss = { viewModel.closeMoreInfo() },
@@ -154,10 +156,10 @@ fun MoreInfoDialog(entityId: String, viewModel: HaViewModel) {
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 MoreInfoChrome(entityId, entity, viewModel, overlay)
-                MoreInfoStateRow(entityId, entity, domain, viewModel, now)
+                MoreInfoStateRow(entityId, entity, domain, viewModel)
                 MoreInfoControls(entityId, entity, domain, viewModel)
                 if (domain in HistoryDomains) {
-                    MoreInfoHistory(entityId, entity, viewModel, now)
+                    MoreInfoHistory(entityId, entity, viewModel)
                 }
                 MoreInfoExtras(entityId, entity, domain, viewModel)
                 MoreInfoAttributes(entity)
@@ -186,9 +188,9 @@ private fun MoreInfoStateRow(
     entity: EntityState?,
     domain: String,
     viewModel: HaViewModel,
-    now: Instant,
 ) {
     val overlay = LocalOverlay.current
+    val now = rememberNowTick()
     val unit = entity?.attrString("unit_of_measurement").orEmpty()
     val numeric = domain in setOf("sensor", "number", "input_number") && entity?.state?.toDoubleOrNull() != null
     val display = when {
@@ -246,8 +248,7 @@ private fun MoreInfoControls(entityId: String, entity: EntityState?, domain: Str
     val yellow = ButtonDefaults.buttonColors(ActiveYellow)
     when (domain) {
         "light" -> {
-            val states by viewModel.states.collectAsState()
-            val pct = states.brightnessPct(entityId).toFloat()
+            val pct = entity.brightnessPct().toFloat()
             var value by remember(pct) { mutableFloatStateOf(pct) }
             Slider(
                 value = value,
@@ -305,26 +306,32 @@ private fun MoreInfoControls(entityId: String, entity: EntityState?, domain: Str
 }
 
 @Composable
-private fun MoreInfoHistory(entityId: String, entity: EntityState?, viewModel: HaViewModel, now: Instant) {
-    val states by viewModel.states.collectAsState()
-    val live = states[entityId] ?: entity
+private fun MoreInfoHistory(entityId: String, entity: EntityState?, viewModel: HaViewModel) {
     var buckets by remember(entityId) { mutableStateOf(listOf<HistoryBucket>()) }
     var loaded by remember(entityId) { mutableStateOf(false) }
-    LaunchedEffect(entityId, viewModel.client.currentBaseUrl, live?.state, live?.lastChanged) {
+    suspend fun refresh() {
+        buckets = try {
+            viewModel.client.historyBuckets(entityId, 24)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            buckets
+        }
+        loaded = true
+    }
+    LaunchedEffect(entityId, viewModel.client.currentBaseUrl) {
         while (true) {
-            buckets = try {
-                viewModel.client.historyBuckets(entityId, 24)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                buckets
-            }
-            loaded = true
+            refresh()
             delay(45_000)
         }
     }
-    val plotted = remember(buckets, live?.state, live?.lastChanged, now) {
-        withLiveSample(buckets, live, now.toEpochMilli())
+    LaunchedEffect(entity?.state, entity?.lastChanged) {
+        if (entity == null) return@LaunchedEffect
+        delay(1_000)
+        refresh()
+    }
+    val plotted = remember(buckets, entity?.state, entity?.lastChanged) {
+        withLiveSample(buckets, entity, System.currentTimeMillis())
     }
     Spacer(Modifier.height(8.dp))
     val overlay = LocalOverlay.current
@@ -345,8 +352,8 @@ private fun MoreInfoHistory(entityId: String, entity: EntityState?, viewModel: H
         )
         else -> HistoryGraphChart(
             buckets = plotted,
-            unit = live?.attrString("unit_of_measurement").orEmpty(),
-            nowMs = now.toEpochMilli(),
+            unit = entity?.attrString("unit_of_measurement").orEmpty(),
+            nowMs = System.currentTimeMillis(),
         )
     }
 }
@@ -361,8 +368,6 @@ private fun HistoryGraphChart(buckets: List<HistoryBucket>, unit: String, nowMs:
     val dataMax = buckets.maxOf { it.max }
     val (yMin, yMax, yTicks) = niceAxis(dataMin, dataMax)
     val zone = ZoneId.systemDefault()
-    val timeFmt = DateTimeFormatter.ofPattern("h:mm a", Locale.US)
-    val dateFmt = DateTimeFormatter.ofPattern("MMM d", Locale.US)
     val decimals = historyDecimals(yMin, yMax)
     val labelStyle = TextStyle(color = overlay.muted, fontSize = 10.sp)
     val unitStyle = TextStyle(color = overlay.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
@@ -439,9 +444,9 @@ private fun HistoryGraphChart(buckets: List<HistoryBucket>, unit: String, nowMs:
             val time = startMs + (endMs - startMs) * i / xLabelCount
             val instant = Instant.ofEpochMilli(time).atZone(zone)
             val label = if (i == 0 || (instant.hour == 0 && instant.minute < 20)) {
-                instant.format(dateFmt)
+                instant.format(HistoryDateFormat)
             } else {
-                instant.format(timeFmt)
+                instant.format(HistoryTimeFormat)
             }
             val layout = textMeasurer.measure(label, labelStyle)
             val x = xOf(time) - layout.size.width / 2f
@@ -549,7 +554,7 @@ private fun CalendarEvents(entityId: String, viewModel: HaViewModel) {
             Text("Upcoming", color = overlay.muted, fontSize = 12.sp)
             events.forEach { event ->
                 val whenText = event.start?.atZone(ZoneId.systemDefault())
-                    ?.format(DateTimeFormatter.ofPattern("EEE d MMM HH:mm"))
+                    ?.format(LastChangedFormat)
                     ?: event.startDate?.toString()
                     ?: ""
                 Column(Modifier.padding(vertical = 4.dp)) {

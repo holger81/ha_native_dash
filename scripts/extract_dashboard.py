@@ -42,7 +42,7 @@ def collect_entities(node, acc: set[str]) -> None:
         for k, v in node.items():
             if k in {"entity", "activity_entity", "battery", "home_sensor", "work_sensor", "graph", "poster", "weather_entity"} and isinstance(v, str) and "." in v:
                 acc.add(v)
-            if k in {"entity_id", "entity_ids"}:
+            if k in {"entity_id", "entity_ids", "door_locks", "window_covers", "occupancy_entities"}:
                 if isinstance(v, str) and "." in v and not v.startswith("["):
                     for part in v.split(","):
                         part = part.strip()
@@ -445,7 +445,7 @@ def convert_card(card, context: str = "") -> dict | list | None:
             "show_navigation": bool(card.get("showNavigation", False)),
             "combine_similar": bool(card.get("combineSimilarEvents", False)),
             "locale": card.get("locale"),
-            "show_condition": weather.get("showCondition", True),
+            "show_condition": bool(weather.get("entity")) and weather.get("showCondition", True),
             "show_temperature": weather.get("showTemperature", False),
             "show_low_temperature": weather.get("showLowTemperature", False),
             "grid_area": (card.get("view_layout") or {}).get("grid-area"),
@@ -597,8 +597,20 @@ def convert_template(template: str, variables: dict, card: dict | None = None) -
         return {**base, "type": "button_toggle_small", "tap": tap or {"type": "toggle"}, "hold": hold}
     if template == "button_trigger":
         return {**base, "type": "button_trigger", "tap": tap or MORE_INFO, "hold": hold}
+    if template == "open_status":
+        return {
+            "type": "open_status",
+            "door_locks": ["lock.front_door", "lock.garage_entrance"],
+            "window_covers": ["cover.guestroom_front", "cover.jonathan"],
+        }
     if template in {"chips_big", "chips_big_active", "chips_medium", "chips_medium_active", "chips_small", "chips_small_active"}:
-        return {**base, "type": "action_chip", "style": template, "tap": tap or MORE_INFO, "hold": hold}
+        name = stringify(variables.get("name")) or stringify((card or {}).get("name"))
+        tap_service = (tap or {}).get("service") if isinstance(tap, dict) else None
+        widget_type = "lights_off" if (
+            (name or "").lower() == "all lights off"
+            or tap_service == "script.turn_off_all_lights"
+        ) else "action_chip"
+        return {**base, "type": widget_type, "name": name, "style": template, "tap": tap or MORE_INFO, "hold": hold}
     if template == "vacuum_button":
         name = stringify(variables.get("name")) or stringify((card or {}).get("name"))
         entity = stringify(variables.get("entity")) or stringify((card or {}).get("entity"))
@@ -689,13 +701,18 @@ def convert_button_card(card: dict) -> dict:
     icon = card.get("icon")
     area = (card.get("view_layout") or {}).get("grid-area")
 
-    if area == "button":
+    if area in {"button", "menu"}:
         return {
             "type": "menu_button",
             "entity": entity,
             "icon": icon or "mdi:menu",
             "tap": {"type": "menu_toggle"},
             "hold": convert_action(card.get("hold_action")),
+            "grid_area": area,
+        }
+    if area == "time":
+        return {
+            "type": "clock",
             "grid_area": area,
         }
     if area == "weather" or (isinstance(entity, str) and entity.startswith("weather.")):
@@ -724,7 +741,6 @@ def convert_button_card(card: dict) -> dict:
     label = card.get("label")
     if isinstance(label, str) and "vent" in label.lower():
         ids = ENTITY_RE.findall(label) or ENTITY_RE.findall(str(card.get("tap_action")))
-        service = None
         tap = card.get("tap_action") or {}
         return {
             "type": "vents_group",
@@ -782,6 +798,111 @@ ROOM_AREAS = {
 }
 
 
+def occupancy_entity_ids(conditions) -> list[str]:
+    ids: list[str] = []
+    if not isinstance(conditions, list):
+        return ids
+    for cond in conditions:
+        if not isinstance(cond, dict):
+            continue
+        entity = cond.get("entity")
+        if isinstance(entity, str) and "." in entity:
+            ids.append(entity)
+        ids.extend(occupancy_entity_ids(cond.get("conditions") or []))
+    return ids
+
+
+def convert_entrance_home(view: dict) -> dict:
+    header_cards: list[dict] = []
+    popups: list[dict] = []
+    hero_cameras: list[dict] = []
+    occupancy: list[str] = []
+    calendar = None
+    status = None
+    actions: list[dict] = []
+
+    for card in view.get("cards") or []:
+        if card.get("type") == "custom:bubble-card" and card.get("card_type") == "pop-up":
+            popups.append(convert_popup(card))
+            continue
+        area = (card.get("view_layout") or {}).get("grid-area")
+        if area == "header":
+            for node in walk_nodes(card):
+                if not isinstance(node, dict):
+                    continue
+                nested_area = (node.get("view_layout") or {}).get("grid-area")
+                if node.get("type") == "custom:button-card" and nested_area in {"menu", "time"}:
+                    converted = convert_card(node)
+                    if converted:
+                        header_cards.append(converted)
+                elif node.get("type") == "custom:paper-buttons-row":
+                    converted = convert_card(node)
+                    if converted:
+                        header_cards.append(converted)
+        elif area == "hero":
+            for inner in card.get("cards") or []:
+                if inner.get("type") != "conditional":
+                    continue
+                occupancy.extend(occupancy_entity_ids(inner.get("conditions") or []))
+                converted = convert_card(inner)
+                if converted is None:
+                    continue
+                nodes = converted if isinstance(converted, list) else [converted]
+                for node in walk_nodes(nodes):
+                    if not isinstance(node, dict):
+                        continue
+                    kind = node.get("type")
+                    if kind == "camera":
+                        hero_cameras.append(node)
+                    elif kind == "week_planner" and calendar is None:
+                        calendar = node
+        elif area == "status":
+            converted = convert_card(card)
+            if converted:
+                status = converted
+        elif area == "actions":
+            converted = convert_card(card)
+            if converted is None:
+                continue
+            for node in walk_nodes(converted):
+                if isinstance(node, dict) and node.get("type") in {"action_chip", "lights_off"}:
+                    actions.append(node)
+
+    seen = set()
+    occupancy_unique = []
+    for entity in occupancy:
+        if entity not in seen:
+            seen.add(entity)
+            occupancy_unique.append(entity)
+
+    seen_cams = set()
+    cameras_unique = []
+    for cam in hero_cameras:
+        key = (cam.get("entity"), cam.get("stream_name"))
+        if key in seen_cams:
+            continue
+        seen_cams.add(key)
+        cameras_unique.append(cam)
+
+    home = {
+        "layout": "entrance",
+        "title": view.get("title", "Home"),
+        "people": [],
+        "header": header_cards,
+        "chips": None,
+        "rooms": [],
+        "hero_cameras": cameras_unique,
+        "occupancy_entities": occupancy_unique,
+        "actions": actions,
+        "popups": popups,
+    }
+    if calendar:
+        home["calendar"] = calendar
+    if status:
+        home["status"] = status
+    return home
+
+
 def walk_nodes(node):
     if isinstance(node, dict):
         yield node
@@ -834,6 +955,7 @@ def convert_home(view: dict) -> dict:
     rooms.sort(key=lambda item: order.get(item.get("grid_area"), 99))
 
     home = {
+        "layout": "greatroom",
         "title": view.get("title", "Home"),
         "people": people,
         "header": header_cards,
@@ -848,32 +970,138 @@ def convert_home(view: dict) -> dict:
     return home
 
 
+def load_overrides(dest: Path) -> dict:
+    overrides_path = dest.parent.parent.parent.parent / "scripts" / "local_overrides.json"
+    if not overrides_path.exists():
+        overrides_path = Path(__file__).parent / "local_overrides.json"
+    if not overrides_path.exists():
+        return {}
+    return json.loads(overrides_path.read_text())
+
+
+def merge_overrides(home: dict, overrides: dict) -> None:
+    if not overrides:
+        return
+
+    # Reorder rooms
+    room_order = overrides.get("room_order")
+    if room_order:
+        order = {name: i for i, name in enumerate(room_order)}
+        home["rooms"].sort(key=lambda r: order.get(r.get("name"), 999))
+
+    # Add extra popups
+    for popup in overrides.get("popups", []):
+        existing = [p for p in home["popups"] if p.get("hash") == popup.get("hash")]
+        if existing:
+            home["popups"].remove(existing[0])
+        insert_after = popup.pop("insert_after_hash", None)
+        if insert_after:
+            idx = next((i for i, p in enumerate(home["popups"]) if p.get("hash") == insert_after), None)
+            if idx is not None:
+                home["popups"].insert(idx + 1, popup)
+                continue
+        home["popups"].append(popup)
+
+    # Insert tabs into existing popups
+    for insert in overrides.get("popup_tab_inserts", []):
+        popup_hash = insert["popup_hash"]
+        tab_title = insert["tab_title"]
+        tab = insert["tab"]
+        insert_before = insert.get("insert_before_tab")
+        popup = next((p for p in home["popups"] if p.get("hash") == popup_hash), None)
+        if popup is None:
+            continue
+        tabs_card = next((c for c in popup.get("cards", []) if c.get("type") == "tabs"), None)
+        if tabs_card is None:
+            continue
+        tabs = tabs_card.get("tabs", [])
+        # Remove existing tab with same title
+        tabs[:] = [t for t in tabs if t.get("title") != tab_title]
+        if insert_before:
+            idx = next((i for i, t in enumerate(tabs) if t.get("title") == insert_before), len(tabs))
+        else:
+            idx = len(tabs)
+        tabs.insert(idx, tab)
+
+    # Override chips
+    for override in overrides.get("chip_overrides", []):
+        match_entity = override.get("match_entity")
+        chip = override.get("chip")
+        if not match_entity or not chip:
+            continue
+        chips = home.get("chips", {}).get("chips", [])
+        for i, c in enumerate(chips):
+            if c.get("entity") == match_entity:
+                chips[i] = chip
+                break
+
+    # Add person_cameras (insert before timeline to match committed key order)
+    person_cameras = overrides.get("person_cameras")
+    if person_cameras:
+        # Remove existing if present, then re-insert before timeline
+        if "person_cameras" in home:
+            del home["person_cameras"]
+        if "timeline" in home:
+            new_home = {}
+            for k, v in home.items():
+                if k == "timeline":
+                    new_home["person_cameras"] = person_cameras
+                new_home[k] = v
+            home.clear()
+            home.update(new_home)
+        else:
+            home["person_cameras"] = person_cameras
+
+
 def main() -> int:
     src = Path(sys.argv[1] if len(sys.argv) > 1 else Path.home() / "Projects/ha_dashboards/greatroom-wall.yaml")
-    dest = Path(sys.argv[2] if len(sys.argv) > 2 else "app/src/main/assets/dashboard.json")
+    is_entrance = "entrance" in src.name.lower()
+    default_dest = (
+        "app/src/entrance/assets/dashboard.json" if is_entrance else "app/src/greatroom/assets/dashboard.json"
+    )
+    dest = Path(sys.argv[2] if len(sys.argv) > 2 else default_dest)
     data = load_yaml(src)
     views = data.get("views") or []
-    home = convert_home(views[0])
+    home = convert_entrance_home(views[0]) if is_entrance else convert_home(views[0])
+
+    overrides: dict = {}
+    if not is_entrance:
+        overrides = load_overrides(dest)
+        merge_overrides(home, overrides)
 
     entities: set[str] = set()
     icons: set[str] = set()
     collect_entities(home, entities)
     collect_icons(home, icons)
+    for e in overrides.get("extra_entities", []):
+        entities.add(e)
+
+    entity_order = overrides.get("entity_order")
+    if entity_order:
+        ordered = [e for e in entity_order if e in entities]
+        for e in sorted(entities):
+            if e not in ordered:
+                ordered.append(e)
+        entities_list = ordered
+    else:
+        entities_list = sorted(entities)
 
     model = {
         "version": 1,
         "source": str(src.name),
         "home": home,
-        "entities": sorted(entities),
+        "entities": entities_list,
         "icons": sorted(icons),
     }
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(model, indent=2))
     print(f"Wrote {dest} ({dest.stat().st_size} bytes)")
     print(
-        f"rooms={len(home['rooms'])} popups={len(home['popups'])} people={len(home['people'])} "
+        f"layout={home.get('layout')} rooms={len(home.get('rooms') or [])} "
+        f"popups={len(home['popups'])} people={len(home.get('people') or [])} "
         f"calendar={home.get('calendar', {}).get('type') if home.get('calendar') else None} "
-        f"timeline={home.get('timeline', {}).get('type') if home.get('timeline') else None}"
+        f"timeline={home.get('timeline', {}).get('type') if home.get('timeline') else None} "
+        f"hero_cameras={len(home.get('hero_cameras') or [])} actions={len(home.get('actions') or [])}"
     )
     print(f"entities={len(entities)} icons={len(icons)}")
     print("popup hashes:", [p.get("hash") for p in home["popups"]])

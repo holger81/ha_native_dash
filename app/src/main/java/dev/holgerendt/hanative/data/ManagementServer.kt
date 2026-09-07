@@ -2,32 +2,48 @@ package dev.holgerendt.hanative.data
 
 import fi.iki.elonen.NanoHTTPD
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.net.URLDecoder
 import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
 import javax.net.ssl.SSLServerSocketFactory
+import org.json.JSONObject
 
 class ManagementServer(
     private val port: Int = PORT,
     private val pinProvider: () -> String,
     private val savedUrlProvider: () -> String,
     private val screenshotProvider: () -> ScreenCapture.Jpeg,
-    private val onSubmit: (pin: String, url: String, token: String) -> Result<Unit>,
+    private val onSubmit: (url: String, token: String) -> Result<Unit>,
     private val onCommand: (KioskCommand) -> Unit,
     private val kioskStateProvider: () -> KioskSnapshot,
+    private val panelName: String,
+    private val appVersionProvider: () -> Pair<Long, String>,
+    private val updateStatusProvider: () -> ApkInstallState,
+    private val onApkUpload: (File) -> Result<Unit>,
     sslSocketFactory: SSLServerSocketFactory,
 ) : NanoHTTPD(port) {
 
     private data class AdminSession(val expiresAt: Long, val pin: String)
 
-    private val failures = AtomicInteger(0)
-    @Volatile private var lockedUntil = 0L
+    private class FailureState {
+        var count = 0
+        var lockedUntil = 0L
+        var lastAttempt = 0L
+        var rounds = 0
+    }
+
+    private val failures = ConcurrentHashMap<String, FailureState>()
     private val random = SecureRandom()
     private val sessions = ConcurrentHashMap<String, AdminSession>()
 
     init {
         makeSecure(sslSocketFactory, null)
+    }
+
+    fun onPinChanged() {
+        failures.clear()
+        sessions.clear()
     }
 
     override fun serve(session: IHTTPSession): Response {
@@ -38,10 +54,16 @@ class ManagementServer(
             session.method == Method.GET && uri == "/logout" -> handleLogout(session)
             session.method == Method.POST && uri == "/logout" -> handleLogout(session)
             session.method == Method.GET && uri == "/screenshot" -> handleScreenshot(session)
-            session.method == Method.OPTIONS && (uri == "/api/command" || uri == "/api/state") -> corsPreflight()
+            session.method == Method.OPTIONS &&
+                (uri == "/api/command" || uri == "/api/state" || uri == "/api/crash" || uri == "/api/update") ->
+                corsPreflight(session)
             session.method == Method.GET && uri == "/api/state" -> handleKioskState(session)
+            session.method == Method.GET && uri == "/api/update" -> handleUpdateStatus(session)
+            session.method == Method.POST && uri == "/update" -> handleUpdate(session)
             (session.method == Method.GET || session.method == Method.POST) && uri == "/api/command" ->
                 handleKioskCommand(session)
+            session.method == Method.GET && uri == "/api/crash" -> handleGetCrash(session)
+            session.method == Method.POST && uri == "/api/crash/clear" -> handleClearCrash(session)
             session.method == Method.POST && uri == "/setup" -> handleSetup(session)
             session.method == Method.POST && uri == "/wake" -> handleWake(session)
             else -> newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not found")
@@ -59,8 +81,12 @@ class ManagementServer(
     private fun handleLogin(session: IHTTPSession): Response {
         val files = HashMap<String, String>()
         runCatching { session.parseBody(files) }
-        val pin = formParams(session, files)["pin"].orEmpty().replace(" ", "")
-        pinError(pin)?.let { message ->
+        val params = formParams(session, files)
+        val pin = (params["pin"] ?: pinFromBody(files["postData"].orEmpty())).orEmpty().replace(" ", "")
+        if (pin.isBlank()) {
+            return html(loginPage("Enter the PIN shown on the wall panel."), Response.Status.BAD_REQUEST)
+        }
+        pinError(pin, clientKey(session))?.let { message ->
             return html(loginPage(message), Response.Status.FORBIDDEN)
         }
         val token = newSessionToken()
@@ -92,8 +118,8 @@ class ManagementServer(
     }
 
     private fun handleKioskState(session: IHTTPSession): Response {
-        authorizeApi(session)?.let { return json(Response.Status.UNAUTHORIZED, """{"ok":false,"error":"${escape(it)}"}""") }
-        return json(Response.Status.OK, snapshotJson())
+        authorizeApi(session)?.let { return json(session, Response.Status.UNAUTHORIZED, errorJson(it)) }
+        return json(session, Response.Status.OK, snapshotJson())
     }
 
     private fun handleKioskCommand(session: IHTTPSession): Response {
@@ -112,11 +138,19 @@ class ManagementServer(
         if (body.trimStart().startsWith("{")) {
             params.putAll(flattenBody(body))
         }
-        authorizeApi(session, params["pin"])?.let {
-            return json(Response.Status.UNAUTHORIZED, """{"ok":false,"error":"${escape(it)}"}""")
+        authorizeApi(session, pinFromBody(body))?.let {
+            return json(session, Response.Status.UNAUTHORIZED, errorJson(it))
         }
         if (!KioskCommands.panelAllowed(params)) {
-            return json(Response.Status.OK, """{"ok":true,"ignored":true,"reason":"panel mismatch"}""")
+            return json(
+                session,
+                Response.Status.OK,
+                JSONObject()
+                    .put("ok", true)
+                    .put("ignored", true)
+                    .put("reason", "panel mismatch")
+                    .toString(),
+            )
         }
         val command = if (body.trimStart().startsWith("{")) {
             KioskCommands.fromJson(body) ?: KioskCommands.fromParams(params)
@@ -125,12 +159,16 @@ class ManagementServer(
         }
         if (command == null) {
             return json(
+                session,
                 Response.Status.BAD_REQUEST,
-                """{"ok":false,"error":"Unknown command. Use cmd=wake, cmd=sleep, cmd=camera, cmd=navigate&path=#camerafront_view, or cmd=home."}""",
+                errorJson(
+                    "Unknown command. Use cmd=wake, cmd=sleep, cmd=camera, " +
+                        "cmd=navigate&path=#camerafront_view, or cmd=home.",
+                ),
             )
         }
         onCommand(command)
-        return json(Response.Status.OK, snapshotJson())
+        return json(session, Response.Status.OK, snapshotJson())
     }
 
     private fun handleWake(session: IHTTPSession): Response {
@@ -142,11 +180,104 @@ class ManagementServer(
         return html(adminPage(savedUrlProvider(), "Waking the wall display.", true))
     }
 
+    private fun handleUpdateStatus(session: IHTTPSession): Response {
+        authorizeApi(session)?.let { return json(session, Response.Status.UNAUTHORIZED, errorJson(it)) }
+        val (code, name) = appVersionProvider()
+        val state = updateStatusProvider()
+        val body = JSONObject()
+            .put("ok", true)
+            .put("status", state.status)
+            .put("message", state.message ?: JSONObject.NULL)
+            .put("incomingVersion", state.incomingVersion ?: JSONObject.NULL)
+            .put("versionName", name)
+            .put("versionCode", code)
+        return json(session, Response.Status.OK, body.toString())
+    }
+
+    private fun handleUpdate(session: IHTTPSession): Response {
+        if (!authenticated(session)) {
+            return html(loginPage("Log in with the PIN first."), Response.Status.FORBIDDEN)
+        }
+        val files = HashMap<String, String>()
+        val parsed = runCatching { session.parseBody(files) }
+        if (parsed.isFailure) {
+            return html(
+                adminPage(
+                    savedUrlProvider(),
+                    parsed.exceptionOrNull()?.message ?: "Upload failed.",
+                    false,
+                ),
+                Response.Status.BAD_REQUEST,
+            )
+        }
+        val apk = uploadedApk(files)
+        if (apk == null) {
+            return html(
+                adminPage(savedUrlProvider(), "Choose an APK file for this panel.", false),
+                Response.Status.BAD_REQUEST,
+            )
+        }
+        onCommand(KioskCommand.Wake)
+        val result = runCatching { onApkUpload(apk) }.getOrElse { Result.failure(it) }
+        return if (result.isSuccess) {
+            html(adminPage(savedUrlProvider(), "Upload received. Confirm Install on the tablet.", true))
+        } else {
+            html(
+                adminPage(
+                    savedUrlProvider(),
+                    result.exceptionOrNull()?.message ?: "Install failed.",
+                    false,
+                ),
+                Response.Status.BAD_REQUEST,
+            )
+        }
+    }
+
+    private fun uploadedApk(files: Map<String, String>): File? {
+        val named = files["apk"]?.let(::File)?.takeIf { it.isFile }
+        if (named != null) return named
+        return files.values.firstOrNull { File(it).isFile }?.let(::File)
+    }
+
+    private fun handleGetCrash(session: IHTTPSession): Response {
+        val crash = CrashLogger.latestCrash
+        val json = JSONObject()
+            .put("ok", true)
+            .put("hasCrash", crash != null)
+            .put("crash", crash ?: "")
+        return json(session, Response.Status.OK, json.toString(2))
+    }
+
+    private fun handleClearCrash(session: IHTTPSession): Response {
+        if (!authenticated(session)) {
+            val files = HashMap<String, String>()
+            if (session.method == Method.POST) {
+                runCatching { session.parseBody(files) }
+            }
+            val params = formParams(session, files)
+            val body = files["postData"].orEmpty()
+            val pin = (params["pin"] ?: pinFromBody(body)).orEmpty().replace(" ", "")
+            if (pin.isBlank() || pinError(pin, clientKey(session)) != null) {
+                return json(session, Response.Status.FORBIDDEN, errorJson("PIN does not match the wall panel."))
+            }
+        }
+        CrashLogger.clearCrash()
+        return redirectHome()
+    }
+
     private fun snapshotJson(): String {
         val snap = kioskStateProvider()
-        val popupJson = snap.popup?.let { "\"${escape(it)}\"" } ?: "null"
-        return """{"ok":true,"popup":$popupJson,"connected":${snap.connected},"asleep":${snap.screenAsleep},"panel":"${KioskCommands.PANEL_ID}"}"""
+        return JSONObject()
+            .put("ok", true)
+            .put("popup", snap.popup ?: JSONObject.NULL)
+            .put("connected", snap.connected)
+            .put("asleep", snap.screenAsleep)
+            .put("panel", KioskCommands.PANEL_ID)
+            .toString()
     }
+
+    private fun errorJson(message: String): String =
+        JSONObject().put("ok", false).put("error", message).toString()
 
     private fun authorizeApi(session: IHTTPSession, bodyPin: String? = null): String? {
         if (authenticated(session)) return null
@@ -172,28 +303,55 @@ class ManagementServer(
     private fun apiPinError(session: IHTTPSession, bodyPin: String? = null): String? {
         val headerPin = session.headers["x-ha-pin"]
             ?: session.headers["authorization"]?.removePrefix("Bearer ")?.trim()
-        val queryPin = session.parameters["pin"]?.firstOrNull()
-        val pin = (headerPin ?: queryPin ?: bodyPin).orEmpty().replace(" ", "")
-        return pinError(pin)
+        val pin = (headerPin ?: bodyPin).orEmpty().replace(" ", "")
+        return pinError(pin, clientKey(session))
     }
 
-    private fun corsPreflight(): Response {
+    private fun pinFromBody(body: String): String? {
+        if (body.isBlank()) return null
+        return if (body.trimStart().startsWith("{")) {
+            flattenBody(body)["pin"]
+        } else {
+            body.split("&").firstNotNullOfOrNull { part ->
+                val idx = part.indexOf('=')
+                if (idx < 0) return@firstNotNullOfOrNull null
+                val key = URLDecoder.decode(part.substring(0, idx), Charsets.UTF_8.name())
+                if (key != "pin") return@firstNotNullOfOrNull null
+                URLDecoder.decode(part.substring(idx + 1), Charsets.UTF_8.name())
+            }
+        }
+    }
+
+    private fun clientKey(session: IHTTPSession): String = session.remoteIpAddress ?: "unknown"
+
+    private fun corsPreflight(session: IHTTPSession): Response {
         val response = newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "")
-        addCors(response)
-        response.addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        response.addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-HA-PIN")
+        addCors(response, session)
+        if (corsAllowed(session)) {
+            response.addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            response.addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-HA-PIN")
+        }
         return response
     }
 
-    private fun json(status: Response.Status, body: String): Response {
+    private fun json(session: IHTTPSession, status: Response.Status, body: String): Response {
         val response = newFixedLengthResponse(status, "application/json", body)
         response.addHeader("Cache-Control", "no-store")
-        addCors(response)
+        addCors(response, session)
         return response
     }
 
-    private fun addCors(response: Response) {
-        response.addHeader("Access-Control-Allow-Origin", "*")
+    private fun addCors(response: Response, session: IHTTPSession) {
+        if (!corsAllowed(session)) return
+        response.addHeader("Access-Control-Allow-Origin", session.headers["origin"])
+        response.addHeader("Vary", "Origin")
+    }
+
+    private fun corsAllowed(session: IHTTPSession): Boolean {
+        val origin = session.headers["origin"] ?: return false
+        val host = session.headers["host"] ?: return false
+        val sep = origin.indexOf("://")
+        return sep > 0 && origin.substring(sep + 3).trimEnd('/') == host
     }
 
     private fun handleSetup(session: IHTTPSession): Response {
@@ -209,7 +367,7 @@ class ManagementServer(
         if (url.isBlank() || token.isBlank()) {
             return html(adminPage(url, "URL and token are required.", false), Response.Status.BAD_REQUEST)
         }
-        val result = onSubmit(pinProvider(), url, token)
+        val result = onSubmit(url, token)
         return if (result.isSuccess) {
             html(adminPage(url, "Saved. The wall panel is connecting to Home Assistant.", true))
         } else {
@@ -253,21 +411,33 @@ class ManagementServer(
         sessions.entries.removeIf { now >= it.value.expiresAt || it.value.pin != currentPin }
     }
 
-    private fun pinError(pin: String): String? {
+    private fun pinError(pin: String, client: String): String? {
         val now = System.currentTimeMillis()
-        if (now < lockedUntil) {
-            return "Too many attempts. Wait a moment and try again."
+        if (pin == pinProvider()) {
+            failures.remove(client)
+            return null
         }
-        if (pin != pinProvider()) {
-            val count = failures.incrementAndGet()
-            if (count >= 5) {
-                lockedUntil = now + 30_000
-                failures.set(0)
+        if (failures.size > MAX_TRACKED_CLIENTS) {
+            failures.entries.removeIf {
+                it.value.lockedUntil < now && now - it.value.lastAttempt > FAILURE_EXPIRY_MS
             }
-            return "PIN does not match the wall panel."
         }
-        failures.set(0)
-        return null
+        val state = failures.computeIfAbsent(client) { FailureState() }
+        synchronized(state) {
+            if (now < state.lockedUntil) {
+                return LOCKOUT_MESSAGE
+            }
+            state.lastAttempt = now
+            state.count += 1
+            return if (state.count >= MAX_FAILURES) {
+                state.count = 0
+                state.rounds += 1
+                state.lockedUntil = now + lockoutMs(state.rounds)
+                LOCKOUT_MESSAGE
+            } else {
+                "PIN does not match the wall panel."
+            }
+        }
     }
 
     private fun formParams(session: IHTTPSession, files: Map<String, String>): Map<String, String> {
@@ -290,11 +460,13 @@ class ManagementServer(
         return response
     }
 
-    private fun redirectHome(setCookie: String): Response {
+    private fun redirectHome(setCookie: String? = null): Response {
         val response = newFixedLengthResponse(Response.Status.REDIRECT, MIME_HTML, "")
         response.addHeader("Location", "/")
         response.addHeader("Cache-Control", "no-store")
-        response.addHeader("Set-Cookie", setCookie)
+        if (setCookie != null) {
+            response.addHeader("Set-Cookie", setCookie)
+        }
         return response
     }
 
@@ -322,12 +494,12 @@ class ManagementServer(
             <head>
               <meta charset="utf-8"/>
               <meta name="viewport" content="width=device-width, initial-scale=1"/>
-              <title>Greatroom Wall login</title>
+              <title>${escape(panelName)} login</title>
               <style>$CSS</style>
             </head>
             <body>
               <main>
-                <h1>Greatroom Wall</h1>
+                <h1>${escape(panelName)}</h1>
                 <p>Log in with the PIN shown on the wall panel (4–8 digits). After login, a live screen view and the token form stay available without re-entering the PIN. This page is HTTPS with a device-generated certificate — accept the browser warning once.</p>
                 $notice
                 <form method="post" action="/login" autocomplete="on">
@@ -347,25 +519,40 @@ class ManagementServer(
             success -> """<p class="ok">${escape(message)}</p>"""
             else -> """<p class="err">${escape(message)}</p>"""
         }
+        val crashReport = CrashLogger.latestCrash
+        val crashSection = if (!crashReport.isNullOrBlank()) {
+            """
+            <section style="background:#2a1111; border:1px solid #d32f2f; border-radius:14px; padding:16px; margin:16px 0;">
+              <h2 style="color:#ff8a80; margin:0 0 8px 0; font-size:1.1rem;">⚠️ Last App Crash</h2>
+              <pre style="white-space:pre-wrap; word-break:break-all; font-size:11px; max-height:260px; overflow-y:auto; background:#1a0505; color:#ffcdd2; padding:10px; border-radius:8px; margin:0 0 10px 0;">${escape(crashReport)}</pre>
+              <form method="post" action="/api/crash/clear">
+                <button class="inline" type="submit" style="background:#552222; color:#fff; border:0; padding:8px 14px; border-radius:8px; font-size:13px; cursor:pointer;">Dismiss crash report</button>
+              </form>
+            </section>
+            """.trimIndent()
+        } else ""
+        val (versionCode, versionName) = appVersionProvider()
+        val versionLabel = "$versionName ($versionCode)"
         return """
             <!doctype html>
             <html lang="en">
             <head>
               <meta charset="utf-8"/>
               <meta name="viewport" content="width=device-width, initial-scale=1"/>
-              <title>Greatroom Wall setup</title>
+              <title>${escape(panelName)} setup</title>
               <style>$CSS</style>
             </head>
             <body>
               <main>
                 <div class="top">
-                  <h1>Greatroom Wall</h1>
+                  <h1>${escape(panelName)}</h1>
                   <form method="post" action="/logout">
                     <button class="ghost" type="submit">Log out</button>
                   </form>
                 </div>
                 <p>Paste your Home Assistant URL and long-lived access token. The live view uses your login session — the PIN is not sent on screenshot refreshes.</p>
                 $notice
+                $crashSection
                 <section class="live-wrap">
                   <h2>Live screen</h2>
                   <p id="live-status" class="meta">Loading live screen…</p>
@@ -374,6 +561,16 @@ class ManagementServer(
                     <button class="inline" type="button" id="reload">Reload</button>
                     <button class="inline" type="button" id="wake">Wake display</button>
                   </div>
+                </section>
+                <section class="update-box">
+                  <h2>Update app</h2>
+                  <p class="meta">Installed ${escape(versionLabel)}. Upload a newer APK for this panel. After upload, tap <strong>Install</strong> on the tablet.</p>
+                  <form id="update-form" method="post" action="/update" enctype="multipart/form-data">
+                    <label for="apk">APK file</label>
+                    <input id="apk" name="apk" type="file" accept=".apk,application/vnd.android.package-archive" required />
+                    <button type="submit">Upload and install</button>
+                  </form>
+                  <p id="update-status" class="meta" hidden></p>
                 </section>
                 <form method="post" action="/setup" autocomplete="off">
                   <label for="url">Home Assistant URL</label>
@@ -455,6 +652,35 @@ class ManagementServer(
                   });
                   refresh(false);
                   timer = setInterval(function () { refresh(false); }, INTERVAL);
+
+                  var updateStatus = document.getElementById('update-status');
+                  var updateForm = document.getElementById('update-form');
+                  async function pollUpdate() {
+                    try {
+                      var res = await fetch('/api/update', { credentials: 'same-origin', cache: 'no-store' });
+                      if (res.status === 401 || res.status === 403) return;
+                      var data = await res.json();
+                      if (!updateStatus) return;
+                      if (!data.ok) return;
+                      if (!data.status || data.status === 'idle') return;
+                      var text = data.message || data.status;
+                      updateStatus.hidden = false;
+                      updateStatus.textContent = text;
+                      updateStatus.className = data.status === 'error' ? 'err'
+                        : (data.status === 'success' ? 'ok' : 'meta');
+                    } catch (e) {}
+                  }
+                  if (updateForm) {
+                    updateForm.addEventListener('submit', function () {
+                      var btn = updateForm.querySelector('button[type=submit]');
+                      if (btn) { btn.disabled = true; btn.textContent = 'Uploading…'; }
+                      updateStatus.hidden = false;
+                      updateStatus.className = 'meta';
+                      updateStatus.textContent = 'Uploading APK…';
+                    });
+                  }
+                  pollUpdate();
+                  setInterval(pollUpdate, 2000);
                 })();
               </script>
             </body>
@@ -475,6 +701,13 @@ class ManagementServer(
         const val PORT = 8765
         private const val COOKIE_NAME = "mgmt_session"
         private const val SESSION_TTL_MS = 12 * 60 * 60 * 1000L
+        private const val MAX_FAILURES = 5
+        private const val LOCKOUT_MS = 30_000L
+        private const val MAX_LOCKOUT_MS = 15 * 60_000L
+        private const val MAX_LOCKOUT_SHIFT = 5
+        private const val FAILURE_EXPIRY_MS = 10 * 60_000L
+        private const val MAX_TRACKED_CLIENTS = 256
+        private const val LOCKOUT_MESSAGE = "Too many attempts. Wait a moment and try again."
         private const val CSS = """
                 :root { color-scheme: dark; }
                 body { font-family: -apple-system, system-ui, sans-serif; background:#111; color:#f3f1ec;
@@ -486,6 +719,7 @@ class ManagementServer(
                 label { display:block; margin:14px 0 6px; font-size:.9rem; }
                 input, textarea { width:100%; box-sizing:border-box; border:0; border-radius:14px;
                   padding:14px; font-size:16px; background:#2c2c2c; color:#fff; }
+                input[type=file] { padding:12px; }
                 textarea { min-height: 120px; font-family: ui-monospace, monospace; }
                 button { width:100%; margin-top:18px; border:0; border-radius:14px; padding:14px;
                   font-size:16px; font-weight:650; background:#ffc107; color:#111; }
@@ -501,7 +735,12 @@ class ManagementServer(
                 .live-wrap { margin: 16px 0 8px; }
                 .live { background:#000; border-radius:14px; overflow:hidden; min-height:220px; }
                 .live img { width:100%; height:auto; display:block; }
+                .update-box { margin: 16px 0; padding: 4px 0 8px; }
         """
+
+        /** 30 s, 60 s, 120 s … per source IP, capped at [MAX_LOCKOUT_MS]. */
+        private fun lockoutMs(rounds: Int): Long =
+            (LOCKOUT_MS shl (rounds - 1).coerceIn(0, MAX_LOCKOUT_SHIFT)).coerceAtMost(MAX_LOCKOUT_MS)
 
         private fun sessionCookieHeader(token: String, maxAgeSec: Long): String =
             "$COOKIE_NAME=$token; Path=/; Max-Age=$maxAgeSec; HttpOnly; Secure; SameSite=Strict"

@@ -1,9 +1,16 @@
 package dev.holgerendt.hanative.data
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -54,8 +61,6 @@ data class EntityState(
     val lastChanged: Instant? = null,
     val lastUpdated: Instant? = null,
 ) {
-    fun attr(name: String): JsonElement? = attributes[name]
-
     fun attrString(name: String): String? = attributes[name]?.jsonPrimitive?.contentOrNull
 
     fun attrDouble(name: String): Double? {
@@ -136,38 +141,6 @@ internal fun timelineSnapshotPath(keyFrame: String?, clipPath: String?): String?
     return clipPath?.let(::frigateSnapshotFromClip)
 }
 
-enum class MusicAssistantLoadMode {
-    /** Supervisor ingress session + addon `ingress_url` (HA App panels). */
-    INGRESS,
-    /** Load HA frontend root with external auth, then navigate to the panel route. */
-    SPA_BOOTSTRAP,
-    /** Load a HA frontend route directly with external auth. */
-    SPA_ROUTE,
-}
-
-data class MusicAssistantLoadTarget(
-    val mode: MusicAssistantLoadMode,
-    val label: String,
-    val path: String = "/",
-    val addonSlug: String? = null,
-)
-
-data class MusicAssistantPanelResolution(
-    val targets: List<MusicAssistantLoadTarget>,
-    val debugInfo: List<String>,
-)
-
-data class IngressLoad(
-    val session: String,
-    val ingressUrl: String,
-)
-
-private data class MusicAssistantPanel(
-    val urlPath: String,
-    val componentName: String?,
-    val addonSlug: String?,
-)
-
 sealed interface ConnectionState {
     data object Disconnected : ConnectionState
     data object Connecting : ConnectionState
@@ -181,10 +154,27 @@ class HaClient {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val mediaType = "application/json; charset=utf-8".toMediaType()
     private val http = OkHttpClient.Builder()
+        .addInterceptor(NetworkGuard.interceptor)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .pingInterval(30, TimeUnit.SECONDS)
         .callTimeout(30, TimeUnit.SECONDS)
         .build()
+    private val massHttp = OkHttpClient.Builder()
+        .addInterceptor(NetworkGuard.interceptor)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(60, TimeUnit.SECONDS)
+        .build()
+
+    companion object {
+        private const val MASS_COMMAND_MAX_ATTEMPTS = 3
+        private const val MASS_COMMAND_RETRY_BASE_MS = 400L
+        private const val COMMAND_TIMEOUT_MS = 30_000L
+        // Full-resolution stills; keep the map small and let posters refresh instead of
+        // pinning every camera ever viewed to its first frame for the process lifetime.
+        private const val SNAPSHOT_TTL_MS = 30_000L
+        private const val SNAPSHOT_CACHE_MAX_ENTRIES = 16
+    }
 
     private var webSocket: WebSocket? = null
     private var baseUrl: String = ""
@@ -193,16 +183,32 @@ class HaClient {
     private val pending = ConcurrentHashMap<Int, (Result<JsonElement>) -> Unit>()
     private val forecastSubscriptions = ConcurrentHashMap<Int, (List<JsonObject>) -> Unit>()
 
+    private val messageChannel = Channel<String>(capacity = 2_048, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val stateBatch = ConcurrentHashMap<String, EntityState>()
+    @Volatile private var batchScheduled = false
+    @Volatile private var messageCollectorStarted = false
+
     private val _states = MutableStateFlow<Map<String, EntityState>>(emptyMap())
     val states: StateFlow<Map<String, EntityState>> = _states
 
     private val _connection = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val connection: StateFlow<ConnectionState> = _connection
     private val deviceNameCache = ConcurrentHashMap<String, String?>()
-    private val snapshotCache = ConcurrentHashMap<String, ByteArray>()
+    private class SnapshotEntry(val bytes: ByteArray, val expiresAtMs: Long)
+    private val snapshotCache = ConcurrentHashMap<String, SnapshotEntry>()
+    @Volatile private var massIngress: MassIngressSession? = null
+    @Volatile private var massAddonSlug: String? = null
+    @Volatile private var massPlayersCache: Pair<Long, List<MassPlayerInfo>>? = null
 
     val currentBaseUrl: String get() = baseUrl
     val currentToken: String get() = token
+
+    private data class MassIngressSession(
+        val session: String,
+        val apiUrl: String,
+        val expiresAtMs: Long,
+    )
 
     fun state(entityId: String?): EntityState? = entityId?.let { _states.value[it] }
 
@@ -226,6 +232,14 @@ class HaClient {
         disconnect()
         baseUrl = url.trim().trimEnd('/')
         token = accessToken.trim()
+        val host = NetworkGuard.hostOf(baseUrl)
+        val allowed = withContext(Dispatchers.IO) {
+            host != null && NetworkGuard.isPrivateHost(host)
+        }
+        if (!allowed) {
+            _connection.value = ConnectionState.Error(NetworkGuard.hostRejectionReason(host))
+            return
+        }
         _connection.value = ConnectionState.Connecting
         openSocket()
     }
@@ -233,11 +247,30 @@ class HaClient {
     fun disconnect() {
         webSocket?.close(1000, "bye")
         webSocket = null
-        pending.values.forEach { it(Result.failure(IllegalStateException("Disconnected"))) }
+        drainPending(IllegalStateException("Disconnected"))
+        massIngress = null
+        massAddonSlug = null
+        massPlayersCache = null
+        stateBatch.clear()
+        batchScheduled = false
+        snapshotCache.clear()
+        while (true) {
+            if (!messageChannel.tryReceive().isSuccess) break
+        }
+        _connection.value = ConnectionState.Disconnected
+    }
+
+    /** Terminal teardown: after this the client cannot reconnect. */
+    fun release() {
+        disconnect()
+        scope.cancel()
+    }
+
+    private fun drainPending(error: Throwable) {
+        pending.values.forEach { it(Result.failure(error)) }
         pending.clear()
         forecastSubscriptions.values.forEach { it(emptyList()) }
         forecastSubscriptions.clear()
-        _connection.value = ConnectionState.Disconnected
     }
 
     private fun openSocket() {
@@ -247,29 +280,49 @@ class HaClient {
         val request = Request.Builder().url(wsUrl).build()
         webSocket = http.newWebSocket(request, object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
-                handleMessage(webSocket, text)
+                if (webSocket !== this@HaClient.webSocket) return
+                // DROP_OLDEST keeps the channel moving under bursty state_changed traffic.
+                messageChannel.trySend(text)
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (this@HaClient.webSocket !== webSocket) return
+                this@HaClient.webSocket = null
+                drainPending(t)
                 _connection.value = ConnectionState.Error(t.message ?: "WebSocket failed")
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (this@HaClient.webSocket !== webSocket) return
+                this@HaClient.webSocket = null
+                drainPending(IllegalStateException("Connection closed ($code: $reason)"))
                 if (_connection.value is ConnectionState.Connected) {
                     _connection.value = ConnectionState.Disconnected
                 }
             }
         })
+        ensureMessageCollector()
     }
 
-    private fun handleMessage(ws: WebSocket, text: String) {
+    private fun ensureMessageCollector() {
+        if (messageCollectorStarted) return
+        messageCollectorStarted = true
+        scope.launch {
+            while (true) {
+                val text = messageChannel.receive()
+                runCatching { handleMessage(text) }
+            }
+        }
+    }
+
+    private fun handleMessage(text: String) {
         val obj = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
         when (obj["type"]?.jsonPrimitive?.contentOrNull) {
             "auth_required" -> {
-                ws.send(buildJsonObject {
+                send(buildJsonObject {
                     put("type", "auth")
                     put("access_token", token)
-                }.toString())
+                })
             }
             "auth_ok" -> {
                 _connection.value = ConnectionState.Connected
@@ -294,6 +347,9 @@ class HaClient {
                 })
             }
             "auth_invalid" -> {
+                webSocket?.close(4001, "auth_invalid")
+                webSocket = null
+                drainPending(IllegalStateException("Invalid access token"))
                 _connection.value = ConnectionState.Error("Invalid access token")
             }
             "result" -> {
@@ -337,7 +393,8 @@ class HaClient {
                         val newState = data["new_state"]
                         if (newState is JsonObject) {
                             parseEntity(newState)?.let { entity ->
-                                _states.update { it + (entity.entityId to entity) }
+                                stateBatch[entity.entityId] = entity
+                                scheduleBatchFlush()
                             }
                         }
                     }
@@ -352,6 +409,23 @@ class HaClient {
                 }
             }
         }
+    }
+
+    private fun scheduleBatchFlush() {
+        if (batchScheduled) return
+        batchScheduled = true
+        scope.launch {
+            delay(80)
+            batchScheduled = false
+            flushStateBatch()
+        }
+    }
+
+    private fun flushStateBatch() {
+        if (stateBatch.isEmpty()) return
+        val batch = stateBatch.toMap()
+        stateBatch.clear()
+        _states.update { current -> current + batch }
     }
 
     private fun maybeLoadStates(result: JsonElement) {
@@ -403,23 +477,26 @@ class HaClient {
 
     private suspend fun command(builder: JsonObjectBuilder.(Int) -> Unit): JsonElement {
         val id = nextId.getAndIncrement()
-        return suspendCancellableCoroutine { cont ->
-            pending[id] = { result ->
-                result.fold(
-                    onSuccess = { cont.resume(it) },
-                    onFailure = { cont.resumeWithException(it) },
-                )
+        val result = withTimeoutOrNull(COMMAND_TIMEOUT_MS) {
+            suspendCancellableCoroutine<JsonElement> { cont ->
+                pending[id] = { r ->
+                    r.fold(
+                        onSuccess = { cont.resume(it) },
+                        onFailure = { cont.resumeWithException(it) },
+                    )
+                }
+                val payload = buildJsonObject {
+                    put("id", id)
+                    builder(id)
+                }
+                if (webSocket?.send(payload.toString()) != true) {
+                    pending.remove(id)
+                    cont.resumeWithException(IllegalStateException("Not connected"))
+                }
+                cont.invokeOnCancellation { pending.remove(id) }
             }
-            val payload = buildJsonObject {
-                put("id", id)
-                builder(id)
-            }
-            if (webSocket?.send(payload.toString()) != true) {
-                pending.remove(id)
-                cont.resumeWithException(IllegalStateException("Not connected"))
-            }
-            cont.invokeOnCancellation { pending.remove(id) }
         }
+        return result ?: throw IllegalStateException("Command timed out after ${COMMAND_TIMEOUT_MS}ms")
     }
 
     suspend fun callService(
@@ -427,8 +504,9 @@ class HaClient {
         service: String,
         entityId: List<String>? = null,
         data: Map<String, JsonElement> = emptyMap(),
-    ) {
-        command {
+        returnResponse: Boolean = false,
+    ): JsonElement {
+        return command {
             put("type", "call_service")
             put("domain", domain)
             put("service", service)
@@ -440,7 +518,451 @@ class HaClient {
             if (data.isNotEmpty()) {
                 put("service_data", JsonObject(data))
             }
+            if (returnResponse) {
+                put("return_response", true)
+            }
         }
+    }
+
+    suspend fun musicAssistantPlayers(): List<MusicAssistantPlayer> {
+        val states = _states.value.values
+        val fromMass = states
+            .asSequence()
+            .filter { it.isMusicAssistantPlayer() }
+            .map {
+                MusicAssistantPlayer(
+                    entityId = it.entityId,
+                    name = it.friendlyName,
+                    massPlayerType = it.attrString("mass_player_type"),
+                )
+            }
+            .toList()
+        val base = if (fromMass.isNotEmpty()) {
+            fromMass
+        } else {
+            // Ordinary media players until the Music Assistant integration exposes MA entities.
+            states
+                .asSequence()
+                .filter { it.entityId.startsWith("media_player.") }
+                .filter { it.state !in setOf("unavailable", "unknown") }
+                .map {
+                    MusicAssistantPlayer(
+                        entityId = it.entityId,
+                        name = it.friendlyName,
+                    )
+                }
+                .toList()
+        }
+        return sortMusicPlayers(refreshMusicPlayerTelemetry(base))
+    }
+
+    private fun sortMusicPlayers(players: List<MusicAssistantPlayer>): List<MusicAssistantPlayer> =
+        players.sortedWith(
+            compareByDescending<MusicAssistantPlayer> { player ->
+                val state = state(player.entityId)?.state
+                state == "playing" || state == "paused"
+            }.thenBy { it.name.lowercase() },
+        )
+
+    suspend fun musicAssistantQueue(
+        entityId: String,
+        players: List<MusicAssistantPlayer> = emptyList(),
+    ): MusicAssistantQueue? {
+        val player = players.firstOrNull { it.entityId == entityId }
+        val massQueueId = resolveMassQueueId(entityId, player)
+
+        val fromMass = if (!massQueueId.isNullOrBlank()) {
+            runCatching { musicAssistantMassQueue(massQueueId) }.getOrNull()
+        } else {
+            null
+        }
+
+        val fromHa = runCatching {
+            withTimeout(2_500) {
+                val result = callService(
+                    domain = "music_assistant",
+                    service = "get_queue",
+                    entityId = listOf(entityId),
+                    returnResponse = true,
+                )
+                parseMusicAssistantQueue(result, entityId)
+            }
+        }.getOrNull()
+
+        return mergeMusicAssistantQueues(fromHa, fromMass)
+    }
+
+    /** Only falls back to the MASS player list when the caller's player has no id to reuse. */
+    private suspend fun resolveMassQueueId(
+        entityId: String,
+        player: MusicAssistantPlayer?,
+    ): String? {
+        player?.groupRootId?.takeIf { it.isNotBlank() }?.let { return it }
+        player?.massPlayerId?.takeIf { it.isNotBlank() }?.let { return it }
+        val name = state(entityId)?.friendlyName ?: return null
+        val massPlayers = runCatching { musicAssistantMassPlayers() }.getOrElse { emptyList() }
+        return matchMassPlayerInfo(name, massPlayers)?.playerId
+    }
+
+    suspend fun refreshMusicPlayerTelemetry(
+        players: List<MusicAssistantPlayer>,
+        force: Boolean = true,
+    ): List<MusicAssistantPlayer> {
+        val massPlayers = runCatching { musicAssistantMassPlayers(force = force) }.getOrElse { emptyList() }
+        if (massPlayers.isEmpty()) return players
+        return players.map { player ->
+            val matched = matchMassPlayerInfo(player.name, massPlayers) ?: return@map player
+            player.copy(
+                massPlayerId = matched.playerId,
+                massVolume = matched.volume,
+                massGroupVolume = matched.groupVolume,
+                groupMemberIds = matched.groupMemberIds,
+                syncedToId = matched.syncedToId,
+                canGroupWithIds = matched.canGroupWithIds,
+                elapsedSec = matched.elapsedSec,
+                elapsedUpdatedAtMs = matched.elapsedUpdatedAtMs,
+                massPlaybackState = matched.playbackState,
+            )
+        }
+    }
+
+    suspend fun musicAssistantMassQueue(queueId: String): MusicAssistantQueue? {
+        val result = massCommand(
+            "player_queues/get",
+            buildJsonObject { put("queue_id", queueId) },
+        )
+        return parseMusicAssistantQueue(result, queueId)
+            ?: parseMusicAssistantQueue(
+                buildJsonObject { put(queueId, result) },
+                queueId,
+            )
+    }
+
+    suspend fun mediaPlayerCommand(entityId: String, service: String, data: Map<String, JsonElement> = emptyMap()) {
+        callService("media_player", service, listOf(entityId), data)
+    }
+
+    suspend fun setMediaVolume(entityId: String, level: Float) {
+        mediaPlayerCommand(
+            entityId,
+            "volume_set",
+            mapOf("volume_level" to JsonPrimitive(level.coerceIn(0f, 1f).toDouble())),
+        )
+    }
+
+    suspend fun setMassPlayerVolume(playerId: String, levelPercent: Int) {
+        massCommand(
+            "players/cmd/volume_set",
+            buildJsonObject {
+                put("player_id", playerId)
+                put("volume_level", levelPercent.coerceIn(0, 100))
+            },
+        )
+        massPlayersCache = null
+    }
+
+    suspend fun setMassGroupVolume(playerId: String, levelPercent: Int) {
+        massCommand(
+            "players/cmd/group_volume",
+            buildJsonObject {
+                put("player_id", playerId)
+                put("volume_level", levelPercent.coerceIn(0, 100))
+            },
+        )
+        massPlayersCache = null
+    }
+
+    suspend fun setMassGroupMembers(
+        targetPlayerId: String,
+        addIds: List<String> = emptyList(),
+        removeIds: List<String> = emptyList(),
+    ) {
+        massCommand(
+            "players/cmd/set_members",
+            buildJsonObject {
+                put("target_player", targetPlayerId)
+                if (addIds.isNotEmpty()) {
+                    put("player_ids_to_add", JsonArray(addIds.map { JsonPrimitive(it) }))
+                }
+                if (removeIds.isNotEmpty()) {
+                    put("player_ids_to_remove", JsonArray(removeIds.map { JsonPrimitive(it) }))
+                }
+            },
+        )
+        massPlayersCache = null
+    }
+
+    suspend fun ungroupMassPlayer(playerId: String) {
+        massCommand(
+            "players/cmd/ungroup",
+            buildJsonObject { put("player_id", playerId) },
+        )
+        massPlayersCache = null
+    }
+
+    suspend fun setMediaShuffle(entityId: String, shuffle: Boolean) {
+        mediaPlayerCommand(entityId, "shuffle_set", mapOf("shuffle" to JsonPrimitive(shuffle)))
+    }
+
+    suspend fun setMediaRepeat(entityId: String, repeat: String) {
+        mediaPlayerCommand(entityId, "repeat_set", mapOf("repeat" to JsonPrimitive(repeat)))
+    }
+
+    suspend fun seekMedia(entityId: String, positionSec: Double) {
+        mediaPlayerCommand(
+            entityId,
+            "media_seek",
+            mapOf("seek_position" to JsonPrimitive(positionSec.coerceAtLeast(0.0))),
+        )
+    }
+
+    suspend fun transferMusicQueue(targetEntityId: String, sourceEntityId: String? = null, autoPlay: Boolean = true) {
+        val data = buildMap {
+            if (!sourceEntityId.isNullOrBlank()) {
+                put("source_player", JsonPrimitive(sourceEntityId))
+            }
+            put("auto_play", JsonPrimitive(autoPlay))
+        }
+        callService(
+            domain = "music_assistant",
+            service = "transfer_queue",
+            entityId = listOf(targetEntityId),
+            data = data,
+        )
+    }
+
+    suspend fun musicAssistantMassPlayers(force: Boolean = false): List<MassPlayerInfo> = withContext(Dispatchers.IO) {
+        val cached = massPlayersCache
+        if (!force && cached != null && System.currentTimeMillis() - cached.first < 2_500L) {
+            return@withContext cached.second
+        }
+        val result = massCommand("players/all")
+        val rows = result as? JsonArray ?: return@withContext emptyList()
+        val players = rows.mapNotNull(::parseMassPlayerInfo)
+        massPlayersCache = System.currentTimeMillis() to players
+        players
+    }
+
+    suspend fun musicDiscoveryRecentlyPlayed(limit: Int = 12): List<MassMediaItem> {
+        val result = massCommand(
+            "music/recently_played_items",
+            buildJsonObject {
+                put("limit", limit)
+                put("media_types", JsonArray(listOf(JsonPrimitive("playlist"), JsonPrimitive("album"), JsonPrimitive("track"))))
+            },
+        )
+        return (result as? JsonArray)?.mapNotNull(::parseMassMediaItem).orEmpty()
+    }
+
+    suspend fun musicDiscoveryRecommendations(): List<MassRecommendationSection> {
+        return parseMassRecommendationSections(massCommand("music/recommendations"))
+    }
+
+    suspend fun musicDiscoveryNewMusicTracks(limit: Int = 20): List<MassMediaItem> {
+        val root = findAppleMusicBrowseRoot()
+        val playlists = massCommand(
+            "music/browse",
+            buildJsonObject { put("path", massBrowseChildPath(root, "playlists")) },
+        ) as? JsonArray
+        val playlist = playlists
+            ?.mapNotNull(::parseMassMediaItem)
+            ?.firstOrNull { it.name.equals("New Music", ignoreCase = true) }
+            ?: return emptyList()
+        val provider = playlist.provider
+            ?: playlist.uri.substringBefore("://", missingDelimiterValue = "apple_music")
+        val itemId = playlist.itemId
+            ?: playlist.uri.substringAfterLast('/')
+        val tracks = massCommand(
+            "music/playlists/playlist_tracks",
+            buildJsonObject {
+                put("item_id", itemId)
+                put("provider_instance_id_or_domain", provider)
+                put("allow_dynamic_tracks", true)
+            },
+        )
+        val parsed = (tracks as? JsonArray)?.mapNotNull(::parseMassMediaItem).orEmpty()
+        return listOf(playlist) + parsed.take(limit)
+    }
+
+    suspend fun musicSearch(
+        query: String,
+        limit: Int = 8,
+        mediaTypes: Collection<String> = listOf("track", "album", "playlist", "artist"),
+    ): MassSearchResults {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return MassSearchResults()
+        val types = mediaTypes.map { it.trim().lowercase() }.filter { it.isNotBlank() }.distinct()
+            .ifEmpty { listOf("track", "album", "playlist", "artist") }
+        val result = massCommand(
+            "music/search",
+            buildJsonObject {
+                put("search_query", trimmed)
+                put("limit", limit)
+                put("media_types", JsonArray(types.map { JsonPrimitive(it) }))
+            },
+        )
+        return parseMassSearchResults(result)
+    }
+
+    suspend fun musicBrowse(path: String? = null): List<MassMediaItem> {
+        val result = if (path.isNullOrBlank()) {
+            massCommand("music/browse", buildJsonObject {})
+        } else {
+            massCommand("music/browse", buildJsonObject { put("path", path) })
+        }
+        return (result as? JsonArray)?.mapNotNull(::parseMassBrowseItem).orEmpty()
+    }
+
+    suspend fun musicAppleMusicRootPath(): String = findAppleMusicBrowseRoot()
+
+    suspend fun musicAppleMusicChildPath(child: String): String =
+        massBrowseChildPath(findAppleMusicBrowseRoot(), child)
+
+    suspend fun playMassMedia(queueId: String, mediaUri: String, option: String = "replace") {
+        massCommand(
+            "player_queues/play_media",
+            buildJsonObject {
+                put("queue_id", queueId)
+                put("media", mediaUri)
+                put("option", option)
+            },
+        )
+    }
+
+    private suspend fun findAppleMusicBrowseRoot(): String {
+        val root = massCommand("music/browse", buildJsonObject {}) as? JsonArray ?: return "apple_music://"
+        val apple = root.mapNotNull { it as? JsonObject }.firstOrNull {
+            it["name"]?.jsonPrimitive?.contentOrNull?.equals("Apple Music", ignoreCase = true) == true ||
+                it["provider"]?.jsonPrimitive?.contentOrNull?.contains("apple_music") == true ||
+                it["path"]?.jsonPrimitive?.contentOrNull?.contains("apple_music") == true ||
+                it["uri"]?.jsonPrimitive?.contentOrNull?.contains("apple_music") == true
+        }
+        return apple?.get("path")?.jsonPrimitive?.contentOrNull
+            ?: apple?.get("uri")?.jsonPrimitive?.contentOrNull
+            ?: "apple_music://"
+    }
+
+    private fun massBrowseChildPath(root: String, child: String): String {
+        return when {
+            root.endsWith("://") -> "$root$child"
+            root.endsWith("/") -> "$root$child"
+            else -> "$root/$child"
+        }
+    }
+
+    private suspend fun massCommand(commandName: String, args: JsonObject? = null): JsonElement =
+        withContext(Dispatchers.IO) {
+            val body = buildJsonObject {
+                put("command", commandName)
+                if (args != null) put("args", args)
+            }.toString().toRequestBody(mediaType)
+            fun execute(session: MassIngressSession): Pair<Int, String> {
+                val request = Request.Builder()
+                    .url(session.apiUrl)
+                    .addHeader("Content-Type", "application/json")
+                    .addHeader("Cookie", "ingress_session=${session.session}")
+                    .post(body)
+                    .build()
+                return massHttp.newCall(request).execute().use { response ->
+                    val text = response.body?.string().orEmpty()
+                    response.code to text
+                }
+            }
+            var lastFailure: Exception? = null
+            repeat(MASS_COMMAND_MAX_ATTEMPTS) { attempt ->
+                try {
+                    var session = ensureMassIngress()
+                    var (code, text) = execute(session)
+                    if (code == 401 || code == 403) {
+                        massIngress = null
+                        session = ensureMassIngress(force = true)
+                        val retryAuth = execute(session)
+                        code = retryAuth.first
+                        text = retryAuth.second
+                    }
+                    if (code in 200..299) {
+                        if (text.isBlank()) return@withContext JsonNull
+                        return@withContext json.parseToJsonElement(text)
+                    }
+                    val message = massErrorMessage(text, code)
+                    val failure = IllegalStateException(message)
+                    val canRetry = code in 500..599 && attempt < MASS_COMMAND_MAX_ATTEMPTS - 1
+                    if (!canRetry) throw failure
+                    lastFailure = failure
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: IllegalStateException) {
+                    throw error
+                } catch (error: Exception) {
+                    // IO / unexpected: retry a few times.
+                    if (attempt >= MASS_COMMAND_MAX_ATTEMPTS - 1) throw error
+                    lastFailure = error
+                }
+                delay(MASS_COMMAND_RETRY_BASE_MS * (1L shl attempt))
+            }
+            throw lastFailure ?: IllegalStateException("Music Assistant request failed")
+        }
+
+    private fun massErrorMessage(body: String, code: Int): String {
+        val trimmed = body.trim()
+        if (trimmed.isBlank()) return "Music Assistant request failed ($code)"
+        runCatching { json.parseToJsonElement(trimmed) }.getOrNull()?.let { element ->
+            val obj = element as? JsonObject ?: return@let
+            obj["message"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
+            obj["error"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
+            obj["detail"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
+        }
+        return trimmed.take(240)
+    }
+
+    private suspend fun ensureMassIngress(force: Boolean = false): MassIngressSession {
+        val cached = massIngress
+        if (!force && cached != null && cached.expiresAtMs > System.currentTimeMillis()) {
+            return cached
+        }
+        val sessionResult = command {
+            put("type", "supervisor/api")
+            put("endpoint", "/ingress/session")
+            put("method", "post")
+        }.jsonObject
+        val session = sessionResult["session"]?.jsonPrimitive?.contentOrNull
+            ?: throw IllegalStateException("Could not create Home Assistant ingress session")
+        val slug = resolveMusicAssistantAddonSlug()
+        val info = command {
+            put("type", "supervisor/api")
+            put("endpoint", "/addons/$slug/info")
+            put("method", "get")
+        }.jsonObject
+        val ingressUrl = info["ingress_url"]?.jsonPrimitive?.contentOrNull?.trimEnd('/')
+            ?: throw IllegalStateException("Music Assistant addon has no ingress URL")
+        val apiUrl = "$baseUrl$ingressUrl/api"
+        val created = MassIngressSession(
+            session = session,
+            apiUrl = apiUrl,
+            expiresAtMs = System.currentTimeMillis() + 45 * 60_000L,
+        )
+        massIngress = created
+        return created
+    }
+
+    private suspend fun resolveMusicAssistantAddonSlug(): String {
+        massAddonSlug?.let { return it }
+        val addonsResult = command {
+            put("type", "supervisor/api")
+            put("endpoint", "/addons")
+            put("method", "get")
+        }.jsonObject
+        val addons = addonsResult["addons"] as? JsonArray
+            ?: throw IllegalStateException("Could not list Home Assistant addons")
+        val slug = addons.mapNotNull { it as? JsonObject }.firstOrNull { addon ->
+            val candidate = addon["slug"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            val name = addon["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            candidate.contains("music_assistant", ignoreCase = true) ||
+                name.contains("Music Assistant", ignoreCase = true)
+        }?.get("slug")?.jsonPrimitive?.contentOrNull
+            ?: throw IllegalStateException("Music Assistant addon not found")
+        massAddonSlug = slug
+        return slug
     }
 
     suspend fun toggle(entityId: String) {
@@ -690,9 +1212,9 @@ class HaClient {
     }
 
     suspend fun cameraSnapshot(entityId: String): ByteArray? = withContext(Dispatchers.IO) {
-        snapshotCache[entityId]?.let { return@withContext it }
+        cachedSnapshot(entityId)?.let { return@withContext it }
         val fresh = fetchCameraSnapshot(entityId) ?: return@withContext null
-        snapshotCache[entityId] = fresh
+        putSnapshot(entityId, fresh)
         fresh
     }
 
@@ -700,10 +1222,22 @@ class HaClient {
     suspend fun prefetchCameraSnapshots(entityIds: Collection<String>) {
         withContext(Dispatchers.IO) {
             entityIds.distinct().forEach { entityId ->
-                if (snapshotCache.containsKey(entityId)) return@forEach
-                fetchCameraSnapshot(entityId)?.let { snapshotCache[entityId] = it }
+                if (cachedSnapshot(entityId) != null) return@forEach
+                fetchCameraSnapshot(entityId)?.let { putSnapshot(entityId, it) }
             }
         }
+    }
+
+    private fun cachedSnapshot(entityId: String): ByteArray? {
+        val entry = snapshotCache[entityId] ?: return null
+        if (entry.expiresAtMs > System.currentTimeMillis()) return entry.bytes
+        snapshotCache.remove(entityId)
+        return null
+    }
+
+    private fun putSnapshot(entityId: String, bytes: ByteArray) {
+        if (snapshotCache.size >= SNAPSHOT_CACHE_MAX_ENTRIES) snapshotCache.clear()
+        snapshotCache[entityId] = SnapshotEntry(bytes, System.currentTimeMillis() + SNAPSHOT_TTL_MS)
     }
 
     private suspend fun fetchCameraSnapshot(entityId: String): ByteArray? = withContext(Dispatchers.IO) {
@@ -749,12 +1283,15 @@ class HaClient {
     suspend fun authenticatedBytes(path: String): ByteArray? = withContext(Dispatchers.IO) {
         if (!path.startsWith("http") && (baseUrl.isBlank() || token.isBlank())) return@withContext null
         val url = if (path.startsWith("http")) path else baseUrl + path
+        val host = NetworkGuard.hostOf(url) ?: return@withContext null
+        if (!NetworkGuard.isPrivateHost(host)) return@withContext null
+        val isHaUrl = !path.startsWith("http") || url.startsWith(baseUrl)
         runCatching {
-            val request = Request.Builder()
-                .url(url)
-                .addHeader("Authorization", "Bearer $token")
-                .build()
-            http.newCall(request).execute().use { response ->
+            val builder = Request.Builder().url(url)
+            if (isHaUrl && token.isNotBlank()) {
+                builder.addHeader("Authorization", "Bearer $token")
+            }
+            http.newCall(builder.build()).execute().use { response ->
                 if (!response.isSuccessful) return@use null
                 response.body?.bytes()
             }
@@ -785,27 +1322,11 @@ class HaClient {
             is JsonObject -> rest["events"] as? JsonArray
             else -> null
         }
-        if (rows != null) {
-            return rows.mapNotNull { parseCalendarEvent(it as? JsonObject ?: return@mapNotNull null, entityId) }
+        // Listing events is REST-only; the websocket API has no equivalent command, so a
+        // failed read is reported as empty rather than retried over the socket.
+        return rows.orEmpty().mapNotNull {
+            parseCalendarEvent(it as? JsonObject ?: return@mapNotNull null, entityId)
         }
-        return websocketCalendarEvents(entityId, start, end)
-    }
-
-    private suspend fun websocketCalendarEvents(entityId: String, start: Instant, end: Instant): List<HaCalendarEvent> {
-        val result = runCatching {
-            command {
-                put("type", "calendar/events")
-                put("entity_id", entityId)
-                put("start_date_time", start.toString())
-                put("end_date_time", end.toString())
-            }
-        }.getOrNull() ?: return emptyList()
-        val rows = when (result) {
-            is JsonArray -> result
-            is JsonObject -> result["events"] as? JsonArray ?: result["response"] as? JsonArray
-            else -> null
-        } ?: return emptyList()
-        return rows.mapNotNull { parseCalendarEvent(it as? JsonObject ?: return@mapNotNull null, entityId) }
     }
 
     suspend fun createCalendarEvent(
@@ -1143,215 +1664,4 @@ class HaClient {
         }
     }
 
-    /** Known Music Assistant HA App slug when `get_panels` is unavailable. */
-    private val musicAssistantAppSlug = "d5369777_music_assistant"
-
-    suspend fun musicAssistantLoadTargets(): MusicAssistantPanelResolution {
-        val panel = resolveMusicAssistantPanel()
-        val debugInfo = mutableListOf<String>()
-        if (panel == null) {
-            debugInfo += "get_panels: Music Assistant panel not found; using known app slug"
-            val knownPanelPath = "/$musicAssistantAppSlug"
-            return MusicAssistantPanelResolution(
-                targets = listOf(
-                    MusicAssistantLoadTarget(
-                        mode = MusicAssistantLoadMode.INGRESS,
-                        label = "addon ingress ($musicAssistantAppSlug)",
-                        addonSlug = musicAssistantAppSlug,
-                    ),
-                    MusicAssistantLoadTarget(
-                        mode = MusicAssistantLoadMode.SPA_BOOTSTRAP,
-                        label = "frontend navigate $knownPanelPath",
-                        path = knownPanelPath,
-                    ),
-                    MusicAssistantLoadTarget(
-                        mode = MusicAssistantLoadMode.SPA_ROUTE,
-                        label = "panel route $knownPanelPath",
-                        path = knownPanelPath,
-                    ),
-                ),
-                debugInfo = debugInfo,
-            )
-        }
-
-        debugInfo += buildString {
-            append("get_panels: url_path=${panel.urlPath}")
-            panel.componentName?.let { append(", component=$it") }
-            panel.addonSlug?.let { append(", addon=$it") }
-        }
-
-        val addonSlug = panel.addonSlug?.trim()?.takeIf { it.isNotEmpty() }
-        if (panel.componentName == "app" && addonSlug != null) {
-            runCatching {
-                fetchAddonIngressUrl(addonSlug)?.let { ingressUrl ->
-                    debugInfo += "supervisor ingress_url=$ingressUrl"
-                }
-            }
-            val panelPath = "/${panel.urlPath.trimStart('/')}"
-            val targets = listOf(
-                MusicAssistantLoadTarget(
-                    mode = MusicAssistantLoadMode.INGRESS,
-                    label = "addon ingress ($addonSlug)",
-                    addonSlug = addonSlug,
-                ),
-                MusicAssistantLoadTarget(
-                    mode = MusicAssistantLoadMode.SPA_BOOTSTRAP,
-                    label = "frontend navigate $panelPath",
-                    path = panelPath,
-                ),
-                MusicAssistantLoadTarget(
-                    mode = MusicAssistantLoadMode.SPA_ROUTE,
-                    label = "panel route $panelPath",
-                    path = panelPath,
-                ),
-            )
-            debugInfo += targets.map { it.label }
-            return MusicAssistantPanelResolution(targets = targets, debugInfo = debugInfo)
-        }
-
-        val panelPath = "/${panel.urlPath.trimStart('/')}"
-        val targets = listOf(
-            MusicAssistantLoadTarget(
-                mode = MusicAssistantLoadMode.SPA_BOOTSTRAP,
-                label = "frontend navigate $panelPath",
-                path = panelPath,
-            ),
-            MusicAssistantLoadTarget(
-                mode = MusicAssistantLoadMode.SPA_ROUTE,
-                label = "panel route $panelPath",
-                path = panelPath,
-            ),
-        )
-        debugInfo += targets.map { it.label }
-        return MusicAssistantPanelResolution(targets = targets, debugInfo = debugInfo)
-    }
-
-    suspend fun createIngressSession(): String {
-        val result = supervisorApi(method = "post", endpoint = "/ingress/session").jsonObject
-        return result["session"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
-            ?: error("Supervisor ingress session missing")
-    }
-
-    suspend fun fetchAddonIngressUrl(addonSlug: String): String? {
-        val slug = addonSlug.trim().trim('/')
-        if (slug.isEmpty()) return null
-        val result = supervisorApi(method = "get", endpoint = "/addons/$slug/info").jsonObject
-        return result["ingress_url"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
-            ?.let(::ensureIngressTrailingSlash)
-    }
-
-    private fun ensureIngressTrailingSlash(path: String): String {
-        val pathPart = path.substringBefore('?')
-        val query = path.substringAfter('?', missingDelimiterValue = "")
-        val normalized = if (pathPart.endsWith("/")) pathPart else "$pathPart/"
-        return if (query.isEmpty()) normalized else "$normalized?$query"
-    }
-
-    /** Returns true when the addon ingress URL responds with HTTP 2xx using a fresh session. */
-    suspend fun verifyIngressLoad(ingressPath: String, session: String): Boolean =
-        withContext(Dispatchers.IO) {
-            if (baseUrl.isBlank() || ingressPath.isBlank() || session.isBlank()) return@withContext false
-            val normalizedPath = ensureIngressTrailingSlash(
-                when {
-                    ingressPath.startsWith("http://") || ingressPath.startsWith("https://") -> ingressPath
-                    ingressPath.startsWith("/") -> ingressPath
-                    else -> "/$ingressPath"
-                },
-            )
-            val url = if (normalizedPath.startsWith("http")) {
-                normalizedPath
-            } else {
-                baseUrl.trim().trimEnd('/') + normalizedPath
-            }
-            val request = Request.Builder()
-                .url(url)
-                .addHeader("Cookie", "ingress_session=${session.trim()}")
-                .build()
-            runCatching {
-                http.newCall(request).execute().use { response ->
-                    response.code in 200..299
-                }
-            }.getOrDefault(false)
-        }
-
-    private suspend fun supervisorApi(
-        method: String,
-        endpoint: String,
-        data: JsonObject? = null,
-    ): JsonElement = command {
-        put("type", "supervisor/api")
-        put("endpoint", endpoint)
-        put("method", method.lowercase())
-        if (data != null) {
-            put("data", data)
-        }
-    }
-
-    private suspend fun resolveMusicAssistantPanel(): MusicAssistantPanel? {
-        val panels = runCatching {
-            command {
-                put("type", "get_panels")
-            }.jsonObject
-        }.getOrNull() ?: return null
-
-        return panels.entries.mapNotNull { (_, value) ->
-            value as? JsonObject
-        }.firstNotNullOfOrNull { panel ->
-            parseMusicAssistantPanel(panel)
-        }
-    }
-
-    private fun parseMusicAssistantPanel(panel: JsonObject): MusicAssistantPanel? {
-        val urlPath = panel["url_path"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
-            ?: return null
-        if (!isMusicAssistantPanel(panel, urlPath)) return null
-
-        val config = panel["config"]?.jsonObject
-        val addon = config?.get("addon")?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
-        val componentName = panel["component_name"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
-        return MusicAssistantPanel(
-            urlPath = urlPath,
-            componentName = componentName,
-            addonSlug = addon ?: urlPath,
-        )
-    }
-
-    private fun isMusicAssistantPanel(panel: JsonObject, urlPath: String): Boolean {
-        val title = panel["title"]?.jsonPrimitive?.contentOrNull
-        val config = panel["config"]?.jsonObject
-        val addon = config?.get("addon")?.jsonPrimitive?.contentOrNull
-        val panelCustom = config?.get("_panel_custom")?.jsonObject
-        val customName = panelCustom?.get("name")?.jsonPrimitive?.contentOrNull
-        val moduleUrl = panelCustom?.get("module_url")?.jsonPrimitive?.contentOrNull
-            ?: panelCustom?.get("js_url")?.jsonPrimitive?.contentOrNull
-
-        return title.equals("Music Assistant", ignoreCase = true) ||
-            urlPath.contains("music_assistant", ignoreCase = true) ||
-            addon?.contains("music_assistant", ignoreCase = true) == true ||
-            customName?.contains("music-assistant", ignoreCase = true) == true ||
-            customName?.contains("mass", ignoreCase = true) == true ||
-            moduleUrl?.contains("mass", ignoreCase = true) == true ||
-            moduleUrl?.contains("music-assistant", ignoreCase = true) == true
-    }
-
-    suspend fun reconnectLoop() {
-        var attempt = 0
-        while (true) {
-            try {
-                if (_connection.value !is ConnectionState.Connected && baseUrl.isNotBlank() && token.isNotBlank()) {
-                    openSocket()
-                }
-                delay(if (_connection.value is ConnectionState.Connected) 15_000 else (2000L * (attempt + 1)).coerceAtMost(15_000))
-                if (_connection.value is ConnectionState.Connected) {
-                    attempt = 0
-                } else {
-                    attempt++
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                delay(3000)
-            }
-        }
-    }
 }

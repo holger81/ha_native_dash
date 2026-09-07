@@ -1,0 +1,340 @@
+{
+  "room_order": [
+    "Jonathan's\nRoom",
+    "Second\nBath",
+    "Main\nBath",
+    "Main\nBedroom",
+    "Great\nRoom",
+    "Emilia's\nRoom",
+    "Guestroom",
+    "Hallway",
+    "Office"
+  ],
+  "popups": [
+    {
+      "type": "popup",
+      "name": "Presence",
+      "icon": "mdi:motion-sensor",
+      "hash": "#presence",
+      "accent": null,
+      "cards": [
+        {
+          "type": "gap",
+          "height": 12
+        },
+        {
+          "type": "mmwave_targets",
+          "title": "secondary-living-room"
+        }
+      ],
+      "insert_after_hash": "#settings"
+    }
+  ],
+  "chip_overrides": [
+    {
+      "match_entity": "input_number.battery_energy_helper",
+      "chip": {
+        "type": "status_chip",
+        "name": null,
+        "icon": "mdi:battery-charging",
+        "entity": "sensor.battery_runtime_remaining",
+        "layout": "icon|state",
+        "tap": {
+          "type": "navigate",
+          "hash": "#power"
+        },
+        "visibility": {
+          "kind": "state_in",
+          "entity": "binary_sensor.envoy_battery_discharging",
+          "states": [
+            "on"
+          ]
+        },
+        "state": {
+          "kind": "text",
+          "entity": "sensor.battery_runtime_remaining"
+        },
+        "emphasize_unlocked": false,
+        "accent": "dark"
+      }
+    }
+  ],
+  "extra_entities": [
+    "binary_sensor.gardennorth_person_occupancy_2",
+    "binary_sensor.gardensoutheast_person_occupancy_2",
+    "binary_sensor.north_person_occupancy_2",
+    "binary_sensor.secondary_living_room_switch_occupancy",
+    "input_number.secondary_living_room_mmwave_target_1_x",
+    "input_number.secondary_living_room_mmwave_target_1_y",
+    "input_number.secondary_living_room_mmwave_target_1_z",
+    "input_number.secondary_living_room_mmwave_target_2_x",
+    "input_number.secondary_living_room_mmwave_target_2_y",
+    "input_number.secondary_living_room_mmwave_target_2_z",
+    "input_number.secondary_living_room_mmwave_target_3_x",
+    "input_number.secondary_living_room_mmwave_target_3_y",
+    "input_number.secondary_living_room_mmwave_target_3_z",
+    "input_number.secondary_living_room_mmwave_target_4_x",
+    "input_number.secondary_living_room_mmwave_target_4_y",
+    "input_number.secondary_living_room_mmwave_target_4_z",
+    "input_number.secondary_living_room_mmwave_target_count",
+    "number.secondary_living_room_switch_mmwave_depth_maximum_far",
+    "number.secondary_living_room_switch_mmwave_depth_minimum_near",
+    "number.secondary_living_room_switch_mmwave_width_maximum_right",
+    "number.secondary_living_room_switch_mmwave_width_minimum_left",
+    "sensor.envoy_202234122877_available_battery_energy",
+    "sensor.envoy_202234122877_reserve_battery_energy"
+  ],
+  "entity_order": [
+    "binary_sensor.envoy_battery_discharging",
+    "binary_sensor.volkswagen_id_buzz_charging_cable_plugged_in",
+    "calendar.besucherkalender",
+    "calendar.calendar",
+    "calendar.family_2",
+    "calendar.llm_vision_timeline",
+    "binary_sensor.gardennorth_person_occupancy_2",
+    "binary_sensor.gardensoutheast_person_occupancy_2",
+    "binary_sensor.north_person_occupancy_2",
+    "camera.garagefront_2",
+    "camera.gardennorth_2",
+    "camera.gardensoutheast_2",
+    "camera.north_2",
+    "camera.reolink_video_doorbell_poe_fluent",
+    "climate.emilias_room_room",
+    "climate.great_room_room",
+    "climate.guestroom_room",
+    "climate.hallway_room",
+    "climate.jonathans_bedroom_room",
+    "climate.main_bathroom_room",
+    "climate.main_bedroom_room",
+    "climate.model_3_climate",
+    "climate.office_room",
+    "climate.second_bathroom_room",
+    "cover.emilias_room_ca08_vent",
+    "cover.great_room_edc5_vent",
+    "cover.great_room_large_b09b_vent",
+    "cover.guestroom_7fcf_vent",
+    "cover.guestroom_front",
+    "cover.guestroom_garden_9bbb_vent",
+    "cover.jonathan",
+    "cover.jonathans_bedroom_f623_vent",
+    "cover.main_bathroom_72c5_vent",
+    "cover.main_bedroom_97a9_vent",
+    "cover.office_7d51_vent",
+    "cover.second_bathroom_afb5_vent",
+    "device_tracker.bettinas_iphone_2",
+    "device_tracker.holgers_iphone",
+    "device_tracker.model_3_location",
+    "device_tracker.volkswagen_id_buzz_location",
+    "fan.blue_pure_fan",
+    "fan.ceiling_fan",
+    "image.s8_maxv_ultra_map_0",
+    "input_boolean.greatroom_sidebar_menu",
+    "input_boolean.kiosk_mode",
+    "input_boolean.kiosk_mode_greatroom",
+    "input_boolean.vacuum_room_dining_18",
+    "input_boolean.vacuum_room_emilia_17",
+    "input_boolean.vacuum_room_entryway_24",
+    "input_boolean.vacuum_room_guest_23",
+    "input_boolean.vacuum_room_hallway_25",
+    "input_boolean.vacuum_room_jonathan_20",
+    "input_boolean.vacuum_room_kitchen_27",
+    "input_boolean.vacuum_room_living_19",
+    "input_boolean.vacuum_room_mainbath_26",
+    "input_boolean.vacuum_room_mainbed_21",
+    "input_boolean.vacuum_room_office_16",
+    "input_boolean.vacuum_room_secondbath_22",
+    "input_number.battery_energy_helper",
+    "input_number.secondary_living_room_mmwave_target_count",
+    "input_number.secondary_living_room_mmwave_target_1_x",
+    "input_number.secondary_living_room_mmwave_target_1_y",
+    "input_number.secondary_living_room_mmwave_target_1_z",
+    "input_number.secondary_living_room_mmwave_target_2_x",
+    "input_number.secondary_living_room_mmwave_target_2_y",
+    "input_number.secondary_living_room_mmwave_target_2_z",
+    "input_number.secondary_living_room_mmwave_target_3_x",
+    "input_number.secondary_living_room_mmwave_target_3_y",
+    "input_number.secondary_living_room_mmwave_target_3_z",
+    "input_number.secondary_living_room_mmwave_target_4_x",
+    "input_number.secondary_living_room_mmwave_target_4_y",
+    "input_number.secondary_living_room_mmwave_target_4_z",
+    "binary_sensor.secondary_living_room_switch_occupancy",
+    "number.secondary_living_room_switch_mmwave_width_minimum_left",
+    "number.secondary_living_room_switch_mmwave_width_maximum_right",
+    "number.secondary_living_room_switch_mmwave_depth_minimum_near",
+    "number.secondary_living_room_switch_mmwave_depth_maximum_far",
+    "light.dining_room_lights_ceiling",
+    "light.emilias_bedroom_lights",
+    "light.emilias_wallflower",
+    "light.entertainment",
+    "light.entrance_light_ceiling",
+    "light.guest_bedroom_main_lights",
+    "light.jonathans_room_lights",
+    "light.kitchen_cabinet_lights",
+    "light.kitchen_light",
+    "light.living_room_lights_ceiling",
+    "light.livingroom_standlamp",
+    "light.main_bathroom_light",
+    "light.main_bedroom_lightswitch",
+    "light.master_bedroom_main_lights",
+    "light.office_lights",
+    "light.second_bathroom_lightswitch",
+    "lock.front_door",
+    "media_player.living_room",
+    "media_player.living_room_appletv",
+    "number.model_3_charge_limit",
+    "person.bettina",
+    "person.holger",
+    "scene.tv_mode",
+    "script.clean_house",
+    "select.emilias_room_activity_status",
+    "select.great_room_activity_status",
+    "select.guestroom_activity_status",
+    "select.hallway_activity_status",
+    "select.jonathans_bedroom_activity_status",
+    "select.main_bathroom_activity_status",
+    "select.main_bedroom_activity_status",
+    "select.office_activity_status",
+    "select.second_bathroom_activity_status",
+    "sensor.battery_runtime_remaining",
+    "sensor.bosch_dishwasher_operation_state",
+    "sensor.bosch_dishwasher_remaining_program_time",
+    "sensor.current_electrical_energy_import_cost",
+    "sensor.dryer",
+    "sensor.emilias_room_2733_temperature",
+    "sensor.emporia_vue_3_total_power",
+    "sensor.emporia_vue_3_total_power_return",
+    "sensor.envoy_202234122877_current_net_power_consumption",
+    "sensor.envoy_202234122877_current_power_production",
+    "sensor.envoy_202234122877_available_battery_energy",
+    "sensor.envoy_202234122877_reserve_battery_energy",
+    "sensor.front_load_washer",
+    "sensor.great_room_4afa_temperature",
+    "sensor.guestroom_f628_temperature",
+    "sensor.hallway_temperature",
+    "sensor.housepanel_total_consumption_house_consumption_1h_mean",
+    "sensor.home_bettina_distance",
+    "sensor.home_holger_distance",
+    "sensor.home_outdoor_aqi_5min_mean",
+    "sensor.jonathans_bedroom_9b3a_temperature",
+    "sensor.main_bathroom_6eca_temperature",
+    "sensor.main_bedroom_6671_temperature",
+    "sensor.model_3_battery_level",
+    "sensor.model_3_battery_range",
+    "sensor.nspanelhallway_temperature",
+    "sensor.octoprint_current_state",
+    "sensor.octoprint_job_percentage",
+    "sensor.odometer",
+    "sensor.office_abfd_temperature",
+    "sensor.second_bathroom_8ee5_temperature",
+    "sensor.tankerland_ev_charger_power_minute_average",
+    "sensor.tesla_miles_daily",
+    "sensor.tesla_miles_monthly",
+    "sensor.volkswagen_id_buzz_battery",
+    "sensor.volkswagen_id_buzz_charging_status",
+    "sensor.volkswagen_id_buzz_odometer",
+    "sensor.volkswagen_id_buzz_range",
+    "sensor.vw_miles_daily",
+    "sensor.vw_miles_monthly",
+    "sensor.weather_forecast_daily",
+    "switch.foyer_main_lights",
+    "switch.model_3_charge",
+    "switch.model_3_defrost",
+    "switch.volkswagen_id_buzz_charging",
+    "vacuum.s8_maxv_ultra",
+    "weather.forecast_tankerland_ct"
+  ],
+  "person_cameras": {
+    "cooldown_seconds": 15,
+    "bindings": [
+      {
+        "sensor": "binary_sensor.gardennorth_person_occupancy_2",
+        "type": "camera",
+        "entity": "camera.gardennorth_2",
+        "name": "Garden North",
+        "stream_server": "http://192.168.10.31:1984/",
+        "stream_name": "gardennorth_sub",
+        "muted": true
+      },
+      {
+        "sensor": "binary_sensor.gardensoutheast_person_occupancy_2",
+        "type": "camera",
+        "entity": "camera.gardensoutheast_2",
+        "name": "Garden Southeast",
+        "stream_server": "http://192.168.10.31:1984/",
+        "stream_name": "gardensoutheast_sub",
+        "muted": true
+      },
+      {
+        "sensor": "binary_sensor.north_person_occupancy_2",
+        "type": "camera",
+        "entity": "camera.north_2",
+        "name": "North",
+        "stream_server": "http://192.168.10.31:1984/",
+        "stream_name": "north_sub",
+        "muted": true
+      }
+    ]
+  },
+  "popup_tab_inserts": [
+    {
+      "popup_hash": "#power",
+      "tab_title": "Battery",
+      "tab": {
+        "title": "Battery",
+        "icon": "mdi:battery-charging",
+        "cards": [
+          {
+            "type": "battery_runtime",
+            "title": "battery-runtime"
+          },
+          {
+            "type": "gap",
+            "height": 12
+          },
+          {
+            "type": "grid",
+            "columns": 2,
+            "cards": [
+              {
+                "name": "Load (1h avg)",
+                "icon": "mdi:home-lightning-bolt",
+                "entity": "sensor.housepanel_total_consumption_house_consumption_1h_mean",
+                "background": "var(--popupBG)",
+                "type": "sensor_big",
+                "label": null,
+                "state": {
+                  "kind": "number",
+                  "entity": "sensor.housepanel_total_consumption_house_consumption_1h_mean",
+                  "decimals": 0,
+                  "suffix": " W"
+                },
+                "tap": {
+                  "type": "more_info"
+                }
+              },
+              {
+                "name": "Stored",
+                "icon": "mdi:home-battery-outline",
+                "entity": "input_number.battery_energy_helper",
+                "background": "var(--popupBG)",
+                "type": "sensor_big",
+                "label": null,
+                "state": {
+                  "kind": "number",
+                  "entity": "input_number.battery_energy_helper",
+                  "scale": 0.001,
+                  "decimals": 2,
+                  "suffix": " kWh"
+                },
+                "tap": {
+                  "type": "more_info"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "insert_before_tab": "Prices"
+    }
+  ]
+}

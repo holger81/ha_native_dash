@@ -51,6 +51,10 @@ import kotlin.math.roundToInt
 private const val DEFAULT_WEATHER_ENTITY = "weather.forecast_tankerland_ct"
 private const val DEFAULT_TEMP_ENTITY = "sensor.st_00063154_temperature"
 
+private val HOUR_FORMAT = DateTimeFormatter.ofPattern("h a")
+private val FOCUS_DATE_FORMAT = DateTimeFormatter.ofPattern("EEEE, MMM d")
+private val SHORT_DAY_FORMAT = DateTimeFormatter.ofPattern("EEE")
+
 private enum class ForecastTab { Daily, Hourly }
 
 @Composable
@@ -75,9 +79,9 @@ private fun WeatherPopupBody(
     initialTab: String?,
 ) {
     val overlay = LocalOverlay.current
-    val states by viewModel.states.collectAsState()
-    val weather = states[weatherEntity]
-    val sunAbove = states["sun.sun"]?.state == "above_horizon"
+    val weather by viewModel.entityFlow(weatherEntity).collectAsState()
+    val sunState by viewModel.entityFlow("sun.sun").collectAsState()
+    val sunAbove = sunState?.state == "above_horizon"
     val today = LocalDate.now()
 
     var tab by remember(weatherEntity, focusDate, initialTab) {
@@ -107,7 +111,8 @@ private fun WeatherPopupBody(
     }
     val showingFocusedDay = focusDate != null && focusDate != today && focusedDayForecast != null
 
-    val currentTemp = states[tempEntity]?.state?.toDoubleOrNull()
+    val tempSensor by viewModel.entityFlow(tempEntity).collectAsState()
+    val currentTemp = tempSensor?.state?.toDoubleOrNull()
         ?: weather?.attrDouble("temperature")
     val temp = if (showingFocusedDay) {
         forecastNumber(focusedDayForecast?.get("temperature")) ?: currentTemp
@@ -408,33 +413,35 @@ private fun HourlyForecastRow(
         }
         return
     }
-    val zone = ZoneId.systemDefault()
-    val items = buildList {
-        var lastDate: LocalDate? = null
-        forecasts.forEach { hourForecast ->
-            val raw = forecastText(hourForecast["datetime"])
-            val instant = forecastInstant(raw)
-            val localDate = instant?.atZone(zone)?.toLocalDate()
-            val dayLabel = if (localDate != null && localDate != lastDate) {
-                lastDate = localDate
-                forecastShortDay(raw)
-            } else {
-                ""
+    val items = remember(forecasts) {
+        val zone = ZoneId.systemDefault()
+        buildList {
+            var lastDate: LocalDate? = null
+            forecasts.forEach { hourForecast ->
+                val raw = forecastText(hourForecast["datetime"])
+                val instant = forecastInstant(raw)
+                val localDate = instant?.atZone(zone)?.toLocalDate()
+                val dayLabel = if (localDate != null && localDate != lastDate) {
+                    lastDate = localDate
+                    forecastShortDay(raw)
+                } else {
+                    ""
+                }
+                val hourLabel = instant?.atZone(zone)?.format(HOUR_FORMAT).orEmpty()
+                val condition = forecastText(hourForecast["condition"])
+                val temp = forecastNumber(hourForecast["temperature"])
+                val hour = instant?.atZone(zone)?.hour ?: 12
+                add(
+                    HourlyForecastItem(
+                        dayLabel = dayLabel,
+                        hourLabel = hourLabel,
+                        condition = condition,
+                        temp = temp,
+                        dayIcon = hour in 7..19,
+                        localDate = localDate,
+                    ),
+                )
             }
-            val hourLabel = instant?.atZone(zone)?.format(DateTimeFormatter.ofPattern("h a")).orEmpty()
-            val condition = forecastText(hourForecast["condition"])
-            val temp = forecastNumber(hourForecast["temperature"])
-            val hour = instant?.atZone(zone)?.hour ?: 12
-            add(
-                HourlyForecastItem(
-                    dayLabel = dayLabel,
-                    hourLabel = hourLabel,
-                    condition = condition,
-                    temp = temp,
-                    dayIcon = hour in 7..19,
-                    localDate = localDate,
-                ),
-            )
         }
     }
     val scrollState = rememberScrollState()
@@ -505,7 +512,7 @@ private fun focusDateLabel(date: LocalDate?): String {
     return when (date) {
         today -> "Today"
         today.plusDays(1) -> "Tomorrow"
-        else -> date.format(DateTimeFormatter.ofPattern("EEEE, MMM d"))
+        else -> date.format(FOCUS_DATE_FORMAT)
     }
 }
 
@@ -557,6 +564,6 @@ private fun forecastShortDay(raw: String): String {
     return when (date) {
         today -> "Today"
         today.plusDays(1) -> "Tomorrow"
-        else -> date.format(DateTimeFormatter.ofPattern("EEE"))
+        else -> date.format(SHORT_DAY_FORMAT)
     }
 }

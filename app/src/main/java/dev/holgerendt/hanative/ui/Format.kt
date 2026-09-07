@@ -3,13 +3,10 @@ package dev.holgerendt.hanative.ui
 import dev.holgerendt.hanative.data.EntityState
 import dev.holgerendt.hanative.model.DisplayNode
 import dev.holgerendt.hanative.model.StateFormat
-import dev.holgerendt.hanative.model.VisibilityNode
 import dev.holgerendt.hanative.model.WidgetNode
 import kotlin.math.roundToInt
 
 fun Map<String, EntityState>.getState(id: String?): EntityState? = id?.let { this[it] }
-
-fun Map<String, EntityState>.stateOf(id: String?): String = getState(id)?.state ?: "unknown"
 
 fun Double?.format(decimals: Int = 1, suffix: String = ""): String {
     if (this == null || this.isNaN()) return "—"
@@ -63,8 +60,10 @@ fun Map<String, EntityState>.isVisible(node: WidgetNode): Boolean {
     }
 }
 
-fun Map<String, EntityState>.brightnessPct(entityId: String?): Int {
-    val brightness = getState(entityId)?.attrDouble("brightness") ?: return 0
+fun Map<String, EntityState>.brightnessPct(entityId: String?): Int = this[entityId]?.brightnessPct() ?: 0
+
+fun EntityState?.brightnessPct(): Int {
+    val brightness = this?.attrDouble("brightness") ?: return 0
     return ((brightness / 255.0) * 100.0).roundToInt().coerceIn(0, 100)
 }
 

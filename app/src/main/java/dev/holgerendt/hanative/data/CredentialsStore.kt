@@ -1,14 +1,59 @@
 package dev.holgerendt.hanative.data
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import dev.holgerendt.hanative.PanelConfig
 import org.json.JSONArray
 import org.json.JSONObject
 
 class CredentialsStore(context: Context) {
     private val app = context.applicationContext
-    private val prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    /** True when the Keystore-backed prefs failed and the token/PIN sit in plaintext. */
+    var prefsAreEncrypted: Boolean = true
+        private set
+
+    private val prefs: SharedPreferences = createSecurePrefs()
+
+    private fun createSecurePrefs(): SharedPreferences {
+        val secure = runCatching {
+            EncryptedSharedPreferences.create(
+                app,
+                SECURE_PREFS_NAME,
+                MasterKey.Builder(app).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+            )
+        }.getOrNull()
+        if (secure == null) {
+            prefsAreEncrypted = false
+            return app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        }
+        migratePlaintextInto(secure)
+        return secure
+    }
+
+    private fun migratePlaintextInto(secure: SharedPreferences) {
+        val plain = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (plain.all.isEmpty()) return
+        val edit = secure.edit()
+        for ((key, value) in plain.all) {
+            if (secure.contains(key)) continue
+            when (value) {
+                is String -> edit.putString(key, value)
+                is Int -> edit.putInt(key, value)
+                is Long -> edit.putLong(key, value)
+                is Boolean -> edit.putBoolean(key, value)
+                is Float -> edit.putFloat(key, value)
+                else -> continue
+            }
+        }
+        edit.commit()
+        runCatching { app.deleteSharedPreferences(PREFS_NAME) }
+    }
+
     private var persistEnabled = false
     private var generatedThisProcess = false
 
@@ -24,8 +69,21 @@ class CredentialsStore(context: Context) {
             persist()
         }
 
+    var go2rtcUrl: String = readPref(KEY_GO2RTC_URL)
+        set(value) {
+            field = value.trim().trimEnd('/')
+            persist()
+        }
+
+    /** Null means default (all light.* except screen/segment/led); empty means none. */
+    var monitoredLightEntities: List<String>? = readMonitoredLightsPref()
+        set(value) {
+            field = value?.map { normalizeEntityId(it) }?.filter { it.contains('.') }?.distinct()
+            persist()
+        }
+
     /** Null means follow Lovelace week-planner calendars; empty means none. */
-    var subscribedCalendars: List<String>? = null
+    var subscribedCalendars: List<String>? = readCalendarPref()
         set(value) {
             field = value?.map { it.trim() }?.filter { it.startsWith("calendar.") }?.distinct()
             persist()
@@ -65,11 +123,23 @@ class CredentialsStore(context: Context) {
             persist()
         }
 
+    /** Last Music Assistant media_player selected on the wall player. */
+    private var musicPlayerEntityBacking = readPref(KEY_MUSIC_PLAYER)
+    var musicPlayerEntity: String
+        get() = musicPlayerEntityBacking
+        set(value) {
+            musicPlayerEntityBacking = normalizeEntityId(value)
+            persist()
+        }
+
     private var pinValue: String = readPref(KEY_PIN)
 
     var managementPin: String
         get() = pinValue
         set(value) = writePin(value, generated = false)
+
+    val isGeneratedPin: Boolean
+        get() = generatedThisProcess && managementPin.isNotBlank()
 
     val isConfigured: Boolean
         get() = baseUrl.isNotBlank() && token.isNotBlank()
@@ -87,13 +157,13 @@ class CredentialsStore(context: Context) {
         migrateFromLegacy()
         restoreFromDocuments()
         if (!prefs.contains(KEY_DISPLAY_OFF) && displayOffEntityBacking.isBlank()) {
-            displayOffEntityBacking = DEFAULT_DISPLAY_OFF_ENTITY
+            displayOffEntityBacking = PanelConfig.DEFAULT_DISPLAY_OFF_ENTITY
         }
         if (!prefs.contains(KEY_DISPLAY_BRIGHTNESS) && displayBrightnessEntityBacking.isBlank()) {
-            displayBrightnessEntityBacking = DEFAULT_DISPLAY_BRIGHTNESS_ENTITY
+            displayBrightnessEntityBacking = PanelConfig.DEFAULT_DISPLAY_BRIGHTNESS_ENTITY
         }
         if (!prefs.contains(KEY_DISPLAY_ILLUMINANCE) && displayIlluminanceEntityBacking.isBlank()) {
-            displayIlluminanceEntityBacking = DEFAULT_DISPLAY_ILLUMINANCE_ENTITY
+            displayIlluminanceEntityBacking = PanelConfig.DEFAULT_DISPLAY_ILLUMINANCE_ENTITY
         }
         persistEnabled = true
         if (isConfigured || managementPin.isNotBlank()) persist()
@@ -113,6 +183,8 @@ class CredentialsStore(context: Context) {
         val created = create().trim()
         if (pinError(created) != null) return created
         writePin(created, generated = true)
+        // Prefer a PIN already in Documents over a fresh random one (e.g. after storage grant).
+        restoreFromDocuments(overwriteGeneratedPin = true)
         return managementPin
     }
 
@@ -123,15 +195,9 @@ class CredentialsStore(context: Context) {
         if (isConfigured || managementPin.isNotBlank()) persist()
     }
 
-    fun clear() {
-        persistEnabled = false
-        baseUrl = ""
-        token = ""
-        managementPin = ""
-        generatedThisProcess = false
-        persistEnabled = true
-        prefs.edit().clear().apply()
-        runCatching { RecoverableFiles.delete(app, RecoverableFiles.CREDENTIALS_NAME) }
+    /** Drops a stale Documents PIN so a freshly saved or generated PIN wins. */
+    fun commitPinToRecovery() {
+        persist()
     }
 
     private fun writePin(value: String, generated: Boolean) {
@@ -142,17 +208,48 @@ class CredentialsStore(context: Context) {
 
     private fun readPref(key: String): String = prefs.getString(key, "")?.trim().orEmpty()
 
+    /** Absent key means "follow Lovelace"; a stored (possibly empty) array is an explicit choice. */
+    private fun readCalendarPref(): List<String>? {
+        val raw = prefs.getString(KEY_CALENDARS, null) ?: return null
+        val arr = runCatching { JSONArray(raw) }.getOrNull() ?: return null
+        return (0 until arr.length()).mapNotNull { index ->
+            arr.optString(index).trim().takeIf { it.startsWith("calendar.") }
+        }.distinct()
+    }
+
+    private fun readMonitoredLightsPref(): List<String>? {
+        val raw = prefs.getString(KEY_MONITORED_LIGHTS, null) ?: return null
+        val arr = runCatching { JSONArray(raw) }.getOrNull() ?: return null
+        return (0 until arr.length()).mapNotNull { index ->
+            arr.optString(index).trim().takeIf { it.contains('.') }
+        }.distinct()
+    }
+
     private fun persist() {
         if (!persistEnabled) return
-        prefs.edit()
+        val editor = prefs.edit()
             .putString(KEY_URL, baseUrl)
             .putString(KEY_TOKEN, token)
+            .putString(KEY_GO2RTC_URL, go2rtcUrl)
             .putString(KEY_PIN, managementPin)
             .putInt(KEY_TIMEOUT_SECONDS, screenTimeoutSeconds)
             .putString(KEY_DISPLAY_OFF, displayOffEntity)
             .putString(KEY_DISPLAY_BRIGHTNESS, displayBrightnessEntity)
             .putString(KEY_DISPLAY_ILLUMINANCE, displayIlluminanceEntity)
-            .apply()
+            .putString(KEY_MUSIC_PLAYER, musicPlayerEntity)
+        val calendars = subscribedCalendars
+        if (calendars != null) {
+            editor.putString(KEY_CALENDARS, JSONArray(calendars).toString())
+        } else {
+            editor.remove(KEY_CALENDARS)
+        }
+        val lights = monitoredLightEntities
+        if (lights != null) {
+            editor.putString(KEY_MONITORED_LIGHTS, JSONArray(lights).toString())
+        } else {
+            editor.remove(KEY_MONITORED_LIGHTS)
+        }
+        editor.apply()
         persistRecoverable()
     }
 
@@ -161,11 +258,7 @@ class CredentialsStore(context: Context) {
         val url = baseUrl.ifBlank { existing?.optString("ha_url").orEmpty() }.trim().trimEnd('/')
         val accessToken = token.ifBlank { existing?.optString("ha_token").orEmpty() }.trim()
         val existingPin = existing?.optString("management_pin").orEmpty().trim()
-        val pin = when {
-            generatedThisProcess && PIN_PATTERN.matches(existingPin) -> existingPin
-            managementPin.isNotBlank() -> managementPin
-            else -> existingPin
-        }
+        val pin = managementPin.ifBlank { existingPin }
         if (url.isBlank() && accessToken.isBlank() && pin.isBlank()) return
         if (existing == null && url.isBlank() && accessToken.isBlank() &&
             RecoverableFiles.exists(app, RecoverableFiles.CREDENTIALS_NAME)
@@ -173,32 +266,45 @@ class CredentialsStore(context: Context) {
             // PIN-only and credentials.json exists but was unread: do not overwrite.
             return
         }
-        if (generatedThisProcess && PIN_PATTERN.matches(existingPin)) {
-            pinValue = existingPin
-            generatedThisProcess = false
-            prefs.edit().putString(KEY_PIN, pinValue).apply()
-        }
         val body = JSONObject().apply {
             put("ha_url", url)
             put("ha_token", accessToken)
+            put("go2rtc_url", go2rtcUrl)
             put("management_pin", pin)
             put("screen_timeout_seconds", screenTimeoutSeconds)
             if (displayOffEntity.isNotBlank()) put("display_off_entity", displayOffEntity)
             if (displayBrightnessEntity.isNotBlank()) put("display_brightness_entity", displayBrightnessEntity)
             if (displayIlluminanceEntity.isNotBlank()) put("display_illuminance_entity", displayIlluminanceEntity)
+            if (musicPlayerEntity.isNotBlank()) put("music_player_entity", musicPlayerEntity)
             val calendars = subscribedCalendars ?: readCalendarList(existing)
             if (calendars != null) {
                 put("subscribed_calendars", JSONArray(calendars))
             }
+            val lights = monitoredLightEntities ?: readMonitoredLightList(existing)
+            if (lights != null) {
+                put("monitored_lights", JSONArray(lights))
+            }
         }.toString()
-        runCatching {
-            RecoverableFiles.write(
+        // Seal with ANDROID_ID-derived AES-GCM so other apps can't read Documents/HA Native.
+        val sealed = runCatching {
+            SecureRecovery.writeSealed(
                 app,
                 RecoverableFiles.CREDENTIALS_NAME,
                 "application/json",
+                SecureRecovery.CREDENTIALS_MAGIC,
                 body.toByteArray(Charsets.UTF_8),
             )
         }
+        // Once a seal exists, the legacy plaintext path is closed for good (see readRecoverableObject).
+        if (sealed.isSuccess) prefs.edit().putBoolean(KEY_RECOVERY_SEALED, true).apply()
+    }
+
+    private fun readMonitoredLightList(obj: JSONObject?): List<String>? {
+        if (obj == null || !obj.has("monitored_lights") || obj.isNull("monitored_lights")) return null
+        val arr = obj.optJSONArray("monitored_lights") ?: return null
+        return (0 until arr.length()).mapNotNull { index ->
+            arr.optString(index).trim().takeIf { it.contains('.') }
+        }.distinct()
     }
 
     private fun readCalendarList(obj: JSONObject?): List<String>? {
@@ -211,9 +317,22 @@ class CredentialsStore(context: Context) {
 
     private fun readRecoverableObject(): JSONObject? {
         val raw = runCatching {
-            RecoverableFiles.read(app, RecoverableFiles.CREDENTIALS_NAME)?.toString(Charsets.UTF_8)
+            SecureRecovery.readRaw(app, RecoverableFiles.CREDENTIALS_NAME)
         }.getOrNull() ?: return null
-        return runCatching { JSONObject(raw) }.getOrNull()
+        if (SecureRecovery.looksSealed(raw, SecureRecovery.CREDENTIALS_MAGIC)) {
+            val decrypted = SecureRecovery.decryptIfSealed(app, SecureRecovery.CREDENTIALS_MAGIC, raw)
+            if (decrypted != null) {
+                return runCatching { JSONObject(decrypted.toString(Charsets.UTF_8)) }.getOrNull()
+            }
+            // Unreadable after UniFi re-sign / ANDROID_ID change — remove so setup can rewrite a new seal.
+            runCatching { RecoverableFiles.delete(app, RecoverableFiles.CREDENTIALS_NAME) }
+            return null
+        }
+        // Legacy plaintext recovery file (pre-seal). Honoured as a one-shot migration only:
+        // once this install has written a seal, an unsealed file in public Documents is not
+        // trusted, so dropping one in can no longer inject a URL, token, or PIN.
+        if (prefs.getBoolean(KEY_RECOVERY_SEALED, false)) return null
+        return runCatching { JSONObject(raw.toString(Charsets.UTF_8)) }.getOrNull()
     }
 
     private fun restoreFromDocuments(overwriteGeneratedPin: Boolean = false) {
@@ -222,12 +341,19 @@ class CredentialsStore(context: Context) {
             val url = obj.optString("ha_url").trim().trimEnd('/')
             if (url.isNotBlank()) baseUrl = url
         }
+        if (go2rtcUrl.isBlank()) {
+            val url = obj.optString("go2rtc_url").trim().trimEnd('/')
+            if (url.isNotBlank()) go2rtcUrl = url
+        }
         if (token.isBlank()) {
             val value = obj.optString("ha_token").trim()
             if (value.isNotBlank()) token = value
         }
         if (subscribedCalendars == null) {
             subscribedCalendars = readCalendarList(obj)
+        }
+        if (monitoredLightEntities == null) {
+            monitoredLightEntities = readMonitoredLightList(obj)
         }
         if (!timeoutFromPrefs) {
             when {
@@ -248,8 +374,13 @@ class CredentialsStore(context: Context) {
         if (!prefs.contains(KEY_DISPLAY_ILLUMINANCE) && obj.has("display_illuminance_entity")) {
             displayIlluminanceEntity = normalizeEntityId(obj.optString("display_illuminance_entity"))
         }
+        if (musicPlayerEntityBacking.isBlank() && obj.has("music_player_entity")) {
+            musicPlayerEntity = normalizeEntityId(obj.optString("music_player_entity"))
+        }
         val pin = obj.optString("management_pin").trim()
+        val prefsPin = readPref(KEY_PIN)
         val takeRestoredPin = PIN_PATTERN.matches(pin) &&
+            prefsPin.isBlank() &&
             (managementPin.isBlank() || (overwriteGeneratedPin && generatedThisProcess))
         if (takeRestoredPin) {
             writePin(pin, generated = false)
@@ -286,20 +417,26 @@ class CredentialsStore(context: Context) {
 
     companion object {
         private const val PREFS_NAME = "ha_native_setup"
+        private const val SECURE_PREFS_NAME = "ha_native_setup_secure"
         private const val LEGACY_ENCRYPTED_PREFS = "ha_native_credentials"
         private const val LEGACY_PLAIN_PREFS = "ha_native_credentials_plain"
         private const val KEY_URL = "ha_url"
         private const val KEY_TOKEN = "ha_token"
+        private const val KEY_GO2RTC_URL = "go2rtc_url"
         private const val KEY_PIN = "management_pin"
         private const val KEY_TIMEOUT_SECONDS = "screen_timeout_seconds"
         private const val KEY_TIMEOUT_MINUTES_LEGACY = "screen_timeout_minutes"
         private const val KEY_DISPLAY_OFF = "display_off_entity"
         private const val KEY_DISPLAY_BRIGHTNESS = "display_brightness_entity"
         private const val KEY_DISPLAY_ILLUMINANCE = "display_illuminance_entity"
+        private const val KEY_MUSIC_PLAYER = "music_player_entity"
+        private const val KEY_CALENDARS = "subscribed_calendars"
+        private const val KEY_MONITORED_LIGHTS = "monitored_lights"
+        private const val KEY_RECOVERY_SEALED = "recovery_sealed"
         const val MAX_SCREEN_TIMEOUT_SECONDS = 86_400
-        const val DEFAULT_DISPLAY_OFF_ENTITY = "switch.uc_display"
-        const val DEFAULT_DISPLAY_BRIGHTNESS_ENTITY = "number.uc_display_brightness"
-        const val DEFAULT_DISPLAY_ILLUMINANCE_ENTITY = "sensor.secondary_living_room_switch_illuminance"
+        val DEFAULT_DISPLAY_OFF_ENTITY: String get() = PanelConfig.DEFAULT_DISPLAY_OFF_ENTITY
+        val DEFAULT_DISPLAY_BRIGHTNESS_ENTITY: String get() = PanelConfig.DEFAULT_DISPLAY_BRIGHTNESS_ENTITY
+        val DEFAULT_DISPLAY_ILLUMINANCE_ENTITY: String get() = PanelConfig.DEFAULT_DISPLAY_ILLUMINANCE_ENTITY
         private val ENTITY_ID = Regex("^[a-z_]+\\.[a-z0-9_]+$")
 
         fun normalizeEntityId(raw: String): String = raw.trim().lowercase()

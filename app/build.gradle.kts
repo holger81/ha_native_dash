@@ -70,6 +70,21 @@ android {
         versionName = appVersionName
     }
 
+    flavorDimensions += "panel"
+    productFlavors {
+        create("greatroom") {
+            dimension = "panel"
+            isDefault = true
+            applicationId = "dev.holgerendt.hanative"
+            resValue("string", "app_name", "Greatroom Wall")
+        }
+        create("entrance") {
+            dimension = "panel"
+            applicationId = "dev.holgerendt.hanative.entrance"
+            resValue("string", "app_name", "Entrance Wall")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -91,6 +106,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
@@ -101,13 +117,21 @@ android {
     }
 }
 
+base {
+    archivesName.set("ha-native")
+}
+
+composeCompiler {
+    metricsDestination.set(layout.buildDirectory.dir("compose_metrics"))
+    reportsDestination.set(layout.buildDirectory.dir("compose_reports"))
+}
+
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
@@ -115,6 +139,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.camera:camera-core:1.4.1")
+    implementation("androidx.camera:camera-camera2:1.4.1")
+    implementation("androidx.camera:camera-lifecycle:1.4.1")
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")

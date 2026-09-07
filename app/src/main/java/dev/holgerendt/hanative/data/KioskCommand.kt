@@ -1,5 +1,6 @@
 package dev.holgerendt.hanative.data
 
+import dev.holgerendt.hanative.PanelConfig
 import org.json.JSONObject
 
 /** Remote wall commands, aligned with Fully Kiosk / WallPanel `loadUrl` style. */
@@ -13,9 +14,9 @@ sealed class KioskCommand {
 
 object KioskCommands {
     const val EVENT = "ha_native_dash"
-    const val CAMERA_POPUP = "#camerafront_view"
-    const val CAMERA_FLAG = "input_boolean.greatroom_wall_camera"
-    const val PANEL_ID = "greatroom"
+    val CAMERA_POPUP: String get() = PanelConfig.CAMERA_POPUP
+    val CAMERA_FLAG: String get() = PanelConfig.CAMERA_FLAG
+    val PANEL_ID: String get() = PanelConfig.PANEL_ID
 
     private val popupAliases = mapOf(
         "camera" to CAMERA_POPUP,
@@ -26,6 +27,7 @@ object KioskCommands {
         "video" to CAMERA_POPUP,
         "camerafront" to CAMERA_POPUP,
         "camerafront_view" to CAMERA_POPUP,
+        "camera_alert" to CAMERA_POPUP,
         "power" to "#power",
         "weather" to "#weather",
         "vacuum" to "#staubinator",
@@ -100,9 +102,7 @@ object KioskCommands {
 
     fun panelAllowed(params: Map<String, String>): Boolean {
         val panel = first(params, "panel", "browser_id", "device") ?: return true
-        return panel.equals(PANEL_ID, ignoreCase = true) ||
-            panel.equals("greatroom-wall", ignoreCase = true) ||
-            panel.equals("greatroom_wall", ignoreCase = true)
+        return PanelConfig.PANEL_ALIASES.any { it.equals(panel, ignoreCase = true) }
     }
 
     private fun first(params: Map<String, String>, vararg keys: String): String? =
