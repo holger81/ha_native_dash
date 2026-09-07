@@ -2,6 +2,7 @@
   "version": 1,
   "source": "greatroom-wall.yaml",
   "home": {
+    "layout": "greatroom",
     "title": "Home",
     "people": [
       {

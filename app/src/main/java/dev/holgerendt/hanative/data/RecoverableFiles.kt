@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Environment
 import android.net.Uri
 import android.provider.MediaStore
+import dev.holgerendt.hanative.PanelConfig
 import java.io.File
 
 /**
@@ -15,11 +16,12 @@ import java.io.File
  * contents off logs and rely on the management PIN for the admin surface.
  */
 internal object RecoverableFiles {
-    const val DIR_NAME = "HA Native"
+    val DIR_NAME: String get() = PanelConfig.RECOVERY_DIR
     const val CREDENTIALS_NAME = "credentials.json"
     const val TLS_NAME = "management.p12"
 
-    private val relativePath = "${Environment.DIRECTORY_DOCUMENTS}/$DIR_NAME"
+    private val relativePath: String
+        get() = "${Environment.DIRECTORY_DOCUMENTS}/$DIR_NAME"
 
     @Suppress("DEPRECATION")
     fun publicDir(): File =

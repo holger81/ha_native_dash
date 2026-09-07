@@ -54,12 +54,15 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import coil.ImageLoader
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -88,12 +91,14 @@ import coil.compose.AsyncImagePainter
 import coil.compose.SubcomposeAsyncImage
 import coil.compose.SubcomposeAsyncImageContent
 import coil.request.ImageRequest
+import dev.holgerendt.hanative.PanelConfig
+import dev.holgerendt.hanative.R
 import dev.holgerendt.hanative.data.EntityState
 import dev.holgerendt.hanative.data.HaCalendarEvent
+import dev.holgerendt.hanative.data.KioskCommands
 import dev.holgerendt.hanative.data.NetworkGuard
-import dev.holgerendt.hanative.R
-import dev.holgerendt.hanative.data.timelineSnapshotPath
 import dev.holgerendt.hanative.data.hasLiveCameraSource
+import dev.holgerendt.hanative.data.timelineSnapshotPath
 import dev.holgerendt.hanative.model.DisplayNode
 import dev.holgerendt.hanative.model.PopupNode
 import dev.holgerendt.hanative.model.StateFormat
@@ -535,6 +540,13 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
         }
     }
     val weatherEntity = widget.weatherEntity ?: "weather.forecast_tankerland_ct"
+    var now by remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30_000)
+            now = Instant.now()
+        }
+    }
     LaunchedEffect(Unit) { viewModel.refreshCalendars() }
     LaunchedEffect(sources, dayOffset, calendarRevision, viewModel.client.currentBaseUrl) {
         loaded = false
@@ -572,7 +584,7 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
             delay(60_000)
         }
     }
-    val today = LocalDate.now(zone)
+    val today = now.atZone(zone).toLocalDate()
     val days = (0 until dayCount).map { today.plusDays(dayOffset.toLong() + it) }
     // Pre-index so the day columns don't each re-filter and re-sort the whole event list.
     val eventsByDay = remember(events, days, zone) {
@@ -581,6 +593,7 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                 .sortedWith(compareBy<HaCalendarEvent> { !it.allDay }.thenBy { it.start ?: Instant.EPOCH })
         }
     }
+    val canCreateEvents = PanelConfig.ALLOW_CALENDAR_CREATE
     val openAddDialog: (LocalDate) -> Unit = { date ->
         addDialogDate = date
         showAddDialog = true
@@ -629,9 +642,11 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.padding(start = 6.dp).weight(1f),
                 )
-                CalendarAddIcon(onClick = { openAddDialog(today) })
+                if (canCreateEvents) {
+                    CalendarAddIcon(onClick = { openAddDialog(today) })
+                }
             }
-        } else if (plannerCalendars.isNotEmpty()) {
+        } else if (canCreateEvents && plannerCalendars.isNotEmpty()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
@@ -664,7 +679,7 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                             loading = false,
                             viewModel = viewModel,
                             weatherEntity = weatherEntity,
-                            onAddEvent = if (plannerCalendars.isNotEmpty()) {
+                            onAddEvent = if (canCreateEvents && plannerCalendars.isNotEmpty()) {
                                 { openAddDialog(day) }
                             } else {
                                 null
@@ -672,7 +687,8 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                             onEventClick = { event ->
                                 manageOverlay = WeekPlannerManageOverlay.ChooseAction(event)
                             },
-                            modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 280.dp),
+                            now = now,
+                            modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = if ((widget.days ?: 10) <= 2) 140.dp else 280.dp),
                         )
                     }
                     repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
@@ -680,7 +696,7 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
             }
         }
     }
-    if (showAddDialog) {
+    if (showAddDialog && canCreateEvents) {
         AddCalendarEventDialog(
             viewModel = viewModel,
             calendars = plannerCalendars,
@@ -802,6 +818,7 @@ private fun WeekPlannerDay(
     weatherEntity: String,
     onAddEvent: (() -> Unit)? = null,
     onEventClick: ((HaCalendarEvent) -> Unit)? = null,
+    now: Instant = Instant.now(),
     modifier: Modifier = Modifier,
 ) {
     val weekday = when (day) {
@@ -891,31 +908,37 @@ private fun WeekPlannerDay(
             else -> {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     events.forEach { event ->
+                        val isPast = isPastCalendarEvent(event, day, today, now)
                         val stripe = accentColor(event.color?.removePrefix("var(--")?.removeSuffix(")"))
                             .takeIf { event.color != null } ?: AccentBlue
+                        val stripeColor = if (isPast) stripe.copy(alpha = 0.35f) else stripe
+                        val cardBackground = if (isPast) CardLight.copy(alpha = 0.55f) else CardLight
+                        val timeColor = if (isPast) TextMuted.copy(alpha = 0.45f) else TextMuted
+                        val summaryColor = if (isPast) TextDark.copy(alpha = 0.45f) else TextDark
+                        val summaryWeight = if (isPast) FontWeight.Normal else FontWeight.Medium
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(IntrinsicSize.Min)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(CardLight)
+                                .background(cardBackground)
                                 .clickable(enabled = onEventClick != null) {
                                     onEventClick?.invoke(event)
                                 },
                         ) {
-                            Box(Modifier.width(3.dp).fillMaxHeight().background(stripe))
+                            Box(Modifier.width(3.dp).fillMaxHeight().background(stripeColor))
                             Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp).weight(1f)) {
                                 Text(
                                     text = eventTimeLabel(event),
-                                    color = TextMuted,
+                                    color = timeColor,
                                     fontSize = 11.sp,
                                     maxLines = 1,
                                 )
                                 Text(
                                     text = event.summary,
-                                    color = TextDark,
+                                    color = summaryColor,
                                     fontSize = 14.sp,
-                                    fontWeight = FontWeight.Medium,
+                                    fontWeight = summaryWeight,
                                     maxLines = 3,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -1012,18 +1035,21 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
                             .clickable {
                                 val frame = event.keyFrame
                                 val clip = event.clipPath
+                                val snapshot = timelineSnapshotPath(frame, clip)
                                 when {
                                     !clip.isNullOrBlank() -> viewModel.openVideo(
                                         path = clip,
                                         title = event.summary,
                                         subtitle = subtitle.takeIf { it.isNotBlank() },
                                         description = event.description,
+                                        previewPath = snapshot,
                                     )
                                     !frame.isNullOrBlank() -> viewModel.openMedia(
                                         path = frame,
                                         title = event.summary,
                                         subtitle = subtitle.takeIf { it.isNotBlank() },
                                         description = event.description,
+                                        previewPath = snapshot,
                                     )
                                     else -> {
                                         val camera = event.cameraName?.takeIf { '.' in it }
@@ -1125,8 +1151,8 @@ fun MediaImageDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
     }
     val bitmap = remember(bytes) { bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
     Box(
-        modifier = popupSheetModifier(PopupSheetKind.Detail)
-            .padding(horizontal = 10.dp, vertical = 8.dp)
+        modifier = popupSheetModifier(PopupSheetKind.Camera)
+            .padding(horizontal = 8.dp, vertical = 6.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -1181,8 +1207,14 @@ fun MediaImageDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
 @Composable
 fun MediaVideoDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val imageLoader = rememberHaImageLoader(viewModel.client)
     var videoUrl by remember(preview.path) { mutableStateOf<String?>(null) }
     var loadFailed by remember(preview.path) { mutableStateOf(false) }
+
+    val snapshotPath = preview.previewPath
+    var snapshotUrl by remember(snapshotPath) { mutableStateOf<String?>(null) }
+    var snapshotResolved by remember(snapshotPath) { mutableStateOf(snapshotPath.isNullOrBlank()) }
+
     LaunchedEffect(preview.path, viewModel.client.currentBaseUrl) {
         loadFailed = false
         videoUrl = runCatching { viewModel.client.authenticatedMediaUrl(preview.path) }
@@ -1190,6 +1222,16 @@ fun MediaVideoDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
             ?.takeIf { NetworkGuard.hostOf(it)?.let(NetworkGuard::isPrivateHost) == true }
         if (videoUrl.isNullOrBlank()) loadFailed = true
     }
+
+    LaunchedEffect(snapshotPath, viewModel.client.currentBaseUrl) {
+        if (!snapshotPath.isNullOrBlank()) {
+            snapshotUrl = runCatching { viewModel.client.authenticatedMediaUrl(snapshotPath) }.getOrNull()
+        }
+        snapshotResolved = true
+    }
+
+    var videoAspectRatio by remember { mutableStateOf<Float?>(null) }
+
     val exoPlayer = remember(videoUrl) {
         val url = videoUrl ?: return@remember null
         val factory = DefaultHttpDataSource.Factory()
@@ -1206,12 +1248,32 @@ fun MediaVideoDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
                 playWhenReady = true
             }
     }
+
     DisposableEffect(exoPlayer) {
-        onDispose { exoPlayer?.release() }
+        if (exoPlayer == null) return@DisposableEffect onDispose {}
+        val listener = object : Player.Listener {
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    videoAspectRatio = videoSize.width.toFloat() / videoSize.height.toFloat()
+                }
+            }
+        }
+        exoPlayer.addListener(listener)
+        val currentSize = exoPlayer.videoSize
+        if (currentSize.width > 0 && currentSize.height > 0) {
+            videoAspectRatio = currentSize.width.toFloat() / currentSize.height.toFloat()
+        }
+        onDispose {
+            exoPlayer.removeListener(listener)
+            exoPlayer.release()
+        }
     }
+
+    val playerAspect = videoAspectRatio?.coerceIn(0.6f, 2.4f) ?: (16f / 9f)
+
     Box(
-        modifier = popupSheetModifier(PopupSheetKind.Detail)
-            .padding(horizontal = 10.dp, vertical = 8.dp)
+        modifier = popupSheetModifier(PopupSheetKind.Camera)
+            .padding(horizontal = 8.dp, vertical = 6.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -1225,7 +1287,7 @@ fun MediaVideoDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
                 .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp)
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             PopupSheetChrome(
                 title = preview.title.orEmpty().ifBlank { "Clip" },
@@ -1233,32 +1295,78 @@ fun MediaVideoDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
                 overlay = OverlayLightPopup,
                 subtitle = preview.subtitle,
             )
-            when {
-                exoPlayer != null -> AndroidView(
-                    factory = { ctx ->
-                        (LayoutInflater.from(ctx).inflate(R.layout.camera_player_view, null) as PlayerView).apply {
-                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                            useController = true
-                            player = exoPlayer
+
+            MediaVideoPlayerSurface(
+                exoPlayer = exoPlayer,
+                loadFailed = loadFailed,
+                snapshotUrl = snapshotUrl,
+                imageLoader = imageLoader,
+                aspectRatio = playerAspect,
+            )
+
+            if (!snapshotUrl.isNullOrBlank()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = "Detection image",
+                        color = OverlayLightPopup.muted,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    SubcomposeAsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(snapshotUrl)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = "Event detection preview",
+                        imageLoader = imageLoader,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 140.dp, max = 280.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(Color.Black.copy(alpha = 0.06f)),
+                        contentScale = ContentScale.Fit,
+                    ) {
+                        when (painter.state) {
+                            is AsyncImagePainter.State.Success -> SubcomposeAsyncImageContent()
+                            is AsyncImagePainter.State.Error -> Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(100.dp)
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(Color.Black.copy(alpha = 0.04f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text("Can't load detection image", color = OverlayLightPopup.muted, fontSize = 12.sp)
+                            }
+                            else -> Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(140.dp)
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(Color.Black.copy(alpha = 0.04f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                LoadingSpinner(indicatorSize = 20.dp)
+                            }
                         }
-                    },
-                    update = { view ->
-                        view.player = exoPlayer
-                        view.useController = true
-                    },
+                    }
+                }
+            } else if (!snapshotPath.isNullOrBlank() && !snapshotResolved) {
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .aspectRatio(16f / 9f)
-                        .clip(RoundedCornerShape(22.dp)),
-                )
-                loadFailed -> Text("Can't load video", color = OverlayLightPopup.muted, fontSize = 14.sp)
-                else -> Box(
-                    modifier = Modifier.fillMaxWidth().height(220.dp),
+                        .height(120.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color.Black.copy(alpha = 0.06f)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    LoadingSpinner(color = TextMuted)
+                    LoadingSpinner(color = TextMuted, indicatorSize = 22.dp)
                 }
             }
+
             if (!preview.description.isNullOrBlank()) {
                 Text(
                     text = preview.description,
@@ -1267,6 +1375,61 @@ fun MediaVideoDialog(preview: MediaPreview, viewModel: HaViewModel, onDismiss: (
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 )
             }
+        }
+    }
+}
+
+@androidx.annotation.OptIn(UnstableApi::class)
+@Composable
+private fun MediaVideoPlayerSurface(
+    exoPlayer: ExoPlayer?,
+    loadFailed: Boolean,
+    snapshotUrl: String?,
+    imageLoader: ImageLoader,
+    aspectRatio: Float,
+) {
+    when {
+        exoPlayer != null -> AndroidView(
+            factory = { ctx ->
+                (LayoutInflater.from(ctx).inflate(R.layout.camera_player_view, null) as PlayerView).apply {
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    useController = true
+                    player = exoPlayer
+                }
+            },
+            update = { view ->
+                view.player = exoPlayer
+                view.useController = true
+                view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(aspectRatio)
+                .clip(RoundedCornerShape(22.dp))
+                .background(Color.Black),
+        )
+        loadFailed -> Text("Can't load video", color = OverlayLightPopup.muted, fontSize = 14.sp)
+        else -> Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(aspectRatio)
+                .clip(RoundedCornerShape(22.dp))
+                .background(Color.Black.copy(alpha = 0.08f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (!snapshotUrl.isNullOrBlank()) {
+                SubcomposeAsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(snapshotUrl)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = null,
+                    imageLoader = imageLoader,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit,
+                )
+            }
+            LoadingSpinner(color = TextMuted)
         }
     }
 }
@@ -1296,6 +1459,21 @@ private fun eventOverlapsDay(event: HaCalendarEvent, day: LocalDate, zone: ZoneI
         end
     }
     return !day.isBefore(start) && !day.isAfter(endInclusive)
+}
+
+internal fun isPastCalendarEvent(
+    event: HaCalendarEvent,
+    day: LocalDate,
+    today: LocalDate,
+    now: Instant = Instant.now(),
+): Boolean {
+    if (day.isBefore(today)) return true
+    if (day.isAfter(today)) return false
+    if (event.allDay || (event.startDate != null && event.start == null)) {
+        return false
+    }
+    val endInstant = event.end ?: event.start ?: return false
+    return now.isAfter(endInstant)
 }
 
 private fun forecastC(raw: String?): String? {
@@ -2241,7 +2419,7 @@ fun PopupSheetChrome(
 enum class PopupSheetKind { Room, Camera, Utility, Settings, Detail }
 
 fun popupSheetKind(hash: String?): PopupSheetKind = when (hash) {
-    "#camerafront_view", "#music" -> PopupSheetKind.Camera
+    KioskCommands.CAMERA_POPUP, "#music", "#camerafront_view", "#camera_alert" -> PopupSheetKind.Camera
     "#settings", "#changelog" -> PopupSheetKind.Settings
     "#weather", "#power", "#bil", "#staubinator" -> PopupSheetKind.Utility
     else -> PopupSheetKind.Room

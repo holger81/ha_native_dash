@@ -1,10 +1,12 @@
 package dev.holgerendt.hanative.ui
 
 import android.app.Application
+import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import dev.holgerendt.hanative.HaNativeApp
+import dev.holgerendt.hanative.PanelConfig
 import dev.holgerendt.hanative.data.CalendarInfo
 import dev.holgerendt.hanative.data.CameraStreams
 import dev.holgerendt.hanative.data.ConnectionState
@@ -16,6 +18,7 @@ import dev.holgerendt.hanative.data.KioskCommand
 import dev.holgerendt.hanative.data.KioskCommands
 import dev.holgerendt.hanative.data.KioskSnapshot
 import dev.holgerendt.hanative.data.LanAddresses
+import dev.holgerendt.hanative.data.LightAllowlist
 import dev.holgerendt.hanative.data.LiveCameraHub
 import dev.holgerendt.hanative.data.LiveCameraView
 import dev.holgerendt.hanative.data.ManagementServer
@@ -92,6 +95,12 @@ private val CHANGELOG_POPUP = PopupNode(
     hash = "#changelog",
 )
 
+private val SETTINGS_POPUP = PopupNode(
+    name = "Settings",
+    icon = "mdi:tune-variant",
+    hash = "#settings",
+)
+
 data class MusicBrowseFrame(
     val title: String,
     val path: String,
@@ -153,6 +162,7 @@ data class MediaPreview(
     val subtitle: String? = null,
     val description: String? = null,
     val isVideo: Boolean = false,
+    val previewPath: String? = null,
 )
 
 class HaViewModel(
@@ -213,6 +223,19 @@ class HaViewModel(
 
     private val _subscribedCalendars = MutableStateFlow(credentials.subscribedCalendars)
     val subscribedCalendars: StateFlow<List<String>?> = _subscribedCalendars
+
+    private val _monitoredLights = MutableStateFlow(credentials.monitoredLightEntities)
+    val monitoredLights: StateFlow<List<String>?> = _monitoredLights
+
+    private val _tabletMotion = MutableStateFlow(false)
+
+    val occupancyActive: StateFlow<Boolean> = combine(
+        _ui.map { it.dashboard?.home?.occupancyEntities.orEmpty() }.distinctUntilChanged(),
+        states,
+        _tabletMotion,
+    ) { ids, all, local ->
+        local || occupancyEntityIds(ids).any { id -> all[id]?.state == "on" }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private val _mmWaveLive = MutableStateFlow(MmWaveLiveTargets())
     val mmWaveLive: StateFlow<MmWaveLiveTargets> = _mmWaveLive
@@ -430,6 +453,7 @@ class HaViewModel(
             )
             return
         }
+        val apkInstaller = (app as HaNativeApp).apkInstaller
         val server = ManagementServer(
             pinProvider = { credentials.managementPin },
             savedUrlProvider = { credentials.baseUrl },
@@ -449,9 +473,24 @@ class HaViewModel(
                     screenAsleep = _ui.value.screenAsleep,
                 )
             },
+            panelName = PanelConfig.DISPLAY_NAME,
+            appVersionProvider = ::installedAppVersion,
+            updateStatusProvider = { apkInstaller.state },
+            onApkUpload = { file ->
+                wakeScreen()
+                val staged = java.io.File(app.cacheDir, "pending-update.apk")
+                try {
+                    if (file.canonicalFile != staged.canonicalFile) {
+                        file.copyTo(staged, overwrite = true)
+                    }
+                    apkInstaller.install(staged)
+                } finally {
+                    staged.delete()
+                }
+            },
             sslSocketFactory = ssl.getOrThrow(),
         )
-        val started = runCatching { server.start(5000, false) }
+        val started = runCatching { server.start(120_000, false) }
         managementServer = if (started.isSuccess) server else null
         _ui.value = _ui.value.copy(
             managementError = managementBanner(started.exceptionOrNull()?.message),
@@ -462,6 +501,17 @@ class HaViewModel(
                 delay(15_000)
             }
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun installedAppVersion(): Pair<Long, String> {
+        val info = app.packageManager.getPackageInfo(app.packageName, 0)
+        val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            info.versionCode.toLong()
+        }
+        return code to (info.versionName ?: "")
     }
 
     private fun refreshLanUrls() {
@@ -478,6 +528,7 @@ class HaViewModel(
     fun popup(hash: String?): PopupNode? = when (hash) {
         "#music" -> MUSIC_POPUP
         "#changelog" -> CHANGELOG_POPUP
+        "#settings" -> _ui.value.dashboard?.home?.popups?.firstOrNull { it.hash == hash } ?: SETTINGS_POPUP
         else -> _ui.value.dashboard?.home?.popups?.firstOrNull { it.hash == hash }
     }
 
@@ -1290,10 +1341,18 @@ class HaViewModel(
         subtitle: String? = null,
         description: String? = null,
         isVideo: Boolean = false,
+        previewPath: String? = null,
     ) {
         if (path.isNullOrBlank()) return
         _ui.value = _ui.value.copy(
-            mediaPreview = MediaPreview(path, title, subtitle, description, isVideo),
+            mediaPreview = MediaPreview(
+                path = path,
+                title = title,
+                subtitle = subtitle,
+                description = description,
+                isVideo = isVideo,
+                previewPath = previewPath?.trim()?.takeIf { it.isNotBlank() },
+            ),
         )
     }
 
@@ -1302,7 +1361,15 @@ class HaViewModel(
         title: String? = null,
         subtitle: String? = null,
         description: String? = null,
-    ) = openMedia(path, title, subtitle, description, isVideo = true)
+        previewPath: String? = null,
+    ) = openMedia(
+        path = path,
+        title = title,
+        subtitle = subtitle,
+        description = description,
+        isVideo = true,
+        previewPath = previewPath,
+    )
 
     fun closeMedia() {
         _ui.value = _ui.value.copy(mediaPreview = null)
@@ -1337,6 +1404,21 @@ class HaViewModel(
         if (pendingDimJob != null) {
             pendingDimJob?.cancel()
             pendingDimJob = null
+        }
+    }
+
+    fun onTabletMotion(active: Boolean) {
+        if (!PanelConfig.USE_TABLET_MOTION) return
+        if (_tabletMotion.value == active) return
+        _tabletMotion.value = active
+        if (active) {
+            lastActivityMs = System.currentTimeMillis()
+            if (_ui.value.screenAsleep) wakeScreen()
+        }
+        val entity = PanelConfig.MOTION_ENTITY
+        if (entity.isBlank() || client.currentBaseUrl.isBlank()) return
+        viewModelScope.launch {
+            runCatching { client.setEntityPower(entity, on = active) }
         }
     }
 
@@ -1497,11 +1579,15 @@ class HaViewModel(
             .sortedBy { it.second.lowercase() }
             .toList()
 
-    private fun wallCameraWidgets(): List<WidgetNode> =
-        _ui.value.dashboard?.home?.popups
+    private fun wallCameraWidgets(): List<WidgetNode> {
+        val home = _ui.value.dashboard?.home
+        val hero = home?.heroCameras.orEmpty()
+        if (hero.isNotEmpty()) return hero
+        return home?.popups
             ?.firstOrNull { it.hash == KioskCommands.CAMERA_POPUP }
             ?.let { popup -> CameraStreams.camerasForPopup(popup, credentials.go2rtcUrl) }
             ?: CameraStreams.wallPanelCameras(credentials.go2rtcUrl)
+    }
 
     private fun prefetchWallCameras() {
         viewModelScope.launch {
@@ -1815,10 +1901,18 @@ class HaViewModel(
         allStates: Map<String, EntityState>,
         live: MmWaveLiveTargets,
     ): Boolean {
+        if (_tabletMotion.value) return true
+        val occupancyIds = occupancyEntityIds(_ui.value.dashboard?.home?.occupancyEntities.orEmpty())
+        if (occupancyIds.any { isOn(allStates[it]?.state) }) return true
         if (isOn(allStates[MMWAVE_OCCUPANCY_ENTITY]?.state)) return true
         if (live.count > 0 || live.slots.isNotEmpty()) return true
         val helperCount = allStates[MMWAVE_TARGET_COUNT_ENTITY]?.state?.toDoubleOrNull()?.roundToInt() ?: 0
         return helperCount > 0
+    }
+
+    private fun occupancyEntityIds(homeIds: List<String>): List<String> {
+        val extra = PanelConfig.MOTION_ENTITY
+        return if (extra.isBlank() || extra in homeIds) homeIds else homeIds + extra
     }
 
     private data class AutoBrightnessSnapshot(
@@ -1872,9 +1966,11 @@ class HaViewModel(
     }
 
     private fun watchCameraFlag() {
+        val flag = KioskCommands.CAMERA_FLAG
+        if (flag.isBlank()) return
         viewModelScope.launch {
             var previous: String? = null
-            states.map { it[KioskCommands.CAMERA_FLAG]?.state }.distinctUntilChanged().collect { state ->
+            states.map { it[flag]?.state }.distinctUntilChanged().collect { state ->
                 val last = previous
                 previous = state
                 if (state == "on" && last != "on") {
@@ -1999,6 +2095,33 @@ class HaViewModel(
         _subscribedCalendars.value = null
     }
 
+    fun setMonitoredLights(ids: List<String>?) {
+        credentials.monitoredLightEntities = ids
+        _monitoredLights.value = credentials.monitoredLightEntities
+    }
+
+    fun lightSwitchChoices(): List<Pair<String, String>> =
+        entityChoices(setOf("light", "switch"))
+
+    fun currentlyOnAllowlistedLights(): List<String> =
+        LightAllowlist.currentlyOn(_monitoredLights.value, states.value)
+
+    fun turnOffAllowlistedLights() {
+        viewModelScope.launch {
+            val ids = currentlyOnAllowlistedLights()
+            if (ids.isEmpty()) return@launch
+            ids.forEach { client.applyOptimisticState(it, "off") }
+            client.callService("homeassistant", "turn_off", ids)
+        }
+    }
+
+    fun turnOffEntity(entityId: String) {
+        viewModelScope.launch {
+            client.applyOptimisticState(entityId, "off")
+            client.callService("homeassistant", "turn_off", listOf(entityId))
+        }
+    }
+
     fun refreshCalendars() {
         viewModelScope.launch {
             val fromHa = runCatching { client.listCalendars() }.getOrDefault(emptyList())
@@ -2024,6 +2147,10 @@ class HaViewModel(
         allDay: Boolean,
         onResult: (Result<Unit>) -> Unit,
     ) {
+        if (!PanelConfig.ALLOW_CALENDAR_CREATE) {
+            onResult(Result.failure(IllegalStateException("This panel cannot create calendar events")))
+            return
+        }
         viewModelScope.launch {
             val result = runCalendarEventMutation {
                 createCalendarEventPayload(entityId, title, date, startTime, endTime, allDay)
@@ -2137,6 +2264,10 @@ class HaViewModel(
     }
 
     fun onTap(widget: WidgetNode) {
+        if (widget.type == "lights_off") {
+            turnOffAllowlistedLights()
+            return
+        }
         val action = widget.tap ?: ActionNode(type = "more_info")
         dispatch(action, widget.entity)
     }

@@ -2,6 +2,7 @@ package dev.holgerendt.hanative.data
 
 import fi.iki.elonen.NanoHTTPD
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.net.URLDecoder
 import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
@@ -16,6 +17,10 @@ class ManagementServer(
     private val onSubmit: (url: String, token: String) -> Result<Unit>,
     private val onCommand: (KioskCommand) -> Unit,
     private val kioskStateProvider: () -> KioskSnapshot,
+    private val panelName: String,
+    private val appVersionProvider: () -> Pair<Long, String>,
+    private val updateStatusProvider: () -> ApkInstallState,
+    private val onApkUpload: (File) -> Result<Unit>,
     sslSocketFactory: SSLServerSocketFactory,
 ) : NanoHTTPD(port) {
 
@@ -49,9 +54,12 @@ class ManagementServer(
             session.method == Method.GET && uri == "/logout" -> handleLogout(session)
             session.method == Method.POST && uri == "/logout" -> handleLogout(session)
             session.method == Method.GET && uri == "/screenshot" -> handleScreenshot(session)
-            session.method == Method.OPTIONS && (uri == "/api/command" || uri == "/api/state" || uri == "/api/crash") ->
+            session.method == Method.OPTIONS &&
+                (uri == "/api/command" || uri == "/api/state" || uri == "/api/crash" || uri == "/api/update") ->
                 corsPreflight(session)
             session.method == Method.GET && uri == "/api/state" -> handleKioskState(session)
+            session.method == Method.GET && uri == "/api/update" -> handleUpdateStatus(session)
+            session.method == Method.POST && uri == "/update" -> handleUpdate(session)
             (session.method == Method.GET || session.method == Method.POST) && uri == "/api/command" ->
                 handleKioskCommand(session)
             session.method == Method.GET && uri == "/api/crash" -> handleGetCrash(session)
@@ -170,6 +178,65 @@ class ManagementServer(
         runCatching { session.parseBody(HashMap()) }
         onCommand(KioskCommand.Wake)
         return html(adminPage(savedUrlProvider(), "Waking the wall display.", true))
+    }
+
+    private fun handleUpdateStatus(session: IHTTPSession): Response {
+        authorizeApi(session)?.let { return json(session, Response.Status.UNAUTHORIZED, errorJson(it)) }
+        val (code, name) = appVersionProvider()
+        val state = updateStatusProvider()
+        val body = JSONObject()
+            .put("ok", true)
+            .put("status", state.status)
+            .put("message", state.message ?: JSONObject.NULL)
+            .put("incomingVersion", state.incomingVersion ?: JSONObject.NULL)
+            .put("versionName", name)
+            .put("versionCode", code)
+        return json(session, Response.Status.OK, body.toString())
+    }
+
+    private fun handleUpdate(session: IHTTPSession): Response {
+        if (!authenticated(session)) {
+            return html(loginPage("Log in with the PIN first."), Response.Status.FORBIDDEN)
+        }
+        val files = HashMap<String, String>()
+        val parsed = runCatching { session.parseBody(files) }
+        if (parsed.isFailure) {
+            return html(
+                adminPage(
+                    savedUrlProvider(),
+                    parsed.exceptionOrNull()?.message ?: "Upload failed.",
+                    false,
+                ),
+                Response.Status.BAD_REQUEST,
+            )
+        }
+        val apk = uploadedApk(files)
+        if (apk == null) {
+            return html(
+                adminPage(savedUrlProvider(), "Choose an APK file for this panel.", false),
+                Response.Status.BAD_REQUEST,
+            )
+        }
+        onCommand(KioskCommand.Wake)
+        val result = runCatching { onApkUpload(apk) }.getOrElse { Result.failure(it) }
+        return if (result.isSuccess) {
+            html(adminPage(savedUrlProvider(), "Upload received. Confirm Install on the tablet.", true))
+        } else {
+            html(
+                adminPage(
+                    savedUrlProvider(),
+                    result.exceptionOrNull()?.message ?: "Install failed.",
+                    false,
+                ),
+                Response.Status.BAD_REQUEST,
+            )
+        }
+    }
+
+    private fun uploadedApk(files: Map<String, String>): File? {
+        val named = files["apk"]?.let(::File)?.takeIf { it.isFile }
+        if (named != null) return named
+        return files.values.firstOrNull { File(it).isFile }?.let(::File)
     }
 
     private fun handleGetCrash(session: IHTTPSession): Response {
@@ -427,12 +494,12 @@ class ManagementServer(
             <head>
               <meta charset="utf-8"/>
               <meta name="viewport" content="width=device-width, initial-scale=1"/>
-              <title>Greatroom Wall login</title>
+              <title>${escape(panelName)} login</title>
               <style>$CSS</style>
             </head>
             <body>
               <main>
-                <h1>Greatroom Wall</h1>
+                <h1>${escape(panelName)}</h1>
                 <p>Log in with the PIN shown on the wall panel (4–8 digits). After login, a live screen view and the token form stay available without re-entering the PIN. This page is HTTPS with a device-generated certificate — accept the browser warning once.</p>
                 $notice
                 <form method="post" action="/login" autocomplete="on">
@@ -464,19 +531,21 @@ class ManagementServer(
             </section>
             """.trimIndent()
         } else ""
+        val (versionCode, versionName) = appVersionProvider()
+        val versionLabel = "$versionName ($versionCode)"
         return """
             <!doctype html>
             <html lang="en">
             <head>
               <meta charset="utf-8"/>
               <meta name="viewport" content="width=device-width, initial-scale=1"/>
-              <title>Greatroom Wall setup</title>
+              <title>${escape(panelName)} setup</title>
               <style>$CSS</style>
             </head>
             <body>
               <main>
                 <div class="top">
-                  <h1>Greatroom Wall</h1>
+                  <h1>${escape(panelName)}</h1>
                   <form method="post" action="/logout">
                     <button class="ghost" type="submit">Log out</button>
                   </form>
@@ -492,6 +561,16 @@ class ManagementServer(
                     <button class="inline" type="button" id="reload">Reload</button>
                     <button class="inline" type="button" id="wake">Wake display</button>
                   </div>
+                </section>
+                <section class="update-box">
+                  <h2>Update app</h2>
+                  <p class="meta">Installed ${escape(versionLabel)}. Upload a newer APK for this panel. After upload, tap <strong>Install</strong> on the tablet.</p>
+                  <form id="update-form" method="post" action="/update" enctype="multipart/form-data">
+                    <label for="apk">APK file</label>
+                    <input id="apk" name="apk" type="file" accept=".apk,application/vnd.android.package-archive" required />
+                    <button type="submit">Upload and install</button>
+                  </form>
+                  <p id="update-status" class="meta" hidden></p>
                 </section>
                 <form method="post" action="/setup" autocomplete="off">
                   <label for="url">Home Assistant URL</label>
@@ -573,6 +652,35 @@ class ManagementServer(
                   });
                   refresh(false);
                   timer = setInterval(function () { refresh(false); }, INTERVAL);
+
+                  var updateStatus = document.getElementById('update-status');
+                  var updateForm = document.getElementById('update-form');
+                  async function pollUpdate() {
+                    try {
+                      var res = await fetch('/api/update', { credentials: 'same-origin', cache: 'no-store' });
+                      if (res.status === 401 || res.status === 403) return;
+                      var data = await res.json();
+                      if (!updateStatus) return;
+                      if (!data.ok) return;
+                      if (!data.status || data.status === 'idle') return;
+                      var text = data.message || data.status;
+                      updateStatus.hidden = false;
+                      updateStatus.textContent = text;
+                      updateStatus.className = data.status === 'error' ? 'err'
+                        : (data.status === 'success' ? 'ok' : 'meta');
+                    } catch (e) {}
+                  }
+                  if (updateForm) {
+                    updateForm.addEventListener('submit', function () {
+                      var btn = updateForm.querySelector('button[type=submit]');
+                      if (btn) { btn.disabled = true; btn.textContent = 'Uploading…'; }
+                      updateStatus.hidden = false;
+                      updateStatus.className = 'meta';
+                      updateStatus.textContent = 'Uploading APK…';
+                    });
+                  }
+                  pollUpdate();
+                  setInterval(pollUpdate, 2000);
                 })();
               </script>
             </body>
@@ -611,6 +719,7 @@ class ManagementServer(
                 label { display:block; margin:14px 0 6px; font-size:.9rem; }
                 input, textarea { width:100%; box-sizing:border-box; border:0; border-radius:14px;
                   padding:14px; font-size:16px; background:#2c2c2c; color:#fff; }
+                input[type=file] { padding:12px; }
                 textarea { min-height: 120px; font-family: ui-monospace, monospace; }
                 button { width:100%; margin-top:18px; border:0; border-radius:14px; padding:14px;
                   font-size:16px; font-weight:650; background:#ffc107; color:#111; }
@@ -626,6 +735,7 @@ class ManagementServer(
                 .live-wrap { margin: 16px 0 8px; }
                 .live { background:#000; border-radius:14px; overflow:hidden; min-height:220px; }
                 .live img { width:100%; height:auto; display:block; }
+                .update-box { margin: 16px 0; padding: 4px 0 8px; }
         """
 
         /** 30 s, 60 s, 120 s … per source IP, capped at [MAX_LOCKOUT_MS]. */

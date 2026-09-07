@@ -70,6 +70,21 @@ android {
         versionName = appVersionName
     }
 
+    flavorDimensions += "panel"
+    productFlavors {
+        create("greatroom") {
+            dimension = "panel"
+            isDefault = true
+            applicationId = "dev.holgerendt.hanative"
+            resValue("string", "app_name", "Greatroom Wall")
+        }
+        create("entrance") {
+            dimension = "panel"
+            applicationId = "dev.holgerendt.hanative.entrance"
+            resValue("string", "app_name", "Entrance Wall")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -91,6 +106,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
@@ -102,7 +118,7 @@ android {
 }
 
 base {
-    archivesName.set("greatroom-wall")
+    archivesName.set("ha-native")
 }
 
 composeCompiler {
@@ -123,6 +139,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.camera:camera-core:1.4.1")
+    implementation("androidx.camera:camera-camera2:1.4.1")
+    implementation("androidx.camera:camera-lifecycle:1.4.1")
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")

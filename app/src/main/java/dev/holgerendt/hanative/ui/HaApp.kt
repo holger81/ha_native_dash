@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,6 +29,8 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalDrawerSheet
@@ -67,9 +70,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.holgerendt.hanative.PanelConfig
 import dev.holgerendt.hanative.data.Changelog
 import dev.holgerendt.hanative.data.CrashLogger
 import dev.holgerendt.hanative.data.ConnectionState
+import dev.holgerendt.hanative.data.KioskCommands
+import dev.holgerendt.hanative.data.LightAllowlist
 import dev.holgerendt.hanative.data.QrCodes
 import dev.holgerendt.hanative.model.PopupNode
 import dev.holgerendt.hanative.ui.brightnessPct
@@ -142,7 +148,7 @@ fun HaApp(viewModel: HaViewModel) {
                         modifier = Modifier.align(Alignment.TopCenter).padding(8.dp),
                     )
                 }
-                if (ui.popupHash.isNullOrBlank()) {
+                if (!PanelConfig.IS_ENTRANCE && ui.popupHash.isNullOrBlank()) {
                     BottomDock(
                         viewModel = viewModel,
                         modifier = Modifier.align(Alignment.BottomCenter),
@@ -203,29 +209,19 @@ fun HaApp(viewModel: HaViewModel) {
 
 @Composable
 private fun DrawerMenu(viewModel: HaViewModel) {
-    val items = listOf(
-        "Weather" to "#weather",
-        "Power" to "#power",
-        "Presence" to "#presence",
-        "Cars" to "#bil",
-        "Staubinator" to "#staubinator",
-        "Camera" to "#camerafront_view",
-        "Music" to "#music",
-        "Changelog" to "#changelog",
-        "Settings" to "#settings",
-    )
+    val items = PanelConfig.DRAWER_ITEMS
     Column(Modifier.fillMaxHeight().width(280.dp).padding(20.dp)) {
-        Text("Greatroom Wall", color = TextDark, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        Text(PanelConfig.DISPLAY_NAME, color = TextDark, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(24.dp))
-        items.forEach { (label, hash) ->
+        items.forEach { item ->
             Text(
-                text = label,
+                text = item.label,
                 color = TextDark,
                 fontSize = 16.sp,
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .clickable { viewModel.openPopup(hash) }
+                    .clickable { viewModel.openPopup(item.hash) }
                     .padding(vertical = 12.dp, horizontal = 8.dp),
             )
         }
@@ -255,6 +251,10 @@ private fun HomeScreen(viewModel: HaViewModel) {
         viewModel.ui.map { it.dashboard?.home }.distinctUntilChanged()
     }.collectAsState(viewModel.ui.value.dashboard?.home)
     val home = homeNode ?: return
+    if (home.isEntrance || PanelConfig.IS_ENTRANCE) {
+        EntranceHomeScreen(home, viewModel)
+        return
+    }
     val menu = home.header.firstOrNull { it.type == "menu_button" }
     val weather = home.header.firstOrNull { it.type == "weather_header" }
     Column(
@@ -383,7 +383,7 @@ private fun DockButton(item: DockItem, onClick: () -> Unit, modifier: Modifier =
 
 @Composable
 private fun PopupHost(popup: PopupNode, viewModel: HaViewModel) {
-    val cameraPopup = popup.hash == "#camerafront_view"
+    val cameraPopup = popup.hash == KioskCommands.CAMERA_POPUP
     val musicPopup = popup.hash == "#music"
     val weatherPopup = popup.hash == "#weather"
     val ui by viewModel.ui.collectAsState()
@@ -403,7 +403,7 @@ private fun PopupHost(popup: PopupNode, viewModel: HaViewModel) {
     ) {
         when (popup.hash) {
             "#weather" -> WeatherPopup(popup, viewModel)
-            "#camerafront_view" -> CameraPopup(popup, viewModel)
+            KioskCommands.CAMERA_POPUP -> CameraPopup(popup, viewModel)
             "#music" -> MusicAssistantPopup(popup, viewModel)
             "#settings" -> SettingsPopup(popup, viewModel)
             "#changelog" -> ChangelogPopup()
@@ -487,7 +487,11 @@ private fun SettingsPopup(popup: PopupNode, viewModel: HaViewModel) {
         Go2rtcUrlCard(viewModel)
         ManagementPinCard(viewModel)
         CalendarSubscriptionsCard(viewModel)
-        DebugPersonCamerasCard(viewModel)
+        if (PanelConfig.IS_ENTRANCE) {
+            LightsAllowlistCard(viewModel)
+        } else {
+            DebugPersonCamerasCard(viewModel)
+        }
         CrashLogCard()
         WidgetTree(popup.cards, viewModel)
     }
@@ -839,6 +843,97 @@ private fun DebugPersonCamerasCard(viewModel: HaViewModel) {
                     checkedTrackColor = ActiveYellow,
                 ),
             )
+        }
+    }
+}
+
+@Composable
+private fun LightsAllowlistCard(viewModel: HaViewModel) {
+    val overlay = LocalOverlay.current
+    val stored by viewModel.monitoredLights.collectAsState()
+    val states by viewModel.states.collectAsState()
+    val choices = remember(states) {
+        states.entries
+            .asSequence()
+            .filter { LightAllowlist.isPickerCandidate(it.key) }
+            .map { it.key to it.value.friendlyName }
+            .sortedBy { it.second.lowercase() }
+            .toList()
+    }
+    val selected = remember(stored, states) {
+        LightAllowlist.resolved(stored, states).toSet()
+    }
+    var filter by remember { mutableStateOf("") }
+    val filtered = remember(filter, choices) {
+        val q = filter.trim().lowercase()
+        if (q.isEmpty()) choices
+        else choices.filter { (id, name) ->
+            id.lowercase().contains(q) || name.lowercase().contains(q)
+        }
+    }
+    val fieldColors = settingsFieldColors(overlay)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .background(overlay.card)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("Lights & switches", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            "Checked entities appear in the status list when on, and All Lights Off turns them off. UniFi/device LEDs are off by default.",
+            color = overlay.muted,
+            fontSize = 14.sp,
+        )
+        OutlinedTextField(
+            value = filter,
+            onValueChange = { filter = it },
+            label = { Text("Search lights and switches") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = fieldColors,
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 320.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            filtered.forEach { (id, name) ->
+                val checked = id in selected
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            val next = selected.toMutableSet()
+                            if (checked) next.remove(id) else next.add(id)
+                            viewModel.setMonitoredLights(next.sorted())
+                        }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = checked,
+                        onCheckedChange = { on ->
+                            val next = selected.toMutableSet()
+                            if (on) next.add(id) else next.remove(id)
+                            viewModel.setMonitoredLights(next.sorted())
+                        },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = overlay.text,
+                            uncheckedColor = overlay.muted,
+                        ),
+                    )
+                    Column(Modifier.padding(start = 4.dp)) {
+                        Text(name, color = overlay.text, fontSize = 14.sp)
+                        Text(id, color = overlay.muted, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+        TextButton(onClick = { viewModel.setMonitoredLights(null) }) {
+            Text("Reset to default lights", color = overlay.text)
         }
     }
 }

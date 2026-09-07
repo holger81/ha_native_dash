@@ -53,24 +53,8 @@ object CameraStreams {
         .followRedirects(true)
         .build()
 
-    fun wallPanelCameras(go2rtcUrl: String): List<WidgetNode> = listOf(
-        WidgetNode(
-            type = "camera",
-            name = "Front door",
-            entity = "camera.reolink_video_doorbell_poe_fluent",
-            streamServer = go2rtcUrl,
-            streamName = "frontdoor_sub",
-            muted = true,
-        ),
-        WidgetNode(
-            type = "camera",
-            name = "Garage",
-            entity = "camera.garagefront_2",
-            streamServer = go2rtcUrl,
-            streamName = "garagefront_sub",
-            muted = true,
-        ),
-    )
+    fun wallPanelCameras(go2rtcUrl: String): List<WidgetNode> =
+        dev.holgerendt.hanative.PanelConfig.wallCameras(go2rtcUrl)
 
     fun camerasForPopup(popup: PopupNode, go2rtcUrl: String): List<WidgetNode> {
         val found = popup.cards.flatMap { collectCameras(it) }

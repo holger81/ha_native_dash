@@ -16,6 +16,7 @@ data class DashboardFile(
 
 @Serializable
 data class HomeDashboard(
+    val layout: String = "greatroom",
     val title: String = "Home",
     val people: List<WidgetNode> = emptyList(),
     val header: List<WidgetNode> = emptyList(),
@@ -23,9 +24,15 @@ data class HomeDashboard(
     val calendar: WidgetNode? = null,
     val timeline: WidgetNode? = null,
     val rooms: List<WidgetNode> = emptyList(),
-  @SerialName("person_cameras") val personCameras: PersonCameraOverlayConfig? = null,
+    @SerialName("hero_cameras") val heroCameras: List<WidgetNode> = emptyList(),
+    @SerialName("occupancy_entities") val occupancyEntities: List<String> = emptyList(),
+    val status: WidgetNode? = null,
+    val actions: List<WidgetNode> = emptyList(),
+    @SerialName("person_cameras") val personCameras: PersonCameraOverlayConfig? = null,
     val popups: List<PopupNode> = emptyList(),
-)
+) {
+    val isEntrance: Boolean get() = layout == "entrance"
+}
 
 @Serializable
 data class PersonCameraOverlayConfig(
@@ -118,6 +125,8 @@ data class WidgetNode(
     @SerialName("show_condition") val showCondition: Boolean? = null,
     @SerialName("show_temperature") val showTemperature: Boolean? = null,
     @SerialName("show_low_temperature") val showLowTemperature: Boolean? = null,
+    @SerialName("door_locks") val doorLocks: List<String>? = null,
+    @SerialName("window_covers") val windowCovers: List<String>? = null,
 ) {
     fun columnCount(): Int =
         (columns as? JsonPrimitive)?.intOrNull?.takeIf { it > 0 } ?: 2

@@ -2,6 +2,7 @@ package dev.holgerendt.hanative
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -10,13 +11,16 @@ import android.view.MotionEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import dev.holgerendt.hanative.data.TabletMotionDetector
 import dev.holgerendt.hanative.ui.HaApp
 import dev.holgerendt.hanative.ui.HaViewModel
 import dev.holgerendt.hanative.ui.theme.HaNativeTheme
@@ -25,13 +29,27 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private val viewModel: HaViewModel by viewModels { HaViewModel.factory(application) }
     private var askedStorage = false
+    private var askedCamera = false
+    private var motionDetector: TabletMotionDetector? = null
+    private val cameraPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) startTabletMotion()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         (application as HaNativeApp).screenCapture.attach(this)
         maybeRequestStorage()
+        maybeStartTabletMotion()
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
+        }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.ui.collect { applyScreenBrightness(it.screenAsleep) }
@@ -56,9 +74,12 @@ class MainActivity : ComponentActivity() {
         (application as HaNativeApp).screenCapture.attach(this)
         viewModel.retryRestoreIfNeeded()
         viewModel.onHostResumed()
+        maybeStartTabletMotion()
     }
 
     override fun onDestroy() {
+        motionDetector?.stop()
+        motionDetector = null
         (application as HaNativeApp).screenCapture.detach(this)
         super.onDestroy()
     }
@@ -69,6 +90,29 @@ class MainActivity : ComponentActivity() {
             hideSystemUi()
             applyScreenBrightness(viewModel.ui.value.screenAsleep)
         }
+    }
+
+    private fun maybeStartTabletMotion() {
+        if (!PanelConfig.USE_TABLET_MOTION) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            if (!askedCamera) {
+                askedCamera = true
+                cameraPermission.launch(Manifest.permission.CAMERA)
+            }
+            return
+        }
+        startTabletMotion()
+    }
+
+    private fun startTabletMotion() {
+        if (motionDetector != null) return
+        val detector = TabletMotionDetector(this) { active ->
+            viewModel.onTabletMotion(active)
+        }
+        motionDetector = detector
+        detector.start(this)
     }
 
     private fun maybeRequestStorage() {

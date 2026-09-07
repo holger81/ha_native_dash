@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import dev.holgerendt.hanative.PanelConfig
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -71,6 +72,13 @@ class CredentialsStore(context: Context) {
     var go2rtcUrl: String = readPref(KEY_GO2RTC_URL)
         set(value) {
             field = value.trim().trimEnd('/')
+            persist()
+        }
+
+    /** Null means default (all light.* except screen/segment/led); empty means none. */
+    var monitoredLightEntities: List<String>? = readMonitoredLightsPref()
+        set(value) {
+            field = value?.map { normalizeEntityId(it) }?.filter { it.contains('.') }?.distinct()
             persist()
         }
 
@@ -149,13 +157,13 @@ class CredentialsStore(context: Context) {
         migrateFromLegacy()
         restoreFromDocuments()
         if (!prefs.contains(KEY_DISPLAY_OFF) && displayOffEntityBacking.isBlank()) {
-            displayOffEntityBacking = DEFAULT_DISPLAY_OFF_ENTITY
+            displayOffEntityBacking = PanelConfig.DEFAULT_DISPLAY_OFF_ENTITY
         }
         if (!prefs.contains(KEY_DISPLAY_BRIGHTNESS) && displayBrightnessEntityBacking.isBlank()) {
-            displayBrightnessEntityBacking = DEFAULT_DISPLAY_BRIGHTNESS_ENTITY
+            displayBrightnessEntityBacking = PanelConfig.DEFAULT_DISPLAY_BRIGHTNESS_ENTITY
         }
         if (!prefs.contains(KEY_DISPLAY_ILLUMINANCE) && displayIlluminanceEntityBacking.isBlank()) {
-            displayIlluminanceEntityBacking = DEFAULT_DISPLAY_ILLUMINANCE_ENTITY
+            displayIlluminanceEntityBacking = PanelConfig.DEFAULT_DISPLAY_ILLUMINANCE_ENTITY
         }
         persistEnabled = true
         if (isConfigured || managementPin.isNotBlank()) persist()
@@ -209,6 +217,14 @@ class CredentialsStore(context: Context) {
         }.distinct()
     }
 
+    private fun readMonitoredLightsPref(): List<String>? {
+        val raw = prefs.getString(KEY_MONITORED_LIGHTS, null) ?: return null
+        val arr = runCatching { JSONArray(raw) }.getOrNull() ?: return null
+        return (0 until arr.length()).mapNotNull { index ->
+            arr.optString(index).trim().takeIf { it.contains('.') }
+        }.distinct()
+    }
+
     private fun persist() {
         if (!persistEnabled) return
         val editor = prefs.edit()
@@ -226,6 +242,12 @@ class CredentialsStore(context: Context) {
             editor.putString(KEY_CALENDARS, JSONArray(calendars).toString())
         } else {
             editor.remove(KEY_CALENDARS)
+        }
+        val lights = monitoredLightEntities
+        if (lights != null) {
+            editor.putString(KEY_MONITORED_LIGHTS, JSONArray(lights).toString())
+        } else {
+            editor.remove(KEY_MONITORED_LIGHTS)
         }
         editor.apply()
         persistRecoverable()
@@ -258,6 +280,10 @@ class CredentialsStore(context: Context) {
             if (calendars != null) {
                 put("subscribed_calendars", JSONArray(calendars))
             }
+            val lights = monitoredLightEntities ?: readMonitoredLightList(existing)
+            if (lights != null) {
+                put("monitored_lights", JSONArray(lights))
+            }
         }.toString()
         // Seal with ANDROID_ID-derived AES-GCM so other apps can't read Documents/HA Native.
         val sealed = runCatching {
@@ -271,6 +297,14 @@ class CredentialsStore(context: Context) {
         }
         // Once a seal exists, the legacy plaintext path is closed for good (see readRecoverableObject).
         if (sealed.isSuccess) prefs.edit().putBoolean(KEY_RECOVERY_SEALED, true).apply()
+    }
+
+    private fun readMonitoredLightList(obj: JSONObject?): List<String>? {
+        if (obj == null || !obj.has("monitored_lights") || obj.isNull("monitored_lights")) return null
+        val arr = obj.optJSONArray("monitored_lights") ?: return null
+        return (0 until arr.length()).mapNotNull { index ->
+            arr.optString(index).trim().takeIf { it.contains('.') }
+        }.distinct()
     }
 
     private fun readCalendarList(obj: JSONObject?): List<String>? {
@@ -317,6 +351,9 @@ class CredentialsStore(context: Context) {
         }
         if (subscribedCalendars == null) {
             subscribedCalendars = readCalendarList(obj)
+        }
+        if (monitoredLightEntities == null) {
+            monitoredLightEntities = readMonitoredLightList(obj)
         }
         if (!timeoutFromPrefs) {
             when {
@@ -394,11 +431,12 @@ class CredentialsStore(context: Context) {
         private const val KEY_DISPLAY_ILLUMINANCE = "display_illuminance_entity"
         private const val KEY_MUSIC_PLAYER = "music_player_entity"
         private const val KEY_CALENDARS = "subscribed_calendars"
+        private const val KEY_MONITORED_LIGHTS = "monitored_lights"
         private const val KEY_RECOVERY_SEALED = "recovery_sealed"
         const val MAX_SCREEN_TIMEOUT_SECONDS = 86_400
-        const val DEFAULT_DISPLAY_OFF_ENTITY = "switch.uc_display"
-        const val DEFAULT_DISPLAY_BRIGHTNESS_ENTITY = "number.uc_display_brightness"
-        const val DEFAULT_DISPLAY_ILLUMINANCE_ENTITY = "sensor.secondary_living_room_switch_illuminance"
+        val DEFAULT_DISPLAY_OFF_ENTITY: String get() = PanelConfig.DEFAULT_DISPLAY_OFF_ENTITY
+        val DEFAULT_DISPLAY_BRIGHTNESS_ENTITY: String get() = PanelConfig.DEFAULT_DISPLAY_BRIGHTNESS_ENTITY
+        val DEFAULT_DISPLAY_ILLUMINANCE_ENTITY: String get() = PanelConfig.DEFAULT_DISPLAY_ILLUMINANCE_ENTITY
         private val ENTITY_ID = Regex("^[a-z_]+\\.[a-z0-9_]+$")
 
         fun normalizeEntityId(raw: String): String = raw.trim().lowercase()

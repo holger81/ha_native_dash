@@ -20,10 +20,18 @@ Native Jetpack Compose tablet app that mirrors the Lovelace **greatroom wall** d
 4. Run on a landscape tablet / wall panel (or an emulator).
 
 ```bash
-./gradlew :app:assembleDebug
+./gradlew :app:assembleGreatroomDebug
+./gradlew :app:assembleEntranceDebug
 ```
 
-APK: `app/build/outputs/apk/debug/greatroom-wall-debug.apk`
+APKs:
+
+- Greatroom (UniFi Connect): `app/build/outputs/apk/greatroom/debug/ha-native-greatroom-debug.apk`
+- Entrance (sideload / admin page): `app/build/outputs/apk/entrance/debug/ha-native-entrance-debug.apk`
+
+Always rebuild before installing. Each assemble bumps `versionCode`.
+
+The entrance tablet can take a new APK from the PIN-authenticated HTTPS management page (**Update app**). After upload, tap **Install** once on the wall. Greatroom still uses UniFi Connect.
 
 ## First launch
 
@@ -37,13 +45,13 @@ The management page is **HTTPS only** on port **8765** (no HTTP listener). The p
 
 The management page stays available while the app is running. Open the menu later to see the current URL and PIN if you need to change the token. After you enter the PIN, the same page shows a live screenshot of the wall panel.
 
-On-panel typing is still there as a fallback. URL, token, and a user-set PIN are stored in app SharedPreferences (so Android 10+ **Keep app data** on uninstall works) and also copied to `Documents/HA Native/` so they can be restored even if you do not keep app data. The token is never written to git, logs, or crash reports.
+On-panel typing is still there as a fallback. URL, token, and a user-set PIN are stored in app SharedPreferences (so Android 10+ **Keep app data** on uninstall works) and also copied to `Documents/HA Native/` (greatroom) or `Documents/HA Native Entrance/` (entrance) so they can be restored even if you do not keep app data. The token is never written to git, logs, or crash reports.
 
-On Android 11+, grant **All files access** after a reinstall if you skipped Keep app data, so the app can read `Documents/HA Native/`. On Android 10 and older, allow storage access when prompted.
+On Android 11+, grant **All files access** after a reinstall if you skipped Keep app data, so the app can read that Documents folder. On Android 10 and older, allow storage access when prompted.
 
 Set a lasting PIN from **Settings → Remote setup PIN** (4–8 digits). Until you set one, remote setup uses a generated PIN as before.
 
-The app keeps the screen on and prefers landscape, like the kiosk wall dashboard.
+The app keeps the screen on. Greatroom is a landscape-style wall; entrance is a portrait header plus occupancy/planner layout. Credentials restore from `Documents/HA Native/` (greatroom) or `Documents/HA Native Entrance/` (entrance).
 
 - **Menu** opens Weather / Power / Cars / Vacuum / Camera / Settings, plus the remote-setup PIN
 - **Hold menu** toggles `input_boolean.kiosk_mode_greatroom` (same as the Lovelace hold action)
@@ -101,10 +109,11 @@ rest_command:
 
 Then `action: rest_command.greatroom_wall` with `cmd: camera` (or `navigate` and `path: "#camerafront_view"`). `GET /api/state` with an `X-HA-PIN: PIN` header returns the current popup.
 
-Dashboard layout is generated from `~/Projects/ha_dashboards/greatroom-wall.yaml` into `app/src/main/assets/dashboard.json`. Re-run:
+Dashboard layout is generated from Lovelace YAML into flavor assets. Re-run:
 
 ```bash
-python3 scripts/extract_dashboard.py ~/Projects/ha_dashboards/greatroom-wall.yaml app/src/main/assets/dashboard.json
+python3 scripts/extract_dashboard.py ~/Projects/ha_dashboards/greatroom-wall.yaml app/src/greatroom/assets/dashboard.json
+python3 scripts/extract_dashboard.py ~/Projects/ha_dashboards/entrance-wall.yaml app/src/entrance/assets/dashboard.json
 ```
 
 Site-specific hand-added content (the `#presence` popup with its
