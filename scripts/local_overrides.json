@@ -851,6 +851,24 @@
                 },
                 {
                   "entity_id": "sensor.inverter_*"
+                },
+                {
+                  "entity_id": "sensor.enphase_power_*"
+                },
+                {
+                  "entity_id": "sensor.emporia_vue_3_*_return"
+                },
+                {
+                  "entity_id": "sensor.emporia_vue_3_total_power_return"
+                },
+                {
+                  "entity_id": "sensor.power_production_*"
+                },
+                {
+                  "entity_id": "sensor.encharge_*"
+                },
+                {
+                  "entity_id": "sensor.usw_pro_24_poe_guestroom_port_*"
                 }
               ]
             },

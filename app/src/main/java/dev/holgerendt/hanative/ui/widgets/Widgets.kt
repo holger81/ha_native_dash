@@ -2432,6 +2432,12 @@ private data class AutoEntitiesFilter(
         "sensor.envoy_*",
         "sensor.energy_grid_*",
         "sensor.inverter_*",
+        "sensor.enphase_power_*",
+        "sensor.emporia_vue_3_*_return",
+        "sensor.emporia_vue_3_total_power_return",
+        "sensor.power_production_*",
+        "sensor.encharge_*",
+        "sensor.usw_pro_24_poe_guestroom_port_*",
     ),
 )
 
@@ -2443,6 +2449,119 @@ private data class PowerConsumerItem(
     val formattedValue: String,
     val relativeTime: String?,
 )
+
+private data class ConsumerNode(
+    val item: PowerConsumerItem,
+    val parentItem: PowerConsumerItem? = null,
+    val children: List<ConsumerNode> = emptyList(),
+    val depth: Int = 0,
+)
+
+private val ConsumerParentChildMap: Map<String, String> = mapOf(
+    // Office Circuit (Breaker 1)
+    "sensor.serverplug_power" to "sensor.housepanel_braker_1_vue_1_power_minute_average_2",
+    "sensor.treadmillplug_switch_0_power" to "sensor.housepanel_braker_1_vue_1_power_minute_average_2",
+    // Sub-devices under ServerRack / ServerPlug
+    "sensor.usw_pro_24_poe_guestroom_currentnetworkequipmentpoe_power" to "sensor.serverplug_power",
+    "sensor.usw_pro_24_poe_guestroom_currentcamerapoe_power" to "sensor.serverplug_power",
+    "sensor.usw_pro_24_poe_guestroom_currentsmarthomeequipmentpoe_power" to "sensor.serverplug_power",
+    // Internet Circuit (Vue 6)
+    "sensor.internet_plug_switch_0_power" to "sensor.housepanel_vue_power_minute_average_7",
+    // Sub-device under Internet Plug
+    "sensor.starlink_power" to "sensor.internet_plug_switch_0_power",
+    // Dining & Living Outlets (Vue 14)
+    "sensor.beveragefridge_switch_0_power" to "sensor.housepanel_vue_power_minute_average_15",
+    "sensor.shellyplugus_a0dd6c279bcc_power" to "sensor.housepanel_vue_power_minute_average_15",
+    "sensor.speakerplug_power" to "sensor.housepanel_vue_power_minute_average_15",
+    // Dryer / EV Charger Circuit (Vue 8)
+    "sensor.tankerland_ev_charger_power_minute_average" to "sensor.housepanel_vue_power_minute_average_8",
+    "sensor.model_3_charger_power" to "sensor.tankerland_ev_charger_power_minute_average",
+)
+
+private val DefaultProducerExportPatterns: List<String> = listOf(
+    "*export*",
+    "*return*",
+    "*production*",
+    "sensor.inverter_*",
+    "sensor.envoy_*",
+    "sensor.energy_grid_*",
+    "sensor.encharge_*",
+    "sensor.power_production_*",
+    "sensor.housepanel_total_consumption_*",
+    "sensor.usw_pro_24_poe_guestroom_port_*",
+)
+
+private fun cleanConsumerName(entityId: String, rawName: String): String {
+    return when (entityId) {
+        "sensor.housepanel_braker_1_vue_1_power_minute_average_2" -> "Office Circuit (Breaker 1)"
+        "sensor.housepanel_braker_3_vue_2_refridgerator_power_minute_average_3" -> "Kitchen Refrigerator (Breaker 3)"
+        "sensor.housepanel_vue_power_minute_average_4" -> "Microwave (Breaker 5)"
+        "sensor.housepanel_vue_power_minute_average_5" -> "Vue 4 Circuit"
+        "sensor.housepanel_braker_7b_vue_5_furnace_power_minute_average_6" -> "Furnace & Blower (Breaker 7b)"
+        "sensor.housepanel_vue_power_minute_average_7" -> "Internet Circuit (Vue 6)"
+        "sensor.housepanel_vue_power_minute_average_8" -> "Dryer / EV Charger (Vue 7)"
+        "sensor.housepanel_vue_power_minute_average_9" -> "Vue 8 Circuit"
+        "sensor.housepanel_vue_power_minute_average_10" -> "Air Conditioning (Vue 9)"
+        "sensor.housepanel_vue_power_minute_average_11" -> "Cooktop (Vue 10)"
+        "sensor.housepanel_vue_power_minute_average_12" -> "Oven (Breaker 12 & 14)"
+        "sensor.housepanel_braker_10_vue_12_dishwasher_power_minute_average_13" -> "Dishwasher (Breaker 10)"
+        "sensor.housepanel_vue_power_minute_average_14" -> "Water Heater & Instant Hot Water"
+        "sensor.housepanel_vue_power_minute_average_15" -> "Dining & Living Outlets (Vue 14)"
+        "sensor.housepanel_vue_power_minute_average_16" -> "Vue 15 Circuit"
+        "sensor.housepanel_vue_power_minute_average_17" -> "Kitchen Countertops (Vue 16)"
+        "sensor.balance_power_minute_average" -> "Other Unmonitored Balance"
+        "sensor.serverplug_power" -> "Server Rack (ServerPlug)"
+        "sensor.internet_plug_switch_0_power" -> "Internet Plug"
+        "sensor.beveragefridge_switch_0_power" -> "Beverage Fridge"
+        "sensor.shellyplugus_a0dd6c279bcc_power" -> "Greatroom Media"
+        "sensor.speakerplug_power" -> "Livingroom Speaker"
+        "sensor.starlink_power" -> "Starlink Dish"
+        "sensor.usw_pro_24_poe_guestroom_currentnetworkequipmentpoe_power" -> "Network Equipment PoE"
+        "sensor.usw_pro_24_poe_guestroom_currentcamerapoe_power" -> "Security Cameras PoE"
+        "sensor.usw_pro_24_poe_guestroom_currentsmarthomeequipmentpoe_power" -> "Smart Home PoE"
+        "sensor.networkequipment_garage_switch_0_power" -> "Garage Network Switch"
+        "sensor.treadmillplug_switch_0_power" -> "Treadmill Plug"
+        "sensor.tankerland_ev_charger_power_minute_average" -> "Tesla EV Charger"
+        "sensor.model_3_charger_power" -> "Tesla Model 3"
+        "sensor.entrance_light_power" -> "Entrance Light"
+        "sensor.driveway_power" -> "Driveway Light"
+        "sensor.atticplug_switch_0_power" -> "Attic Plug"
+        else -> rawName
+            .removeSuffix(" Power Minute Average")
+            .removeSuffix(" Power")
+            .removeSuffix(" power")
+            .removePrefix("Housepanel - ")
+    }
+}
+
+private fun consumerIcon(entityId: String, rawIcon: String?): String {
+    if (rawIcon != null && rawIcon.startsWith("mdi:")) return rawIcon
+    return when {
+        entityId.contains("server") -> "mdi:server"
+        entityId.contains("camerapoe") || entityId.contains("camera") -> "mdi:cctv"
+        entityId.contains("networkequipmentpoe") || entityId.contains("router") -> "mdi:router-network"
+        entityId.contains("smarthomeequipmentpoe") -> "mdi:home-automation"
+        entityId.contains("starlink") -> "mdi:satellite-variant"
+        entityId.contains("internet") || entityId.contains("wifi") -> "mdi:wifi"
+        entityId.contains("fridge") || entityId.contains("refridgerator") -> "mdi:fridge"
+        entityId.contains("furnace") || entityId.contains("hvac") -> "mdi:hvac"
+        entityId.contains("dishwasher") -> "mdi:dishwasher"
+        entityId.contains("microwave") -> "mdi:microwave"
+        entityId.contains("oven") || entityId.contains("stove") -> "mdi:stove"
+        entityId.contains("cooktop") -> "mdi:pot-steam"
+        entityId.contains("waterheater") || entityId.contains("boiler") -> "mdi:water-boiler"
+        entityId.contains("ac") || entityId.contains("air_condition") -> "mdi:air-conditioner"
+        entityId.contains("ev_charger") || entityId.contains("charger") || entityId.contains("model_3") -> "mdi:car-electric"
+        entityId.contains("treadmill") -> "mdi:run"
+        entityId.contains("speaker") -> "mdi:speaker"
+        entityId.contains("media") || entityId.contains("tv") -> "mdi:television"
+        entityId.contains("balance") -> "mdi:scale-balance"
+        entityId.contains("light") -> "mdi:lightbulb"
+        entityId.contains("countertop") -> "mdi:countertop"
+        entityId.contains("plug") || entityId.contains("outlet") -> "mdi:power-plug"
+        else -> "mdi:lightning-bolt"
+    }
+}
 
 private fun matchesGlob(id: String, pattern: String): Boolean {
     return when {
@@ -2498,6 +2617,12 @@ private fun parseAutoEntitiesFilter(filterElement: JsonElement?): AutoEntitiesFi
             "sensor.envoy_*",
             "sensor.energy_grid_*",
             "sensor.inverter_*",
+            "sensor.enphase_power_*",
+            "sensor.emporia_vue_3_*_return",
+            "sensor.emporia_vue_3_total_power_return",
+            "sensor.power_production_*",
+            "sensor.encharge_*",
+            "sensor.usw_pro_24_poe_guestroom_port_*",
         ),
     )
 }
@@ -2508,15 +2633,17 @@ fun AutoEntitiesWidget(widget: WidgetNode, viewModel: HaViewModel, modifier: Mod
     val allStates by viewModel.states.collectAsState()
     val filter = remember(widget.filter) { parseAutoEntitiesFilter(widget.filter) }
 
-    val items = remember(allStates, filter) {
+    val (tree, totalWatts) = remember(allStates, filter) {
         val now = Instant.now()
-        allStates.values.asSequence()
+        val allConsumers = allStates.values.asSequence()
             .filter { state ->
                 if (filter.deviceClass != null && state.attrString("device_class") != filter.deviceClass) {
                     return@filter false
                 }
                 val id = state.entityId
-                if (filter.excludeEntityPatterns.any { pattern -> matchesGlob(id, pattern) }) {
+                // Exclude any producer / export / return pattern
+                if (filter.excludeEntityPatterns.any { pattern -> matchesGlob(id, pattern) } ||
+                    DefaultProducerExportPatterns.any { pattern -> matchesGlob(id, pattern) }) {
                     return@filter false
                 }
                 val rawState = state.state
@@ -2524,7 +2651,7 @@ fun AutoEntitiesWidget(widget: WidgetNode, viewModel: HaViewModel, modifier: Mod
                     return@filter false
                 }
                 val num = rawState.toDoubleOrNull() ?: return@filter false
-                if (filter.minState != null && num <= filter.minState) {
+                if (num <= 0 || (filter.minState != null && num <= filter.minState)) {
                     return@filter false
                 }
                 true
@@ -2537,29 +2664,47 @@ fun AutoEntitiesWidget(widget: WidgetNode, viewModel: HaViewModel, modifier: Mod
                 } else {
                     "${String.format(java.util.Locale.US, "%.1f", num)} $unit"
                 }
-                val rawIcon = state.attrString("icon")
-                val icon = when {
-                    rawIcon != null && rawIcon.startsWith("mdi:") -> rawIcon
-                    state.entityId.contains("fridge") -> "mdi:fridge"
-                    state.entityId.contains("light") -> "mdi:lightbulb"
-                    state.entityId.contains("camera") -> "mdi:cctv"
-                    state.entityId.contains("plug") -> "mdi:power-plug"
-                    else -> "mdi:lightning-bolt"
-                }
                 PowerConsumerItem(
                     entityId = state.entityId,
-                    name = state.friendlyName,
-                    icon = icon,
+                    name = cleanConsumerName(state.entityId, state.friendlyName),
+                    icon = consumerIcon(state.entityId, state.attrString("icon")),
                     value = num,
                     formattedValue = formatted,
                     relativeTime = state.lastChanged?.relativeToNow(now),
                 )
             }
-            .sortedByDescending { it.value }
-            .toList()
+            .associateBy { it.entityId }
+
+        // Find child-to-parent mappings where both exist in current active consumers
+        val activeChildToParent = ConsumerParentChildMap.filter { (child, parent) ->
+            child in allConsumers && parent in allConsumers
+        }
+        val parentToChildren = mutableMapOf<String, MutableList<String>>()
+        activeChildToParent.forEach { (child, parent) ->
+            parentToChildren.getOrPut(parent) { mutableListOf() }.add(child)
+        }
+
+        // Roots are consumers that don't have an active parent
+        val rootItems = allConsumers.values.filter { it.entityId !in activeChildToParent }
+
+        fun buildNode(item: PowerConsumerItem, parent: PowerConsumerItem?, depth: Int): ConsumerNode {
+            val childIds = parentToChildren[item.entityId].orEmpty()
+            val childNodes = childIds.mapNotNull { allConsumers[it] }
+                .sortedByDescending { it.value }
+                .map { buildNode(it, item, depth + 1) }
+            return ConsumerNode(item, parent, childNodes, depth)
+        }
+
+        val treeNodes = rootItems.map { buildNode(it, null, 0) }
+            .sortedByDescending { it.item.value }
+
+        // Total power: use housepanel total if available, otherwise sum root items (avoids double-counting!)
+        val total = allStates["sensor.housepanel_total_consumption_power_minute_average"]?.state?.toDoubleOrNull()
+            ?: rootItems.sumOf { it.value }
+
+        treeNodes to total
     }
 
-    val totalWatts = remember(items) { items.sumOf { it.value } }
     val totalText = if (totalWatts >= 1000) {
         String.format(java.util.Locale.US, "%.2f kW", totalWatts / 1000.0)
     } else {
@@ -2580,16 +2725,16 @@ fun AutoEntitiesWidget(widget: WidgetNode, viewModel: HaViewModel, modifier: Mod
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
             )
-            if (items.isNotEmpty()) {
+            if (tree.isNotEmpty()) {
                 Text(
-                    text = "${items.size} devices • $totalText",
+                    text = "${tree.size} circuits • $totalText",
                     color = overlay.muted,
                     fontSize = 13.sp,
                 )
             }
         }
 
-        if (items.isEmpty()) {
+        if (tree.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2605,54 +2750,112 @@ fun AutoEntitiesWidget(widget: WidgetNode, viewModel: HaViewModel, modifier: Mod
                 )
             }
         } else {
-            items.forEach { item ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(overlay.card)
-                        .clickable { viewModel.openMoreInfo(item.entityId) }
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(overlay.well),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        MdiIcon(
-                            name = item.icon,
-                            tint = AccentYellow,
-                            size = 20.dp,
-                        )
+            tree.forEach { node ->
+                ConsumerNodeTree(node = node, viewModel = viewModel)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConsumerNodeTree(
+    node: ConsumerNode,
+    viewModel: HaViewModel,
+) {
+    val overlay = LocalOverlay.current
+    val item = node.item
+    val depth = node.depth
+
+    val indent = when (depth) {
+        0 -> 0.dp
+        1 -> 24.dp
+        else -> 48.dp
+    }
+
+    val background = when (depth) {
+        0 -> overlay.card
+        else -> overlay.well
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = indent)
+                .clip(RoundedCornerShape(if (depth == 0) 14.dp else 12.dp))
+                .background(background)
+                .clickable { viewModel.openMoreInfo(item.entityId) }
+                .padding(horizontal = 14.dp, vertical = if (depth == 0) 10.dp else 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (depth > 0) {
+                MdiIcon(
+                    name = "mdi:subdirectory-arrow-right",
+                    tint = overlay.muted,
+                    size = 18.dp,
+                )
+                Spacer(Modifier.width(8.dp))
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(if (depth == 0) 36.dp else 28.dp)
+                    .clip(CircleShape)
+                    .background(if (depth == 0) overlay.well else overlay.card),
+                contentAlignment = Alignment.Center,
+            ) {
+                MdiIcon(
+                    name = item.icon,
+                    tint = AccentYellow,
+                    size = if (depth == 0) 20.dp else 16.dp,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = item.name,
+                    color = overlay.text,
+                    fontSize = if (depth == 0) 14.sp else 13.sp,
+                    fontWeight = if (depth == 0) FontWeight.Medium else FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val subText = when {
+                    node.parentItem != null && node.parentItem.value > 0 -> {
+                        val pct = (item.value / node.parentItem.value * 100).roundToInt().coerceIn(1, 100)
+                        "$pct% of ${node.parentItem.name}"
                     }
-                    Spacer(Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = item.name,
-                            color = overlay.text,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        if (!item.relativeTime.isNullOrBlank()) {
-                            Text(
-                                text = item.relativeTime,
-                                color = overlay.muted,
-                                fontSize = 12.sp,
-                            )
-                        }
+                    node.children.isNotEmpty() -> {
+                        "${node.children.size} sub-metered ${if (node.children.size == 1) "device" else "devices"}"
                     }
-                    Spacer(Modifier.width(10.dp))
+                    !item.relativeTime.isNullOrBlank() -> item.relativeTime
+                    else -> null
+                }
+                if (subText != null) {
                     Text(
-                        text = item.formattedValue,
-                        color = overlay.text,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        text = subText,
+                        color = overlay.muted,
+                        fontSize = 11.sp,
                     )
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = item.formattedValue,
+                color = overlay.text,
+                fontSize = if (depth == 0) 15.sp else 14.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+
+        if (node.children.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                node.children.forEach { child ->
+                    ConsumerNodeTree(node = child, viewModel = viewModel)
                 }
             }
         }

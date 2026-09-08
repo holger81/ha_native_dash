@@ -1129,6 +1129,24 @@
                         },
                         {
                           "entity_id": "sensor.inverter_*"
+                        },
+                        {
+                          "entity_id": "sensor.enphase_power_*"
+                        },
+                        {
+                          "entity_id": "sensor.emporia_vue_3_*_return"
+                        },
+                        {
+                          "entity_id": "sensor.emporia_vue_3_total_power_return"
+                        },
+                        {
+                          "entity_id": "sensor.power_production_*"
+                        },
+                        {
+                          "entity_id": "sensor.encharge_*"
+                        },
+                        {
+                          "entity_id": "sensor.usw_pro_24_poe_guestroom_port_*"
                         }
                       ]
                     },
@@ -2966,7 +2984,10 @@
     "scene.movie_night",
     "scene.night",
     "sensor.emilias_room_2733_humidity",
+    "sensor.emporia_vue_3_*_return",
+    "sensor.encharge_*",
     "sensor.energy_grid_*",
+    "sensor.enphase_power_*",
     "sensor.envoy_*",
     "sensor.great_room_4afa_humidity",
     "sensor.guestroom_f628_humidity",
@@ -2976,8 +2997,10 @@
     "sensor.main_bathroom_6eca_humidity",
     "sensor.main_bedroom_6671_humidity",
     "sensor.office_abfd_humidity",
+    "sensor.power_production_*",
     "sensor.second_bathroom_8ee5_humidity",
     "sensor.st_00063154_temperature",
+    "sensor.usw_pro_24_poe_guestroom_port_*",
     "switch.coffeemachine",
     "switch.master_bathroom_exhaust_fan",
     "switch.master_bathroom_main_light",
