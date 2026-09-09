@@ -1062,6 +1062,28 @@ def merge_overrides(home: dict, overrides: dict) -> None:
                 chips[i] = chip
                 break
 
+    # Insert or append chips
+    for insert in overrides.get("chip_inserts", []):
+        chip = insert.get("chip")
+        if not chip:
+            continue
+        chips = home.get("chips", {}).get("chips", [])
+        # Deduplicate if chip with same entity already exists
+        chips[:] = [c for c in chips if c.get("entity") != chip.get("entity")]
+        insert_after = insert.get("insert_after_entity")
+        insert_before = insert.get("insert_before_entity")
+        if insert_after:
+            idx = next((i for i, c in enumerate(chips) if c.get("entity") == insert_after), None)
+            if idx is not None:
+                chips.insert(idx + 1, chip)
+                continue
+        if insert_before:
+            idx = next((i for i, c in enumerate(chips) if c.get("entity") == insert_before), None)
+            if idx is not None:
+                chips.insert(idx, chip)
+                continue
+        chips.append(chip)
+
     # Add person_cameras (insert before timeline to match committed key order)
     person_cameras = overrides.get("person_cameras")
     if person_cameras:

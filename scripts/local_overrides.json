@@ -941,5 +941,35 @@
       },
       "insert_before_tab": "Prices"
     }
+  ],
+  "chip_inserts": [
+    {
+      "insert_after_entity": "lock.front_door",
+      "chip": {
+        "type": "status_chip",
+        "name": "Whole House Fan",
+        "icon": "mdi:fan",
+        "entity": "binary_sensor.wholehousefan_running",
+        "layout": "icon|name",
+        "tap": {
+          "type": "call_service",
+          "service": "automation.trigger",
+          "entity_id": "automation.wholehousefan_onoff"
+        },
+        "visibility": {
+          "kind": "state_in",
+          "entity": "binary_sensor.wholehousefan_running",
+          "states": [
+            "on"
+          ]
+        },
+        "state": {
+          "kind": "state",
+          "entity": "binary_sensor.wholehousefan_running"
+        },
+        "emphasize_unlocked": false,
+        "accent": "active"
+      }
+    }
   ]
 }

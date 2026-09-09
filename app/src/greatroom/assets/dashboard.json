@@ -82,6 +82,31 @@
         },
         {
           "type": "status_chip",
+          "name": "Whole House Fan",
+          "icon": "mdi:fan",
+          "entity": "binary_sensor.wholehousefan_running",
+          "layout": "icon|name",
+          "tap": {
+            "type": "call_service",
+            "service": "automation.trigger",
+            "entity_id": "automation.wholehousefan_onoff"
+          },
+          "visibility": {
+            "kind": "state_in",
+            "entity": "binary_sensor.wholehousefan_running",
+            "states": [
+              "on"
+            ]
+          },
+          "state": {
+            "kind": "state",
+            "entity": "binary_sensor.wholehousefan_running"
+          },
+          "emphasize_unlocked": false,
+          "accent": "active"
+        },
+        {
+          "type": "status_chip",
           "name": null,
           "icon": "mdi:face-mask-outline",
           "entity": "sensor.home_outdoor_aqi_5min_mean",
@@ -2978,6 +3003,8 @@
     "switch.volkswagen_id_buzz_charging",
     "vacuum.s8_maxv_ultra",
     "weather.forecast_tankerland_ct",
+    "automation.wholehousefan_onoff",
+    "binary_sensor.wholehousefan_running",
     "light.jonathans_patio_lightswitch",
     "media_player.office",
     "scene.all_off",
