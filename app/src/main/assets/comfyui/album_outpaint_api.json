@@ -1,81 +1,112 @@
 {
   "_meta": {
-    "title": "Album art outpaint (API)",
-    "notes": "Requires a standard SD1.5 checkpoint named below on the ComfyUI box. The app rewrites the LoadImage filename (node 10) after upload. Export/replace this file from ComfyUI File → Export (API) if your node graph differs."
+    "title": "Album art outpaint (Flux fill)",
+    "notes": "API export of the household Flux fill outpaint graph on 192.168.10.31. Requires flux1-fill-dev.safetensors, DualCLIP (clip_l + t5xxl_fp16), and ae.safetensors. The app rewrites the LoadImage node (17) after upload."
   },
-  "4": {
-    "class_type": "CheckpointLoaderSimple",
+  "3": {
     "inputs": {
-      "ckpt_name": "v1-5-pruned-emaonly.safetensors"
-    }
+      "seed": 0,
+      "steps": 20,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1.0,
+      "model": ["39", 0],
+      "positive": ["38", 0],
+      "negative": ["38", 1],
+      "latent_image": ["38", 2]
+    },
+    "class_type": "KSampler"
   },
-  "10": {
-    "class_type": "LoadImage",
+  "8": {
+    "inputs": {
+      "samples": ["3", 0],
+      "vae": ["32", 0]
+    },
+    "class_type": "VAEDecode"
+  },
+  "9": {
+    "inputs": {
+      "filename_prefix": "ha_album_outpaint",
+      "images": ["8", 0]
+    },
+    "class_type": "SaveImage"
+  },
+  "17": {
     "inputs": {
       "image": "PLACEHOLDER_COVER.png"
-    }
+    },
+    "class_type": "LoadImage"
   },
-  "12": {
-    "class_type": "ImagePadForOutpaint",
+  "23": {
     "inputs": {
-      "image": ["10", 0],
+      "text": "album artwork, seamless extended atmosphere, matching colors and texture, soft background, no text, no logos, no watermark",
+      "clip": ["34", 0]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "26": {
+    "inputs": {
+      "guidance": 30.0,
+      "conditioning": ["23", 0]
+    },
+    "class_type": "FluxGuidance"
+  },
+  "31": {
+    "inputs": {
+      "unet_name": "flux1-fill-dev.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader"
+  },
+  "32": {
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    },
+    "class_type": "VAELoader"
+  },
+  "34": {
+    "inputs": {
+      "clip_name1": "clip_l.safetensors",
+      "clip_name2": "t5xxl_fp16.safetensors",
+      "type": "flux",
+      "device": "default"
+    },
+    "class_type": "DualCLIPLoader"
+  },
+  "38": {
+    "inputs": {
+      "noise_mask": false,
+      "positive": ["26", 0],
+      "negative": ["46", 0],
+      "vae": ["32", 0],
+      "pixels": ["44", 0],
+      "mask": ["44", 1]
+    },
+    "class_type": "InpaintModelConditioning"
+  },
+  "39": {
+    "inputs": {
+      "strength": 1.0,
+      "model": ["31", 0]
+    },
+    "class_type": "DifferentialDiffusion"
+  },
+  "44": {
+    "inputs": {
       "left": 256,
       "top": 128,
       "right": 256,
       "bottom": 128,
-      "feathering": 40
-    }
+      "feathering": 40,
+      "image": ["17", 0]
+    },
+    "class_type": "ImagePadForOutpaint"
   },
-  "6": {
-    "class_type": "CLIPTextEncode",
+  "46": {
     "inputs": {
-      "text": "album artwork, seamless extended background, soft atmosphere, matching colors, no text, no logos",
-      "clip": ["4", 1]
-    }
-  },
-  "7": {
-    "class_type": "CLIPTextEncode",
-    "inputs": {
-      "text": "blurry, low quality, watermark, text, logo, border, frame, cropped, cut off",
-      "clip": ["4", 1]
-    }
-  },
-  "11": {
-    "class_type": "VAEEncodeForInpaint",
-    "inputs": {
-      "pixels": ["12", 0],
-      "vae": ["4", 2],
-      "mask": ["12", 1],
-      "grow_mask_by": 6
-    }
-  },
-  "3": {
-    "class_type": "KSampler",
-    "inputs": {
-      "seed": 0,
-      "steps": 20,
-      "cfg": 7,
-      "sampler_name": "euler",
-      "scheduler": "normal",
-      "denoise": 1,
-      "model": ["4", 0],
-      "positive": ["6", 0],
-      "negative": ["7", 0],
-      "latent_image": ["11", 0]
-    }
-  },
-  "8": {
-    "class_type": "VAEDecode",
-    "inputs": {
-      "samples": ["3", 0],
-      "vae": ["4", 2]
-    }
-  },
-  "9": {
-    "class_type": "SaveImage",
-    "inputs": {
-      "filename_prefix": "ha_album_outpaint",
-      "images": ["8", 0]
-    }
+      "conditioning": ["23", 0]
+    },
+    "class_type": "ConditioningZeroOut"
   }
 }

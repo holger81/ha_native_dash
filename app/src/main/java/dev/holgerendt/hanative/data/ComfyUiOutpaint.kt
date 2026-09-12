@@ -28,8 +28,8 @@ import kotlin.coroutines.coroutineContext
  * Calls a LAN ComfyUI instance to outpaint album art via the HTTP API.
  * Blank / unreachable hosts return null; callers keep the local soft treatment.
  *
- * ComfyUI box must have the checkpoint/nodes referenced by
- * `assets/comfyui/album_outpaint_api.json`.
+ * ComfyUI box must have the models/nodes referenced by
+ * `assets/comfyui/album_outpaint_api.json` (Flux fill outpaint by default).
  */
 class ComfyUiOutpaintClient(
     private val workflowLoader: () -> String,
@@ -216,7 +216,7 @@ class ComfyUiOutpaintClient(
 
     companion object {
         const val WORKFLOW_ASSET = "comfyui/album_outpaint_api.json"
-        private const val LOAD_IMAGE_NODE_ID = "10"
+        private const val LOAD_IMAGE_NODE_ID = "17"
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
