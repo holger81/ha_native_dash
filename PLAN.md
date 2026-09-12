@@ -18,9 +18,10 @@ panel; low ROI / risk). Notable work landed outside the original numbered items:
 - NetworkGuard: LAN hostname DNS resolution for private-host policy.
 - Management PIN sync; credential sealing (see 1.3); WS batching (see 2.3).
 
-**Design addition (2026-09-12):** Phase 6 below describes the proposed
-Greatroom Wall media and live-activity layout. It is not implemented and is
-separate from the older Phase 4 UX items marked won't-implement.
+**Design addition (2026-09-12):** Phase 6 layout/media plumbing is implemented.
+Follow-up R1–R10 are implemented in source (see Phase 6 follow-up section).
+Visual acceptance (emulator/wall screenshots, Compose bounds) remains open.
+This is separate from the older Phase 4 UX items marked won't-implement.
 
 ## Phase 1 — Reliability & security
 
@@ -704,6 +705,15 @@ confirm sizing on the real panel.
 
 ### Home layout and media states
 
+- [x] **Idle visibility update (2026-09-12):** hide the Greatroom home media
+  area after 60 continuous seconds without playback, including paused media.
+  This supersedes the earlier indefinitely visible paused/Listen states below.
+  Playback restores the card immediately; the dock still opens the full player
+  while the home card is hidden. The view-model-owned timer survives camera
+  layout transitions and is not reset by metadata refreshes. Existing camera
+  priority and Entrance Wall behavior remain unchanged. Visibility timing has
+  focused virtual-time tests in `HomeMediaVisibilityTest`.
+
 - [x] Retain the presence/weather header, status chips, and bottom dock.
   Compact the home calendar to one five-day row, with access to the remaining
   planner dates and existing calendar actions. Avoid the current large gaps
@@ -812,6 +822,262 @@ unchanged.
 - [ ] Verify activation while asleep, renewed detection during cooldown,
   15-second all-clear restoration, timeline refresh, and the separate doorbell
   popup. Confirm Entrance Wall is visually and behaviorally unchanged.
+
+### Phase 6 follow-up — implementation design review (2026-09-12)
+
+Reviewed implementation: `4ef3602` (layout/media), plus `44b3c23` (outpainting).
+The checked Phase 6 boxes above record the initial implementation, **not visual
+sign-off**. The open tasks below supersede any conflicting completion claim.
+All paths in this section are relative to `app/src/main/java/dev/holgerendt/hanative/`
+unless stated otherwise. These tasks are scoped to **Greatroom Wall only**.
+
+**Rendered evidence:** rebuilt and installed Greatroom debug **1.0.175** on
+`emulator-5554`, verified 1080×1920 / 160 dpi. Initial entity loading recovered;
+the connected paused-music and three-camera preview states were inspected.
+Screenshots relative to repository root:
+`docs/design-review/2026-09-12/paused-music.png` and
+`docs/design-review/2026-09-12/three-cameras.png`. Camera preview was temporarily
+enabled using the app's Debug switch and restored off afterward; household
+playback and occupancy sensors were not changed. TV, actively advancing music,
+loaded idle favorites, one/two-camera states, ComfyUI output, and physical-wall
+readability remain unverified. Findings for those states are source-based.
+The fresh build's paused card visibly occupies about 520×520 px, with its
+controls concentrated in the upper half and a large dark-gray empty lower half.
+The three-camera state fits comfortably, but labels and compact controls are
+small; spare space is not a reason to add more widgets. Room bounds in both
+captures visually match at x=16..536 and y=351..1269, including the original
+146/224 px heights. Automated Compose-bound comparison remains outstanding.
+
+**Preserve:** `RoomGrid` dimensions, spans, ordering, 8 dp gaps, the 50/50 split,
+home side margins, fixed room placement across media/camera states, dock,
+camera detection/wake/cooldown behavior, and Entrance Wall. Do not reproduce the
+generated mockups' resized/equalized room tiles. Improve the right column rather
+than expanding it or scaling the entire dashboard.
+
+**Code status (2026-09-12):** R1–R10 implemented in source; unit tests cover the
+home media resolver and presence labels. Visual Accept items below and the
+handoff screenshot checklist remain open until a fresh Greatroom install is
+reviewed on emulator/wall.
+
+#### 6.R1 — P1: make the artwork background light and subordinate
+
+- [x] **Evidence:** `ui/OutpaintedAlbumBackdrop.kt::fadeEdgesToNeutral` fades to
+  near-black (`0xCC1A1A1A`, `0xF21A1A1A`), while `FullMusicCard`/`FullTvCard`
+  use dark text. The local image remains underneath the outpaint image, with
+  separate 0.55 and 0.7 alpha layers. This is not the intended gentle fade into
+  a light card and can make titles/controls difficult to read.
+  The rendered paused card confirms both low-contrast darkening and a large
+  empty lower half. Background `AsyncImage` children currently participate in
+  `Box` measurement via `fillMaxSize`; inspect this as the likely cause of the
+  unintended square allocation. Make decorative layers use `matchParentSize`
+  within a Box scope (or an equivalent non-measuring layer) so the foreground
+  layout determines card height. Verify with and without loaded art.
+  **Implement:** fade toward the actual light card surface, with an effectively
+  opaque neutral region behind text and controls. Use one visible atmosphere
+  source at a time (local fallback or outpaint result) and crossfade between
+  them; do not accumulate two darkening image layers. Start with roughly
+  15–25% visible image contribution outside the crisp artwork. Keep sharp cover
+  independent of the atmospheric layer. Provide a softened fallback on API
+  levels below 31 too, where `Modifier.blur` currently does nothing.
+  **Accept:** bright, dark, and highly patterned artwork remain subtle; title,
+  metadata, and controls retain readable contrast before/after outpaint arrives.
+  Missing/failed artwork leaves a clean neutral card; idle/compact modes have
+  no atmospheric background. Do not redesign the ComfyUI service for this task.
+  **Done in code:** light `CardLight` fade, single Crossfade atmosphere layer,
+  `matchParentSize`, soft pre-S fallback via desaturate/alpha.
+
+#### 6.R2 — P1: give the full player wall-display proportions
+
+- [x] **Evidence:** `ui/HomeMediaArea.kt::FullMusicCard` uses a 96 dp cover,
+  18 sp title, and 12 sp room label; `FullTvCard` repeats the square 96 dp art.
+  The full presentation is still closer to a small transport card than the
+  agreed visually prominent player. `CompactMediaStrip` uses 44 dp art, 14 sp
+  title, and a 40 dp pause target.
+  **Implement:** keep the 520 dp right column. For the no-camera music card,
+  start with 180–210 dp square artwork, 28–32 sp title (up to two lines),
+  16–18 sp secondary text, and a 56–64 dp primary transport target. Budget
+  approximately 450–550 dp total height, using a deliberate vertical layout
+  and 16–20 dp internal padding. Keep the compact strip around 80–100 dp tall,
+  with 52–64 dp art, 18–20 sp title, and at least a 48 dp pause target; do not
+  add its full progress/volume controls back. Use neutral high-contrast text
+  for Paused/Browse/View history instead of yellow text on light surfaces.
+  Add button roles and action-specific accessibility labels to icon controls.
+  **Accept:** content is readable at normal wall-use distance; long titles
+  truncate intentionally without covering transport. All media variants fit
+  their right-column budget and do not change any room tile bounds.
+  **Done in code:** ~196 dp cover / 30 sp title / 60 dp transport; 88 dp strip;
+  a11y labels; View history uses dark text.
+
+#### 6.R3 — P1: display the active source and control that same source
+
+- [x] **Evidence:** `HomeMediaArea` observes only `wall.selectedEntityId` for
+  music; `MusicWallRefresher` keeps a saved player selected even if another
+  player is playing. `resolveHomeMedia` also ignores MASS playback-state
+  fallbacks already used in `MusicAssistantPopup`. An active household session
+  can therefore appear idle. Displaying Apple TV through the music-selected
+  entity can also classify the same device as music. The room label currently
+  uses only the selected player's name, not its actual group.
+  **Implement:** resolve the home presentation from eligible current music
+  sessions plus Apple TV, deduplicating Apple TV from music candidates. Reuse
+  the existing queue/player state fallbacks. Keep a stable winner when states
+  conflict briefly; do not rotate cards. Keep browsing selection separate from
+  the home active-session choice. Resolve metadata/queue and transport/volume
+  targets from the same selected home session; never show one room while
+  controlling another. Show actual playing room/group names in readable form.
+  **Accept:** saved idle player A + playing player B shows and controls B;
+  Apple TV shows only one TV card; playing beats paused; MASS-only playing
+  updates are represented; stopping/pausing returns the expected presentation.
+  Add focused resolver tests for these cases before connecting the UI.
+  **Done in code:** `resolveHomeMediaSession` + `homeMediaCommand` /
+  `homeMediaSetVolume`; group room labels; resolver unit tests.
+
+#### 6.R4 — P2: make idle content truthful and usable
+
+- [x] **Evidence:** `IdleListenCard` receives `discovery.recentlyPlayed.take(3)`
+  but labels it Favorites. Its resume condition checks for paused entities,
+  although paused entities with titles resolve to full cards first; a real
+  idle last-session resume is not implemented. Browse opens `#music` without
+  explicitly choosing Discover. Item failures/player-selection errors live in
+  discovery state and are not surfaced by this home card.
+  **Implement:** label the existing data Recently played, or supply genuine
+  favorites if available. Prefer a compact row of up to three 80–100 dp covers
+  with readable labels to the current tiny list thumbnails; keep this card
+  smaller than the full player. Show the playback destination before launching.
+  Browse should open Discover directly. Implement Resume last session only
+  when a usable retained queue and destination are known; do not turn paused
+  media into idle merely to expose this action. Show local launch/loading/error
+  feedback, and route items that require browsing into the visible popup.
+  **Accept:** no-data idle still has a clear browse action; no fake Favorites,
+  dead Resume, or silently failing launch buttons. Paused media stays paused
+  in its full card. No sample mockup titles or covers are shipped as content.
+  **Done in code:** Recently played row, Discover via Browse, destination +
+  discovery errors; no fake Resume.
+
+#### 6.R5 — P2: give TV correct framing and capability-aware controls
+
+- [x] **Evidence:** `FullTvCard` crops show art into a square and omits episode
+  fields/progress. Rewind/fast-forward icons call previous/next-track services,
+  which are different operations; support is not checked. Remaining time is
+  computed only while resolving the snapshot, so it can remain stale between
+  entity updates. The music bar renders a zero track for unknown duration.
+  **Implement:** provide a landscape artwork treatment that preserves meaningful
+  TV image composition, with a restrained fallback if art is missing. Add
+  series/season/episode data only when supplied. Show only supported controls;
+  do not label previous/next as seek. Use a small shared progress/time component
+  for both media types, clamped to valid duration, frozen while paused, and
+  omitted when timing is unknown (or labelled Live only when known to be live).
+  Confine the timer to this component rather than recomposing full artwork every
+  second. Use a TV fallback icon in compact TV mode.
+  **Accept:** unsupported actions are absent; episode metadata never appears
+  invented; timestamps advance while playing, stop while paused, and never
+  exceed duration. Unknown timing produces no misleading empty progress bar.
+  **Done in code:** 16:9 TV art, play/pause only, shared `MediaProgressRow`,
+  compact TV icon fallback.
+
+#### 6.R6 — P2: make camera labels and live status trustworthy
+
+- [x] **Evidence:** `ui/widgets/CameraPlayer.kt::CameraTitle` draws 14 sp white
+  text directly over footage with no contrast protection; the home heading is
+  16 sp and has no active count. There is no visible distinction between live
+  video and the poster shown while loading/reconnecting.
+  **Implement:** add Greatroom home-specific captions/status outside the 16:9
+  frame (or on a contrast-protected caption area). Use a readable camera name
+  and textual Connecting/Live/Reconnecting/Unavailable state driven by actual
+  stream readiness, not just a positive occupancy sensor. Add an active camera
+  count to Backyard activity. Keep one full-width stream, two vertically stacked,
+  and three in the existing 2×2 arrangement; do not alter the existing image
+  fit/crop contract, hide feeds, or auto-cycle them.
+  **Accept:** labels are readable over bright footage, frozen posters are not
+  falsely labelled Live, and all active feeds remain visible above the dock.
+  Captions do not shrink the 16:9 image or affect other camera popup layouts.
+  **Done in code:** `homeCaptions` under-frame labels + status; heading includes
+  count. Popup overlay titles unchanged.
+
+#### 6.R7 — P2: keep history from crowding the camera state
+
+- [x] **Evidence:** `ui/HaApp.kt::HomeScreen` expands View history inline in the
+  same globally scrolling home column. The expanded state persists when camera
+  count changes from two to three. The non-camera layout also always requests
+  all five timeline entries with only 8 dp between major sections.
+  **Implement:** open complete history in a separate overlay/detail view with
+  its own scrolling; keep home previews bounded. Show two or three normal-state
+  recent events, one with one/two active cameras, and no preview with three.
+  Use 16–24 dp between major right-column sections, while leaving the room-grid
+  gaps exactly 8 dp. If a viewport budget is tight, remove optional history
+  previews first, then idle shortcuts; never shrink rooms or hide active feeds.
+  **Accept:** View history cannot leave home scrolled away from its live cameras
+  after dismissal; 1→2→3 camera transitions keep feeds and compact transport
+  above the dock and preserve room positions. No filler cards occupy spare space.
+  **Done in code:** history overlay; 3/1/0 preview rules; 18 dp right-column
+  spacing.
+
+#### 6.R8 — P2: bound the calendar height on busy days
+
+- [x] **Evidence:** `ui/widgets/Widgets.kt::weekPlannerDayMinHeight` sets a
+  minimum only; `CalendarDay` renders every event. One busy day can still grow
+  the entire calendar row and push rooms/cameras below the usable viewport.
+  **Implement:** give the Greatroom five-day home preview a bounded event area,
+  showing a small number of events and a '+N more' action into the complete
+  day/planner view. Preserve create/edit access and remaining-date navigation.
+  Choose a stable height that accommodates the normal header and event preview;
+  do not tie it to media state. Keep Entrance behavior unchanged.
+  **Accept:** zero, one, and ten events on a day keep the mosaic's top position
+  stable; all events remain reachable, and camera-priority layouts still fit.
+  **Done in code:** Greatroom ≤5-day preview shows 2 events + "+N more" day
+  overlay; day `heightIn` max 200 dp. Entrance unchanged.
+
+#### 6.R9 — P3: clean up the presence label
+
+- [x] **Evidence:** `ui/widgets/Widgets.kt::PersonCard` concatenates the home
+  sensor's numeric value with `min`, producing labels such as `47558min`.
+  **Implement:** confirm the sensor's unit/meaning, show Home/Away or the known
+  location on the Greatroom header, and format useful elapsed duration in
+  minutes/hours/days in detail rather than exposing raw long numbers.
+  **Accept:** unavailable/unknown and long absences produce a compact readable
+  label; person navigation and Entrance presentation are preserved.
+  **Done in code:** `Home` / `Away · 33d` / place+duration; unit tests.
+
+#### 6.R10 — P2: rebalance the vertical placement without resizing rooms
+
+- [x] **User feedback:** the implemented dashboard is pushed too far toward
+  the top. In the connected screenshots the room mosaic starts near y=351
+  and ends near y=1269, while the dock starts near y=1840. Calendar compaction
+  left an excessive empty band below the main content.
+  **Implement:** introduce a Greatroom-only, viewport-aware separation between
+  calendar and main content. Start by testing an additional 100–140 dp on the
+  1080×1920/160-dpi target, then visually tune against the normal and two-camera
+  layouts. This is a design starting point, not a fixed value for every viewport.
+  Preserve every room's existing size, spans, and internal spacing. Move the
+  room mosaic and right column together. Keep the chosen offset stable across
+  idle, hidden-after-60-seconds, music, TV, and 1/2/3-camera states; do not center
+  each state's content independently or stretch room tiles. Fit within the
+  viewport budget after bounded-calendar and dock clearance are accounted for.
+  **Accept:** reduced impression of a crowded top and abandoned lower half,
+  comfortable separation from calendar, no camera/dock overlap, no required
+  home scrolling, and identical room positions across state transitions.
+  **Done in code:** fixed +120 dp spacer after calendar (rooms unchanged).
+
+#### Handoff execution
+
+Implement R1–R3 first, then R4–R8 and R10 together for the viewport budget,
+then R9. Keep source selection/progress logic
+separate from presentational changes where practical. Before changing a task,
+read its named functions and the original Phase 6 invariants. Mark it complete
+only with the specified acceptance evidence; do not infer visual success from
+a successful build alone. No new redesign of rooms, Entrance, or camera lifecycle.
+
+- [ ] Rebuild/install the current Greatroom debug APK on the emulator before
+  collecting screenshots; record version and display size/density. Do not use
+  the earlier running two-row-calendar build as evidence for the new UI.
+- [ ] Use deterministic local preview data for music/TV/paused/missing metadata
+  and camera-count variants where live states are unavailable. Do not change
+  household playback or fake production occupancy sensors just to take pictures.
+  Existing Settings → Preview backyard cameras can exercise all three feeds;
+  restore its previous value afterward.
+- [ ] Save before/after screenshots and verify actual Compose bounds for rooms
+  at 1080×1920/160 dpi. Review bright/dark art, long names, unknown duration,
+  zero/three recent items, busy calendar, and 0/1/2/3 cameras with media/idle.
+  Test contrast and touch targets on the physical wall before final sign-off.
 
 ## Verification
 

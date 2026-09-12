@@ -177,6 +177,7 @@ class HaViewModel(
         context = app,
         haClient = client,
         comfyUiUrl = { credentials.comfyUiUrl },
+        scope = viewModelScope,
     )
 
     val states: StateFlow<Map<String, EntityState>> = client.states
@@ -259,6 +260,7 @@ class HaViewModel(
 
     private val _activePersonCameras = MutableStateFlow<List<WidgetNode>>(emptyList())
     val activePersonCameras: StateFlow<List<WidgetNode>> = _activePersonCameras
+    internal val homeMediaVisibility = HomeMediaVisibility(viewModelScope)
     private val _debugPersonCamerasEnabled = MutableStateFlow(false)
     val debugPersonCamerasEnabled: StateFlow<Boolean> = _debugPersonCamerasEnabled
     private var personCameraCooldownJob: Job? = null
@@ -1027,6 +1029,25 @@ class HaViewModel(
         }
     }
 
+    /** Home media card: transport the displayed session without changing browse selection. */
+    fun homeMediaCommand(entityId: String, service: String) {
+        val id = CredentialsStore.normalizeEntityId(entityId)
+        if (id.isBlank()) return
+        viewModelScope.launch {
+            runCatching { client.mediaPlayerCommand(id, service) }
+            refreshMusicQueueSoon()
+        }
+    }
+
+    /** Home media card: volume for the displayed session entity. */
+    fun homeMediaSetVolume(entityId: String, level: Float) {
+        val id = CredentialsStore.normalizeEntityId(entityId)
+        if (id.isBlank()) return
+        viewModelScope.launch {
+            runCatching { client.setMediaVolume(id, level.coerceIn(0f, 1f)) }
+        }
+    }
+
     /**
      * Lightweight home-screen music/TV freshness for Phase 6 media card.
      * Ref-counted so compact + full instances (or recompositions) don't stack jobs.
@@ -1047,6 +1068,7 @@ class HaViewModel(
                 if (_ui.value.popupHash != "#music") {
                     refreshMusicWall(forcePlayers = tick % 8 == 0)
                 }
+                scheduleAlbumArtOutpaintPrefetch()
                 if (tick > 0 && tick % 30 == 0) {
                     loadMusicDiscovery()
                 }
@@ -1061,6 +1083,46 @@ class HaViewModel(
         if (homeMediaWatchUsers == 0) {
             homeMediaWatchJob?.cancel()
             homeMediaWatchJob = null
+        }
+    }
+
+    /**
+     * Prefer outpainting upcoming queue covers (+1…+5); backfill the now-playing
+     * cover only after those are cached (Flux jobs are ~1–2+ minutes).
+     * Runs for the selected player's queue even when playback is idle so the
+     * next-up row is warm before play resumes.
+     */
+    fun scheduleAlbumArtOutpaintPrefetch(currentCoverOverride: String? = null) {
+        if (credentials.comfyUiUrl.isBlank()) return
+        val wall = _musicWall.value
+        val queue = wall.queue
+        val musicId = wall.selectedEntityId
+        val selectedPlayer = wall.players.firstOrNull { it.entityId == musicId }
+        val entityArt = musicId?.let { client.state(it)?.entityPicture }
+        val current = currentCoverOverride
+            ?: entityArt
+            ?: queue?.current?.imageUrl
+        viewModelScope.launch(Dispatchers.IO) {
+            val upcoming = linkedSetOf<String>()
+            queue?.next?.imageUrl?.takeIf { it.isNotBlank() }?.let { upcoming.add(it) }
+            val queueId = queue?.queueId
+                ?: selectedPlayer?.massPlayerId
+                ?: musicId?.removePrefix("media_player.")
+            if (!queueId.isNullOrBlank()) {
+                runCatching {
+                    client.musicAssistantUpcomingCoverUrls(
+                        queueId = queueId,
+                        currentIndex = queue?.currentIndex,
+                        limit = AlbumArtOutpaintRepository.MAX_UPCOMING,
+                    )
+                }.getOrDefault(emptyList()).forEach { upcoming.add(it) }
+            }
+            // Idle or playing: still enqueue upcoming covers so ComfyUI warms them.
+            if (current.isNullOrBlank() && upcoming.isEmpty()) return@launch
+            albumArtOutpaint.setTargets(
+                currentCover = current,
+                upcomingCovers = upcoming.toList(),
+            )
         }
     }
 

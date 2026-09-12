@@ -295,14 +295,15 @@ private fun HomeScreen(viewModel: HaViewModel) {
             Spacer(Modifier.height(24.dp))
             WeekPlanner(it, viewModel, Modifier.fillMaxWidth())
         }
-        Spacer(Modifier.height(12.dp))
+        // Phase 6.R10: Greatroom-only calendar→mosaic gap (stable across media/camera states).
+        Spacer(Modifier.height(120.dp))
         // Lovelace `(min-width: 1024px)`: 50% rooms | 50% media + activity.
         // Phase 6: media at top when idle cameras; backyard streams take priority when active.
         val activePersonCameras by viewModel.activePersonCameras.collectAsState()
-        var timelineExpanded by remember { mutableStateOf(false) }
+        var showHistoryOverlay by remember { mutableStateOf(false) }
         val camerasActive = activePersonCameras.isNotEmpty()
         LaunchedEffect(camerasActive) {
-            if (!camerasActive) timelineExpanded = false
+            if (!camerasActive) showHistoryOverlay = false
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -312,13 +313,14 @@ private fun HomeScreen(viewModel: HaViewModel) {
             RoomGrid(home.rooms, viewModel, Modifier.weight(1f))
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
                 if (camerasActive) {
+                    val cameraCount = activePersonCameras.size
                     Text(
-                        "Backyard activity",
+                        "Backyard activity · $cameraCount",
                         color = TextDark,
-                        fontSize = 16.sp,
+                        fontSize = 18.sp,
                         fontWeight = FontWeight.Medium,
                     )
                     PersonCameraOverlay(
@@ -334,26 +336,14 @@ private fun HomeScreen(viewModel: HaViewModel) {
                     )
                     home.timeline?.let { timeline ->
                         when {
-                            timelineExpanded -> {
-                                VisionTimeline(timeline, viewModel, Modifier.fillMaxWidth())
-                                Text(
-                                    "Hide history",
-                                    color = ActiveYellow,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier
-                                        .clickable { timelineExpanded = false }
-                                        .padding(vertical = 4.dp),
-                                )
-                            }
-                            activePersonCameras.size >= 3 -> {
+                            cameraCount >= 3 -> {
                                 Text(
                                     "View history",
-                                    color = ActiveYellow,
+                                    color = TextDark,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     modifier = Modifier
-                                        .clickable { timelineExpanded = true }
+                                        .clickable { showHistoryOverlay = true }
                                         .padding(vertical = 4.dp),
                                 )
                             }
@@ -367,11 +357,11 @@ private fun HomeScreen(viewModel: HaViewModel) {
                                 )
                                 Text(
                                     "View history",
-                                    color = ActiveYellow,
+                                    color = TextDark,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     modifier = Modifier
-                                        .clickable { timelineExpanded = true }
+                                        .clickable { showHistoryOverlay = true }
                                         .padding(vertical = 4.dp),
                                 )
                             }
@@ -384,7 +374,65 @@ private fun HomeScreen(viewModel: HaViewModel) {
                         modifier = Modifier.fillMaxWidth(),
                     )
                     home.timeline?.let {
-                        VisionTimeline(it, viewModel, Modifier.fillMaxWidth())
+                        VisionTimeline(
+                            widget = it,
+                            viewModel = viewModel,
+                            modifier = Modifier.fillMaxWidth(),
+                            maxEvents = 3,
+                        )
+                    }
+                }
+            }
+        }
+        if (showHistoryOverlay) {
+            home.timeline?.let { timeline ->
+                InWindowOverlay(
+                    onDismiss = { showHistoryOverlay = false },
+                    dismissOnScrim = true,
+                    scrim = PopupScrim,
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth(0.94f)
+                            .fillMaxHeight(0.82f)
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(CardLight)
+                            .padding(16.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "History",
+                                color = TextDark,
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                "Close",
+                                color = TextDark,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier
+                                    .clickable { showHistoryOverlay = false }
+                                    .padding(8.dp),
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState()),
+                        ) {
+                            VisionTimeline(
+                                widget = timeline,
+                                viewModel = viewModel,
+                                modifier = Modifier.fillMaxWidth(),
+                                showTitle = false,
+                            )
+                        }
                     }
                 }
             }

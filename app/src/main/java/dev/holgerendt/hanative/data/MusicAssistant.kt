@@ -246,7 +246,7 @@ fun matchMassPlayerInfo(haName: String, massPlayers: List<MassPlayerInfo>): Mass
     }
 }
 
-private fun parseQueueItem(element: JsonElement?): MusicAssistantQueueItem? {
+internal fun parseQueueItem(element: JsonElement?): MusicAssistantQueueItem? {
     val obj = element as? JsonObject ?: return null
     val media = obj["media_item"] as? JsonObject
     val artists = (media?.get("artists") as? JsonArray)

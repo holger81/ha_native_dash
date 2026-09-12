@@ -1,43 +1,139 @@
 package dev.holgerendt.hanative.data
 
 import android.content.Context
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Resolves cover art, checks the on-disk outpaint cache, and optionally queues ComfyUI.
- * Never throws for network/Comfy failures — returns null so UI keeps the soft local treatment.
+ *
+ * Generation priority (one ComfyUI job at a time):
+ * 1. Upcoming covers (playlist +1 … +5)
+ * 2. Current cover backfill — only after upcoming are cached or absent
+ *
+ * Never throws for network/Comfy failures — returns null so UI keeps soft local treatment.
  */
 class AlbumArtOutpaintRepository(
     context: Context,
     private val haClient: HaClient,
     private val comfyUiUrl: () -> String,
+    private val scope: CoroutineScope,
     private val cache: AlbumArtOutpaintCache = AlbumArtOutpaintCache(
         File(context.applicationContext.filesDir, AlbumArtOutpaintCache.DIR_NAME),
     ),
     private val comfy: ComfyUiOutpaintClient = ComfyUiOutpaintClient(context.applicationContext.assets),
     private val imageHttp: OkHttpClient = imageFetchClient(),
 ) {
-    suspend fun getOutpaintedFile(coverRef: String?): File? {
-        val base = comfyUiUrl().trim().trimEnd('/')
-        if (base.isBlank() || coverRef.isNullOrBlank()) return null
-        val source = fetchCoverBytes(coverRef) ?: return null
-        return cache.getOrEnqueue(source) { bytes ->
-            comfy.outpaint(base, bytes)
-        }
+    private val workerMutex = Mutex()
+    private val targets = AtomicReference(OutpaintTargets())
+    private var workerJob: Job? = null
+
+    /**
+     * Update the generation plan. [upcomingCovers] should be next tracks first
+     * (+1 … +[MAX_UPCOMING]). [currentCover] is backfilled only after upcoming are cached.
+     */
+    fun setTargets(currentCover: String?, upcomingCovers: List<String>) {
+        if (comfyUiUrl().isBlank()) return
+        val upcoming = upcomingCovers
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .filter { it != currentCover?.trim() }
+            .take(MAX_UPCOMING)
+        val current = currentCover?.trim()?.takeIf { it.isNotBlank() }
+        targets.set(OutpaintTargets(current = current, upcoming = upcoming))
+        kickWorker()
     }
 
-    /** Cache-only lookup after bytes are known (tests / warm path). */
+    /** Cache-only lookup — never starts ComfyUI. */
+    suspend fun peekOutpaintedFile(coverRef: String?): File? {
+        if (coverRef.isNullOrBlank() || comfyUiUrl().isBlank()) return null
+        val source = fetchCoverBytes(coverRef) ?: return null
+        return cache.cachedFile(source)
+    }
+
+    /**
+     * Prefer cache; if missing, register [coverRef] as current backfill and poll
+     * while the priority worker runs (upcoming still goes first).
+     */
+    suspend fun getOutpaintedFile(coverRef: String?): File? {
+        if (coverRef.isNullOrBlank() || comfyUiUrl().isBlank()) return null
+        peekOutpaintedFile(coverRef)?.let { return it }
+        val existing = targets.get()
+        setTargets(currentCover = coverRef, upcomingCovers = existing.upcoming)
+        repeat(45) {
+            peekOutpaintedFile(coverRef)?.let { return it }
+            delay(2_000L)
+        }
+        return peekOutpaintedFile(coverRef)
+    }
+
     suspend fun getOrGenerate(
         sourceBytes: ByteArray,
         generate: suspend (ByteArray) -> ByteArray?,
     ): File? = cache.getOrEnqueue(sourceBytes, generate)
 
     fun peekCached(sourceBytes: ByteArray): File? = cache.cachedFile(sourceBytes)
+
+    private fun kickWorker() {
+        scope.launch {
+            workerMutex.withLock {
+                if (workerJob?.isActive == true) return@withLock
+                workerJob = scope.launch(Dispatchers.IO) {
+                    try {
+                        drainQueue()
+                    } finally {
+                        workerMutex.withLock {
+                            workerJob = null
+                        }
+                        // Targets may have changed after the last pick; restart if needed.
+                        val plan = targets.get()
+                        if (plan.current != null || plan.upcoming.isNotEmpty()) {
+                            kickWorker()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun drainQueue() {
+        val base = comfyUiUrl().trim().trimEnd('/')
+        if (base.isBlank()) return
+        while (true) {
+            val plan = targets.get()
+            val nextRef = pickUncachedTarget(plan) ?: break
+            runCatching {
+                val source = fetchCoverBytes(nextRef) ?: return@runCatching
+                if (cache.cachedFile(source) != null) return@runCatching
+                cache.getOrEnqueue(source) { bytes -> comfy.outpaint(base, bytes) }
+            }
+        }
+    }
+
+    private suspend fun pickUncachedTarget(plan: OutpaintTargets): String? {
+        for (ref in plan.upcoming) {
+            if (!isCoverCached(ref)) return ref
+        }
+        val current = plan.current ?: return null
+        return if (!isCoverCached(current)) current else null
+    }
+
+    private suspend fun isCoverCached(coverRef: String): Boolean {
+        val source = fetchCoverBytes(coverRef) ?: return true // unresolvable → skip
+        return cache.cachedFile(source) != null
+    }
 
     private suspend fun fetchCoverBytes(coverRef: String): ByteArray? = withContext(Dispatchers.IO) {
         if (coverRef.startsWith("data:image")) {
@@ -57,9 +153,7 @@ class AlbumArtOutpaintRepository(
                 android.util.Base64.decode(url.substring(comma + 1), android.util.Base64.DEFAULT)
             }.getOrNull()
         }
-        // Prefer HA-authenticated path for same-origin / private hosts.
         haClient.authenticatedBytes(url)?.let { return@withContext it }
-        // Public CDN covers (Apple Music, etc.): image GET only, no HA token.
         runCatching {
             val builder = Request.Builder().url(url).get()
             val base = haClient.currentBaseUrl.trimEnd('/')
@@ -67,7 +161,6 @@ class AlbumArtOutpaintRepository(
                 haClient.bearerHeaders().forEach { (k, v) -> builder.header(k, v) }
                 haClient.massIngressHeaders().forEach { (k, v) -> builder.header(k, v) }
             } else if (url.contains("/api/") || url.contains("/imageproxy")) {
-                // MASS ingress on HA host may still need cookie when URL is absolute.
                 haClient.massIngressHeaders().forEach { (k, v) -> builder.header(k, v) }
                 haClient.bearerHeaders().forEach { (k, v) -> builder.header(k, v) }
             }
@@ -86,13 +179,19 @@ class AlbumArtOutpaintRepository(
         return if (path.startsWith("/")) "$base$path" else "$base/$path"
     }
 
+    private data class OutpaintTargets(
+        val current: String? = null,
+        val upcoming: List<String> = emptyList(),
+    )
+
     companion object {
+        const val MAX_UPCOMING = 5
+
         fun imageFetchClient(): OkHttpClient = OkHttpClient.Builder()
             .addInterceptor { chain ->
                 val request = chain.request()
                 val host = request.url.host
                 val privateHost = NetworkGuard.isPrivateHost(host)
-                // Image GETs may hit public CDNs; everything else stays LAN-only.
                 if (!privateHost &&
                     !(request.method == "GET" &&
                         (request.url.scheme == "https" || request.url.scheme == "http"))
@@ -106,4 +205,20 @@ class AlbumArtOutpaintRepository(
             .callTimeout(45, TimeUnit.SECONDS)
             .build()
     }
+}
+
+/**
+ * Pick the next cover to generate: first uncached upcoming, else uncached current.
+ * When upcoming entries are already cached, [current] is chosen (backfill).
+ */
+fun nextOutpaintTarget(
+    upcoming: List<String>,
+    current: String?,
+    isCached: (String) -> Boolean,
+): String? {
+    for (ref in upcoming) {
+        if (!isCached(ref)) return ref
+    }
+    val cur = current?.takeIf { it.isNotBlank() } ?: return null
+    return if (!isCached(cur)) cur else null
 }

@@ -110,6 +110,7 @@ import dev.holgerendt.hanative.ui.CalendarMessageDialog
 import dev.holgerendt.hanative.ui.DeleteCalendarEventDialog
 import dev.holgerendt.hanative.ui.EditCalendarEventDialog
 import dev.holgerendt.hanative.ui.HaViewModel
+import dev.holgerendt.hanative.ui.InWindowOverlay
 import dev.holgerendt.hanative.ui.LoadingSpinner
 import dev.holgerendt.hanative.ui.MdiIcon
 import dev.holgerendt.hanative.ui.MediaPreview
@@ -145,6 +146,8 @@ import dev.holgerendt.hanative.ui.theme.HistoryGraph
 import dev.holgerendt.hanative.ui.theme.LocalOverlay
 import dev.holgerendt.hanative.ui.theme.OverlayColors
 import dev.holgerendt.hanative.ui.theme.OverlayLightPopup
+import dev.holgerendt.hanative.ui.theme.PopupScrim
+import dev.holgerendt.hanative.ui.theme.ScreenBackground
 import dev.holgerendt.hanative.ui.theme.TabActiveEnd
 import dev.holgerendt.hanative.ui.theme.TabActiveStart
 import dev.holgerendt.hanative.ui.theme.TextDark
@@ -399,8 +402,8 @@ fun PersonCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = 
     val states by viewModel.entitiesFlow(listOf(widget.entity, widget.homeSensor)).collectAsState()
     val person = states[widget.entity]
     val home = person?.state == "home"
-    val minutes = states[widget.homeSensor]?.state
-    val label = if (home) "Home" else listOfNotNull(minutes?.toDoubleOrNull()?.roundToInt()?.toString()?.plus("min"), person?.state).firstOrNull() ?: "Away"
+    val minutesRaw = states[widget.homeSensor]?.state
+    val label = personPresenceLabel(home = home, personState = person?.state, minutesRaw = minutesRaw)
     Column(
         modifier = modifier
             .width(72.dp)
@@ -415,7 +418,31 @@ fun PersonCard(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = 
                 .border(2.dp, if (home) Color(0xFF8BC34A) else Color(0xFFE57373), CircleShape)
                 .clip(CircleShape),
         )
-        Text(label.replaceFirstChar { it.uppercase() }, color = TextDark, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = TextDark, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+    }
+}
+
+internal fun personPresenceLabel(home: Boolean, personState: String?, minutesRaw: String?): String {
+    if (home) return "Home"
+    val duration = formatPresenceDuration(minutesRaw)
+    val place = personState
+        ?.takeIf { it.isNotBlank() && it != "home" && it != "not_home" && it != "away" && it != "unknown" && it != "unavailable" }
+        ?.replace('_', ' ')
+        ?.replaceFirstChar { it.uppercase() }
+    return when {
+        place != null && duration != null -> "$place · $duration"
+        place != null -> place
+        duration != null -> "Away · $duration"
+        else -> "Away"
+    }
+}
+
+internal fun formatPresenceDuration(minutesRaw: String?): String? {
+    val minutes = minutesRaw?.toDoubleOrNull()?.roundToInt()?.takeIf { it >= 0 } ?: return null
+    return when {
+        minutes < 60 -> "${minutes}m"
+        minutes < 60 * 24 -> "${minutes / 60}h"
+        else -> "${minutes / (60 * 24)}d"
     }
 }
 
@@ -709,11 +736,18 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                             onEventClick = { event ->
                                 manageOverlay = WeekPlannerManageOverlay.ChooseAction(event)
                             },
+                            onShowMore = { dayEvents ->
+                                manageOverlay = WeekPlannerManageOverlay.DayEvents(day, dayEvents)
+                            },
+                            maxVisibleEvents = if (!PanelConfig.IS_ENTRANCE && dayCount <= 5) 2 else null,
                             now = now,
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxHeight()
-                                .heightIn(min = weekPlannerDayMinHeight(widget.days ?: 10)),
+                                .heightIn(
+                                    min = weekPlannerDayMinHeight(widget.days ?: 10),
+                                    max = if (!PanelConfig.IS_ENTRANCE && dayCount <= 5) 200.dp else Dp.Unspecified,
+                                ),
                         )
                     }
                     repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
@@ -761,6 +795,14 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
             message = overlay.message,
             onDismiss = { manageOverlay = null },
         )
+        is WeekPlannerManageOverlay.DayEvents -> DayEventsDialog(
+            day = overlay.day,
+            events = overlay.events,
+            onDismiss = { manageOverlay = null },
+            onEventClick = { event ->
+                manageOverlay = WeekPlannerManageOverlay.ChooseAction(event)
+            },
+        )
     }
 }
 
@@ -770,6 +812,63 @@ private sealed interface WeekPlannerManageOverlay {
     data class Edit(val event: HaCalendarEvent) : WeekPlannerManageOverlay
     data class DeleteConfirm(val event: HaCalendarEvent) : WeekPlannerManageOverlay
     data class Message(val title: String, val message: String) : WeekPlannerManageOverlay
+    data class DayEvents(val day: LocalDate, val events: List<HaCalendarEvent>) : WeekPlannerManageOverlay
+}
+
+@Composable
+private fun DayEventsDialog(
+    day: LocalDate,
+    events: List<HaCalendarEvent>,
+    onDismiss: () -> Unit,
+    onEventClick: (HaCalendarEvent) -> Unit,
+) {
+    val title = day.format(java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d"))
+    InWindowOverlay(
+        onDismiss = onDismiss,
+        dismissOnScrim = true,
+        scrim = PopupScrim,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .clip(RoundedCornerShape(20.dp))
+                .background(CardLight)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(title, color = TextDark, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                events.forEach { event ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(ScreenBackground)
+                            .clickable { onEventClick(event) }
+                            .padding(12.dp),
+                    ) {
+                        Text(eventTimeLabel(event), color = TextMuted, fontSize = 12.sp)
+                        Text(event.summary, color = TextDark, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
+            }
+            Text(
+                "Close",
+                color = TextDark,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .align(Alignment.End)
+                    .clickable(onClick = onDismiss)
+                    .padding(8.dp),
+            )
+        }
+    }
 }
 
 @Composable
@@ -843,6 +942,8 @@ private fun WeekPlannerDay(
     weatherEntity: String,
     onAddEvent: (() -> Unit)? = null,
     onEventClick: ((HaCalendarEvent) -> Unit)? = null,
+    onShowMore: ((List<HaCalendarEvent>) -> Unit)? = null,
+    maxVisibleEvents: Int? = null,
     now: Instant = Instant.now(),
     modifier: Modifier = Modifier,
 ) {
@@ -931,8 +1032,11 @@ private fun WeekPlannerDay(
                 Text("No events", color = TextMuted, fontSize = 13.sp)
             }
             else -> {
+                val visibleLimit = maxVisibleEvents?.coerceAtLeast(0)
+                val visible = if (visibleLimit == null) events else events.take(visibleLimit)
+                val overflow = if (visibleLimit == null) 0 else (events.size - visible.size).coerceAtLeast(0)
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    events.forEach { event ->
+                    visible.forEach { event ->
                         val isPast = isPastCalendarEvent(event, day, today, now)
                         val stripe = accentColor(event.color?.removePrefix("var(--")?.removeSuffix(")"))
                             .takeIf { event.color != null } ?: AccentBlue
@@ -965,10 +1069,20 @@ private fun WeekPlannerDay(
                                     fontSize = 14.sp,
                                     fontWeight = summaryWeight,
                                     maxLines = 3,
-                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
                         }
+                    }
+                    if (overflow > 0) {
+                        Text(
+                            "+$overflow more",
+                            color = TextDark,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .clickable { onShowMore?.invoke(events) }
+                                .padding(vertical = 4.dp),
+                        )
                     }
                 }
             }

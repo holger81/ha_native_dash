@@ -75,6 +75,7 @@ private fun FitContentCameraGrid(
                             viewModel = viewModel,
                             modifier = Modifier.weight(1f),
                             fitContent = true,
+                            homeCaptions = true,
                         )
                         index++
                     } else {

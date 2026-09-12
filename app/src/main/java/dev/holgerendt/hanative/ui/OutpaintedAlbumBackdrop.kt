@@ -1,6 +1,7 @@
 package dev.holgerendt.hanative.ui
 
 import android.os.Build
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,14 +26,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import dev.holgerendt.hanative.ui.theme.CardLight
 import java.io.File
+import kotlinx.coroutines.delay
 
 /**
  * Soft extended album atmosphere behind sharp cover content for the Phase 6 media card.
  *
- * When [extendedBackdrop] is false (idle / camera-priority compact), only [content] is drawn.
- * Otherwise shows a local softened enlarge immediately; if ComfyUI is configured, swaps in the
- * cached/outpainted file when ready without blocking playback.
+ * Decorative layers use [matchParentSize] so they never inflate the card. One atmosphere
+ * source is shown at a time (local soft enlarge, then outpaint) and fades into the light card.
  */
 @Composable
 fun OutpaintedAlbumBackdrop(
@@ -45,102 +47,107 @@ fun OutpaintedAlbumBackdrop(
 ) {
     Box(modifier = modifier) {
         if (extendedBackdrop && !coverPath.isNullOrBlank()) {
-            SoftLocalAlbumAtmosphere(coverPath = coverPath, viewModel = viewModel)
-            OutpaintSwapLayer(coverPath = coverPath, viewModel = viewModel)
+            AtmosphereLayer(coverPath = coverPath, viewModel = viewModel)
         }
         content()
     }
 }
 
 @Composable
-private fun SoftLocalAlbumAtmosphere(
-    coverPath: String,
-    viewModel: HaViewModel,
-) {
-    val context = LocalContext.current
-    val loader = rememberHaImageLoader(viewModel.client)
-    var url by remember(coverPath, viewModel.client.currentBaseUrl) { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(coverPath, viewModel.client.currentBaseUrl) {
-        url = runCatching { viewModel.client.resolveMusicCoverUrl(coverPath, size = 512) }.getOrNull()
-            ?: resolveHaImageUrl(coverPath, viewModel.client.currentBaseUrl)
-    }
-    val resolved = url ?: return
-
-    AsyncImage(
-        model = ImageRequest.Builder(context)
-            .data(resolved)
-            .crossfade(true)
-            .build(),
-        contentDescription = null,
-        imageLoader = loader,
-        contentScale = ContentScale.Crop,
-        colorFilter = desaturateFilter(0.45f),
-        modifier = Modifier
-            .fillMaxSize()
-            .graphicsLayer {
-                scaleX = 1.35f
-                scaleY = 1.35f
-                alpha = 0.55f
-            }
-            .then(
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    Modifier.blur(28.dp)
-                } else {
-                    Modifier
-                },
-            )
-            .fadeEdgesToNeutral(),
-    )
-}
-
-@Composable
-private fun OutpaintSwapLayer(
+private fun BoxScope.AtmosphereLayer(
     coverPath: String,
     viewModel: HaViewModel,
 ) {
     val context = LocalContext.current
     val loader = rememberHaImageLoader(viewModel.client)
     val ui by viewModel.ui.collectAsState()
+    var coverUrl by remember(coverPath, viewModel.client.currentBaseUrl) { mutableStateOf<String?>(null) }
     var outpaintFile by remember(coverPath) { mutableStateOf<File?>(null) }
 
+    LaunchedEffect(coverPath, viewModel.client.currentBaseUrl) {
+        coverUrl = runCatching { viewModel.client.resolveMusicCoverUrl(coverPath, size = 512) }.getOrNull()
+            ?: resolveHaImageUrl(coverPath, viewModel.client.currentBaseUrl)
+    }
     LaunchedEffect(coverPath, ui.comfyUiUrl) {
         outpaintFile = null
         if (ui.comfyUiUrl.isBlank()) return@LaunchedEffect
         outpaintFile = runCatching {
-            viewModel.albumArtOutpaint.getOutpaintedFile(coverPath)
+            viewModel.albumArtOutpaint.peekOutpaintedFile(coverPath)
         }.getOrNull()
+        viewModel.scheduleAlbumArtOutpaintPrefetch(currentCoverOverride = coverPath)
+        if (outpaintFile != null) return@LaunchedEffect
+        while (true) {
+            delay(2_000L)
+            val hit = runCatching {
+                viewModel.albumArtOutpaint.peekOutpaintedFile(coverPath)
+            }.getOrNull()
+            if (hit != null) {
+                outpaintFile = hit
+                return@LaunchedEffect
+            }
+        }
     }
 
-    val file = outpaintFile ?: return
-    AsyncImage(
-        model = ImageRequest.Builder(context)
-            .data(file)
-            .crossfade(400)
-            .build(),
-        contentDescription = null,
-        imageLoader = loader,
-        contentScale = ContentScale.Crop,
-        colorFilter = desaturateFilter(0.55f),
-        modifier = Modifier
-            .fillMaxSize()
-            .graphicsLayer { alpha = 0.7f }
-            .fadeEdgesToNeutral(),
-    )
+    Crossfade(
+        targetState = outpaintFile,
+        modifier = Modifier.matchParentSize(),
+        label = "album-atmosphere",
+    ) { file ->
+        val model: Any? = file ?: coverUrl
+        if (model == null) {
+            Box(Modifier.fillMaxSize().drawWithContent { /* light card shows through */ })
+            return@Crossfade
+        }
+        AsyncImage(
+            model = ImageRequest.Builder(context)
+                .data(model)
+                .crossfade(false)
+                .build(),
+            contentDescription = null,
+            imageLoader = loader,
+            contentScale = ContentScale.Crop,
+            colorFilter = desaturateFilter(0.35f),
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = 1.25f
+                    scaleY = 1.25f
+                    // ~15–25% visible image contribution before the light fade.
+                    alpha = if (file != null) 0.22f else 0.18f
+                }
+                .then(softBlurFallback())
+                .fadeEdgesToLightCard(),
+        )
+    }
 }
+
+private fun softBlurFallback(): Modifier =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        Modifier.blur(32.dp)
+    } else {
+        // Pre-S: extra desaturation/alpha already softens; slight extra scale via parent.
+        Modifier
+    }
 
 private fun desaturateFilter(saturation: Float): ColorFilter {
     val matrix = ColorMatrix().apply { setToSaturation(saturation.coerceIn(0f, 1f)) }
     return ColorFilter.colorMatrix(matrix)
 }
 
-private fun Modifier.fadeEdgesToNeutral(): Modifier = drawWithContent {
+/** Fade atmosphere into the light media card so dark text stays readable. */
+private fun Modifier.fadeEdgesToLightCard(): Modifier = drawWithContent {
     drawContent()
+    val card = CardLight
     drawRect(
         brush = Brush.radialGradient(
-            colors = listOf(Color.Transparent, Color(0xCC1A1A1A), Color(0xF21A1A1A)),
-            center = Offset(size.width * 0.35f, size.height * 0.4f),
-            radius = size.maxDimension * 0.85f,
+            colorStops = arrayOf(
+                0.0f to card.copy(alpha = 0.35f),
+                0.45f to card.copy(alpha = 0.72f),
+                0.75f to card.copy(alpha = 0.92f),
+                1.0f to card.copy(alpha = 1.0f),
+            ),
+            center = Offset(size.width * 0.32f, size.height * 0.28f),
+            radius = size.maxDimension * 0.95f,
         ),
     )
 }

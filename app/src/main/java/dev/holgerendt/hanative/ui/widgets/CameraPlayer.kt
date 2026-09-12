@@ -30,6 +30,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -45,6 +47,8 @@ import dev.holgerendt.hanative.ui.HaViewModel
 import dev.holgerendt.hanative.ui.LoadingSpinner
 import dev.holgerendt.hanative.ui.theme.ChipDark
 import dev.holgerendt.hanative.ui.theme.ChipOnDark
+import dev.holgerendt.hanative.ui.theme.TextDark
+import dev.holgerendt.hanative.ui.theme.TextMuted
 import kotlinx.coroutines.delay
 
 private val CameraShape = RoundedCornerShape(24.dp)
@@ -80,26 +84,62 @@ fun CameraCard(
     modifier: Modifier = Modifier,
     fill: Boolean = false,
     fitContent: Boolean = false,
+    /** Greatroom home: keep 16:9 frame intact; put name/status under the image. */
+    homeCaptions: Boolean = false,
 ) {
-    val boxModifier = modifier
+    val frameModifier = Modifier
         .then(
             when {
-                fill -> Modifier.fillMaxSize()
-                fitContent -> Modifier.fillMaxWidth().aspectRatio(16f / 9f)
-                else -> Modifier.aspectRatio(16f / 9f)
+                fill && !homeCaptions -> Modifier.fillMaxSize()
+                else -> Modifier.fillMaxWidth().aspectRatio(16f / 9f)
             },
         )
         .clip(CameraShape)
         .background(ChipDark)
         .then(
-            if (fill || fitContent) Modifier else Modifier.clickable {
+            if (fill || fitContent || homeCaptions) Modifier else Modifier.clickable {
                 widget.entity?.let { viewModel.openMoreInfo(it) }
             },
         )
-    if (widget.hasLiveCameraSource()) {
-        LiveCameraSurface(widget, viewModel, boxModifier, fitContent = fitContent)
+    if (homeCaptions) {
+        var status by remember(widget.entity) { mutableStateOf("Connecting") }
+        Column(
+            modifier = modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            if (widget.hasLiveCameraSource()) {
+                LiveCameraSurface(
+                    widget = widget,
+                    viewModel = viewModel,
+                    modifier = frameModifier,
+                    fitContent = fitContent,
+                    showOverlayTitle = false,
+                    onStatusChange = { status = it },
+                )
+            } else {
+                SnapshotCameraSurface(
+                    widget = widget,
+                    viewModel = viewModel,
+                    modifier = frameModifier,
+                    fitContent = fitContent,
+                    showOverlayTitle = false,
+                    onStatusChange = { status = it },
+                )
+            }
+            Text(
+                widget.name?.takeIf { it.isNotBlank() } ?: "Camera",
+                color = TextDark,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(status, color = TextMuted, fontSize = 12.sp, maxLines = 1)
+        }
+    } else if (widget.hasLiveCameraSource()) {
+        LiveCameraSurface(widget, viewModel, modifier.then(frameModifier), fitContent = fitContent)
     } else {
-        SnapshotCameraSurface(widget, viewModel, boxModifier, fitContent = fitContent)
+        SnapshotCameraSurface(widget, viewModel, modifier.then(frameModifier), fitContent = fitContent)
     }
 }
 
@@ -109,6 +149,8 @@ private fun SnapshotCameraSurface(
     viewModel: HaViewModel,
     modifier: Modifier,
     fitContent: Boolean = false,
+    showOverlayTitle: Boolean = true,
+    onStatusChange: ((String) -> Unit)? = null,
 ) {
     var bytes by remember(widget.entity) { mutableStateOf<ByteArray?>(null) }
     var error by remember(widget.entity) { mutableStateOf<String?>(null) }
@@ -116,15 +158,18 @@ private fun SnapshotCameraSurface(
         val entity = widget.entity
         if (entity == null) {
             error = "No camera entity"
+            onStatusChange?.invoke("Unavailable")
             return@LaunchedEffect
         }
         var failures = 0
+        onStatusChange?.invoke("Connecting")
         while (true) {
             val next = runCatching { viewModel.client.cameraSnapshot(entity) }.getOrNull()
             if (next != null) {
                 bytes = next
                 error = null
                 failures = 0
+                onStatusChange?.invoke("Live")
             } else {
                 failures++
                 if (bytes == null && failures >= 2) {
@@ -133,6 +178,9 @@ private fun SnapshotCameraSurface(
                         "unavailable", "unknown" -> "Camera unavailable"
                         else -> "Can't load camera image"
                     }
+                    onStatusChange?.invoke("Unavailable")
+                } else if (bytes != null) {
+                    onStatusChange?.invoke("Reconnecting")
                 }
             }
             // Snapshots are TTL-cached in HaClient, so polling faster than the TTL only
@@ -156,7 +204,7 @@ private fun SnapshotCameraSurface(
             bitmap == null && error != null -> CameraErrorText(error!!)
             bitmap == null -> LoadingSpinner(color = ChipOnDark)
         }
-        CameraTitle(widget.name)
+        if (showOverlayTitle) CameraTitle(widget.name)
     }
 }
 
@@ -166,12 +214,24 @@ private fun LiveCameraSurface(
     viewModel: HaViewModel,
     modifier: Modifier,
     fitContent: Boolean = false,
+    showOverlayTitle: Boolean = true,
+    onStatusChange: ((String) -> Unit)? = null,
 ) {
     val live by remember(widget) { viewModel.liveCamera(widget) }.collectAsState()
     LaunchedEffect(widget) { viewModel.startLiveCamera(widget) }
     var surfaceReady by remember(widget) { mutableStateOf(false) }
     val player = live.player
     val still = live.bitmap
+    val showStill = still != null && (player == null || !live.videoReady || !surfaceReady)
+    LaunchedEffect(player, live.videoReady, surfaceReady, still) {
+        onStatusChange?.invoke(
+            when {
+                player != null && live.videoReady && surfaceReady -> "Live"
+                player != null || still != null -> "Reconnecting"
+                else -> "Connecting"
+            },
+        )
+    }
     Box(modifier, contentAlignment = Alignment.Center) {
         if (player != null) {
             AndroidView(
@@ -203,7 +263,6 @@ private fun LiveCameraSurface(
                 modifier = Modifier.fillMaxSize(),
             )
         }
-        val showStill = still != null && (player == null || !live.videoReady || !surfaceReady)
         if (showStill) {
             AndroidView(
                 factory = { ctx ->
@@ -228,7 +287,7 @@ private fun LiveCameraSurface(
         } else if (player == null && still == null) {
             LoadingSpinner(color = ChipOnDark)
         }
-        CameraTitle(widget.name)
+        if (showOverlayTitle) CameraTitle(widget.name)
     }
     DisposableEffect(player) {
         surfaceReady = false
