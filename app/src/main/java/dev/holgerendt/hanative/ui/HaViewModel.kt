@@ -323,6 +323,7 @@ class HaViewModel(
         watchAutoDisplayBrightness()
         watchPresenceScreen()
         watchWallCamerasOnReconnect()
+        watchWallCameraKeepAlive()
         watchVisionTimelineRefresh()
         // PIN adoption reads and reseals the Documents recovery file, and TLS setup generates an
         // RSA-2048 keypair on first launch; neither belongs on the main thread. Connecting is
@@ -1375,6 +1376,10 @@ class HaViewModel(
 
     fun openPopup(hash: String?) {
         val previous = _ui.value.popupHash
+        if (hash == KioskCommands.CAMERA_POPUP) {
+            // Ensure frontdoor/garage are already decoding before the sheet draws.
+            prefetchWallCameras()
+        }
         _ui.value = _ui.value.copy(
             popupHash = hash,
             drawerOpen = false,
@@ -1567,6 +1572,7 @@ class HaViewModel(
         }
         credentials.go2rtcUrl = trimmed
         _ui.value = _ui.value.copy(go2rtcUrl = credentials.go2rtcUrl)
+        prefetchWallCameras()
         return Result.success(Unit)
     }
 
@@ -1709,20 +1715,28 @@ class HaViewModel(
             .toList()
 
     private fun wallCameraWidgets(): List<WidgetNode> {
-        val home = _ui.value.dashboard?.home
-        val hero = home?.heroCameras.orEmpty()
-        if (hero.isNotEmpty()) return hero
-        return home?.popups
+        // Always warm PanelConfig wall cameras (frontdoor + garage on Greatroom;
+        // frontdoor + entrance on Entrance). Prefer settings go2rtc, else dashboard.
+        return CameraStreams.wallPanelCameras(effectiveGo2rtcUrl())
+    }
+
+    private fun effectiveGo2rtcUrl(): String {
+        credentials.go2rtcUrl.trim().trimEnd('/').takeIf { it.isNotBlank() }?.let { return it }
+        val popup = _ui.value.dashboard?.home?.popups
             ?.firstOrNull { it.hash == KioskCommands.CAMERA_POPUP }
-            ?.let { popup -> CameraStreams.camerasForPopup(popup, credentials.go2rtcUrl) }
-            ?: CameraStreams.wallPanelCameras(credentials.go2rtcUrl)
+            ?: return ""
+        return CameraStreams.camerasForPopup(popup, "")
+            .mapNotNull { it.streamServer?.trim()?.trimEnd('/') }
+            .firstOrNull { it.isNotBlank() }
+            .orEmpty()
     }
 
     private fun prefetchWallCameras() {
         viewModelScope.launch {
             val widgets = wallCameraWidgets()
+            if (widgets.isEmpty()) return@launch
             // Wall cameras stay warm (placeholder) after the last viewer leaves
-            // so a door-triggered popup opens instantly.
+            // so a door-triggered popup opens instantly — including while asleep.
             liveCameras.setWarmTargets(widgets.map { CameraStreams.fromWidget(it) })
             liveCameras.ensureRunning(widgets.map { CameraStreams.fromWidget(it) })
             if (client.currentBaseUrl.isBlank()) return@launch
@@ -1741,6 +1755,21 @@ class HaViewModel(
                     bumpVisionTimelineRevision()
                 }
                 wasConnected = connected
+            }
+        }
+    }
+
+    /** Heal warm wall-camera sessions that died without a reconnect event. */
+    private fun watchWallCameraKeepAlive() {
+        viewModelScope.launch {
+            var tick = 0
+            while (true) {
+                delay(15_000L)
+                if (!credentials.isConfigured) continue
+                liveCameras.keepWarmAlive()
+                tick++
+                // Full re-assert less often; keepWarmAlive covers dead decode loops.
+                if (tick % 4 == 0) prefetchWallCameras()
             }
         }
     }

@@ -104,6 +104,9 @@ class LiveCameraHub(
     fun pause() {
         paused = true
         sessions.values.forEach { session ->
+            // Wall-panel cameras stay decoding through sleep so door-triggered
+            // popups attach an already-live player (no cold HLS start).
+            if (session.warm) return@forEach
             session.job?.cancel()
             session.jpegJob?.cancel()
             session.job = null
@@ -115,10 +118,35 @@ class LiveCameraHub(
     fun resume() {
         paused = false
         sessions.values.forEach { session ->
+            if (session.warm) {
+                // Already kept alive through sleep; nudge playback and heal if dead.
+                runOnMain { session.player?.playWhenReady = true }
+                if (session.job?.isActive != true) {
+                    session.skipHls = false
+                    startOne(session)
+                }
+                return@forEach
+            }
             session.skipHls = false
             startOne(session)
             // A pending idle timer aborted while asleep; restart the clock.
             armIdleRelease(session)
+        }
+    }
+
+    /** Restart any warm session whose decode loop has died. */
+    fun keepWarmAlive() {
+        sessions.values.forEach { session ->
+            if (!session.warm || !session.target.hasLiveSource()) return@forEach
+            if (session.job?.isActive == true) {
+                runOnMain {
+                    val player = session.player ?: return@runOnMain
+                    if (!player.playWhenReady) player.playWhenReady = true
+                }
+                return@forEach
+            }
+            session.skipHls = false
+            startOne(session)
         }
     }
 
@@ -182,13 +210,17 @@ class LiveCameraHub(
     }
 
     private fun startOne(session: Session) {
-        if (paused || !session.target.hasLiveSource()) return
+        if (!sessionShouldRun(session)) return
         if (session.job?.isActive == true) return
         session.job = scope.launch { runSession(session) }
     }
 
+    /** Warm wall cameras keep running while the panel sleeps; others pause. */
+    private fun sessionShouldRun(session: Session): Boolean =
+        session.target.hasLiveSource() && (session.warm || !paused)
+
     private suspend fun runSession(session: Session) {
-        while (currentCoroutineContext().isActive && !paused) {
+        while (currentCoroutineContext().isActive && sessionShouldRun(session)) {
             val candidates = runCatching {
                 CameraStreams.resolve(client, session.target)
             }.getOrDefault(emptyList())
@@ -213,7 +245,7 @@ class LiveCameraHub(
                 mjpeg != null -> playMjpeg(session, mjpeg)
                 else -> session.jpegJob?.join() ?: delay(5_000)
             }
-            if (currentCoroutineContext().isActive && !paused) delay(1_500)
+            if (currentCoroutineContext().isActive && sessionShouldRun(session)) delay(1_500)
         }
     }
 
@@ -295,7 +327,7 @@ class LiveCameraHub(
     }
 
     private suspend fun pollJpeg(session: Session, candidate: StreamCandidate) {
-        while (currentCoroutineContext().isActive && !paused) {
+        while (currentCoroutineContext().isActive && sessionShouldRun(session)) {
             val frame = runCatching {
                 CameraStreams.readJpeg(candidate.url, candidate.headers)
             }.getOrNull()
