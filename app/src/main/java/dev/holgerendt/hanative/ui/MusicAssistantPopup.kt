@@ -282,7 +282,7 @@ private fun NowPlayingPane(
         ?: entity?.state?.replaceFirstChar { it.uppercase() }
         ?: ""
     val album = wall.queue?.current?.album ?: entity?.mediaAlbum().orEmpty()
-    val art = wall.queue?.current?.imageUrl ?: entity?.entityPicture
+    val art = entity?.entityPicture ?: wall.queue?.current?.imageUrl
     val duration = wall.queue?.current?.durationSec?.toDouble() ?: entity?.mediaDurationSec()
     val position = rememberLiveMediaPosition(
         entity = entity,

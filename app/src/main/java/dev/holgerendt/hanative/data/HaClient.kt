@@ -213,7 +213,10 @@ class HaClient {
         val session: String,
         val apiUrl: String,
         val expiresAtMs: Long,
-    )
+    ) {
+        /** MASS web root behind HA ingress (no trailing `/api`). */
+        val coverBaseUrl: String get() = apiUrl.removeSuffix("/api").trimEnd('/')
+    }
 
     fun state(entityId: String?): EntityState? = entityId?.let { _states.value[it] }
 
@@ -1316,6 +1319,51 @@ class HaClient {
 
     fun bearerHeaders(): Map<String, String> =
         if (token.isBlank()) emptyMap() else mapOf("Authorization" to "Bearer $token")
+
+    /** Cookie for Music Assistant ingress imageproxy (same-origin HA URLs). */
+    fun massIngressHeaders(): Map<String, String> {
+        val session = massIngress?.session?.takeIf { it.isNotBlank() } ?: return emptyMap()
+        return mapOf("Cookie" to "ingress_session=$session")
+    }
+
+    /**
+     * Turn a stored cover ref into a fetchable URL.
+     * Handles HA `/api/...` paths, public CDN URLs, and `mass-imageproxy://…` refs.
+     */
+    suspend fun resolveMusicCoverUrl(raw: String?, size: Int = 256): String? {
+        val path = raw?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        if (path.startsWith("data:image")) return path
+        if (path.startsWith("http://") || path.startsWith("https://")) return path
+        if (path.startsWith("/")) {
+            if (baseUrl.isBlank()) return null
+            return "$baseUrl$path"
+        }
+        if (!path.startsWith(MASS_IMAGEPROXY_SCHEME)) {
+            return resolveHaImageUrlFallback(path)
+        }
+        val session = runCatching { ensureMassIngress() }.getOrNull() ?: return null
+        val coverBase = session.coverBaseUrl
+        val rest = path.removePrefix(MASS_IMAGEPROXY_SCHEME)
+        return if (rest.startsWith("legacy?")) {
+            val clamped = clampMassImageProxySize(size)
+            "$coverBase/imageproxy?${rest.removePrefix("legacy?")}&size=$clamped"
+        } else {
+            val id = rest.substringBefore('?').takeIf { it.isNotBlank() } ?: return null
+            val clamped = clampMassImageProxySize(size)
+            "$coverBase/imageproxy/$id?size=$clamped"
+        }
+    }
+
+    private fun resolveHaImageUrlFallback(path: String): String? {
+        if (baseUrl.isBlank()) return null
+        return if (path.startsWith("/")) "$baseUrl$path" else "$baseUrl/$path"
+    }
+
+    private fun clampMassImageProxySize(size: Int): Int {
+        val allowed = intArrayOf(0, 80, 160, 256, 512, 1024)
+        if (size <= 0) return 0
+        return allowed.firstOrNull { it >= size } ?: 1024
+    }
 
     suspend fun authenticatedBytes(path: String): ByteArray? = withContext(Dispatchers.IO) {
         if (!path.startsWith("http") && (baseUrl.isBlank() || token.isBlank())) return@withContext null

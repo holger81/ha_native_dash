@@ -379,20 +379,68 @@ fun parseMassSearchResults(element: JsonElement?): MassSearchResults {
     )
 }
 
+/**
+ * Cover art reference for Coil / [HaClient.resolveMusicCoverUrl].
+ *
+ * Music Assistant's `image.path` is often a provider-relative key, not a URL.
+ * Prefer the opaque `proxy_id` (schema ≥ 31) so covers load via MASS `/imageproxy/{id}`
+ * on the HA ingress host. Fall back to remote CDN URLs, then the legacy query proxy.
+ */
+const val MASS_IMAGEPROXY_SCHEME = "mass-imageproxy://"
+
 fun extractMassImageUrl(obj: JsonObject): String? {
     when (val image = obj["image"]) {
-        is JsonPrimitive -> image.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
-        is JsonObject -> {
-            image["path"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
-            image["url"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
+        is JsonPrimitive -> image.contentOrNull?.takeIf { it.isNotBlank() }?.let {
+            return massCoverRefFromPath(it)
         }
+        is JsonObject -> coverRefFromMassImage(image)?.let { return it }
         else -> Unit
     }
     val metadata = obj["metadata"] as? JsonObject
     val images = metadata?.get("images") as? JsonArray
-    val first = images?.firstOrNull() as? JsonObject
-    return first?.get("path")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
-        ?: first?.get("url")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+    val first = images?.firstOrNull() as? JsonObject ?: return null
+    return coverRefFromMassImage(first)
+}
+
+private fun coverRefFromMassImage(image: JsonObject): String? {
+    val path = image["path"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+        ?: image["url"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+        ?: return null
+    if (path.startsWith("data:image")) return path
+
+    val proxyId = image["proxy_id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+    if (!proxyId.isNullOrBlank()) {
+        return "$MASS_IMAGEPROXY_SCHEME$proxyId"
+    }
+
+    // Absolute CDN URLs work without the MASS proxy (Coil allows public image GETs).
+    if (path.startsWith("http://") || path.startsWith("https://")) {
+        return path
+    }
+
+    val provider = image["provider"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+        ?: "builtin"
+    // MASS frontend double-encodes the path for the legacy imageproxy query form.
+    val encPath = java.net.URLEncoder.encode(
+        java.net.URLEncoder.encode(path, Charsets.UTF_8.name()),
+        Charsets.UTF_8.name(),
+    )
+    val encProvider = java.net.URLEncoder.encode(provider, Charsets.UTF_8.name())
+    return "${MASS_IMAGEPROXY_SCHEME}legacy?provider=$encProvider&path=$encPath"
+}
+
+private fun massCoverRefFromPath(path: String): String? {
+    val trimmed = path.trim()
+    if (trimmed.isBlank()) return null
+    if (trimmed.startsWith("data:image") ||
+        trimmed.startsWith("http://") ||
+        trimmed.startsWith("https://") ||
+        trimmed.startsWith("/") ||
+        trimmed.startsWith(MASS_IMAGEPROXY_SCHEME)
+    ) {
+        return trimmed
+    }
+    return null
 }
 
 private val APOSTROPHE_REGEX = Regex("['’]")

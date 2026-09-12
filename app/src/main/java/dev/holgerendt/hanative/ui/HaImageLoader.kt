@@ -12,13 +12,18 @@ import dev.holgerendt.hanative.data.HaClient
 import dev.holgerendt.hanative.data.NetworkGuard
 import okhttp3.OkHttpClient
 import java.io.File
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 
 private const val DISK_CACHE_DIR = "ha_image_cache"
 private const val DISK_CACHE_MAX_BYTES = 64L * 1024L * 1024L
 
 /**
- * Coil ImageLoader with memory + disk cache; HA bearer auth for same-origin URLs only.
+ * Coil ImageLoader with memory + disk cache; HA bearer + MASS ingress cookie for same-origin URLs.
+ *
+ * Cover art from Music Assistant often lives on public CDNs (Apple Music, etc.). The main
+ * [NetworkGuard] client still blocks non-LAN API egress; this loader allows HTTPS/HTTP GET to
+ * public hosts for images only, and never attaches the HA token to those hosts.
  *
  * One instance per process: each loader owns an 18%-of-heap memory cache, an OkHttp pool, and a
  * handle on the same disk-cache directory, so building one per cover-art tile is not viable.
@@ -42,15 +47,25 @@ fun haImageLoader(context: Context, client: HaClient): ImageLoader {
         }
         .okHttpClient {
             OkHttpClient.Builder()
-                .addInterceptor(NetworkGuard.interceptor)
                 .addInterceptor { chain ->
                     val request = chain.request()
-                    val urlText = request.url.toString()
+                    val url = request.url
+                    val privateHost = NetworkGuard.isPrivateHost(url.host)
+                    // Image GETs may hit public CDNs; everything else stays LAN-only.
+                    if (!privateHost &&
+                        !(request.method == "GET" && (url.scheme == "https" || url.scheme == "http"))
+                    ) {
+                        throw IOException("Blocked: host '${url.host}' is not on the local network")
+                    }
+                    val urlText = url.toString()
                     val base = client.currentBaseUrl.trimEnd('/')
-                    val needsAuth = base.isNotBlank() && urlText.startsWith(base)
+                    val sameOrigin = base.isNotBlank() && urlText.startsWith(base)
                     val builder = request.newBuilder()
-                    if (needsAuth) {
+                    if (sameOrigin) {
                         client.bearerHeaders().forEach { (key, value) ->
+                            builder.header(key, value)
+                        }
+                        client.massIngressHeaders().forEach { (key, value) ->
                             builder.header(key, value)
                         }
                     }
@@ -73,7 +88,7 @@ fun rememberHaImageLoader(client: HaClient): ImageLoader {
 
 fun resolveHaImageUrl(path: String?, baseUrl: String): String? {
     val raw = path?.trim()?.takeIf { it.isNotBlank() } ?: return null
-    if (raw.startsWith("http://") || raw.startsWith("https://")) return raw
+    if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("data:")) return raw
     val base = baseUrl.trimEnd('/')
     if (base.isBlank()) return null
     return if (raw.startsWith("/")) "$base$raw" else "$base/$raw"

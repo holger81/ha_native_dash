@@ -5,6 +5,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -31,11 +36,23 @@ fun MusicCover(
     val overlay = LocalOverlay.current
     val context = LocalContext.current
     val loader = rememberHaImageLoader(viewModel.client)
-    val url = resolveHaImageUrl(path, viewModel.client.currentBaseUrl)
+    var url by remember(path, viewModel.client.currentBaseUrl) { mutableStateOf<String?>(null) }
+    var resolving by remember(path, viewModel.client.currentBaseUrl) { mutableStateOf(!path.isNullOrBlank()) }
+
+    LaunchedEffect(path, viewModel.client.currentBaseUrl) {
+        resolving = !path.isNullOrBlank()
+        url = runCatching { viewModel.client.resolveMusicCoverUrl(path) }.getOrNull()
+            ?: resolveHaImageUrl(path, viewModel.client.currentBaseUrl)
+        resolving = false
+    }
 
     if (url.isNullOrBlank()) {
         Box(modifier = modifier.background(overlay.well), contentAlignment = Alignment.Center) {
-            MdiIcon("mdi:music-note", tint = overlay.muted, size = fallbackIconSize)
+            if (resolving) {
+                LoadingSpinner(color = TextMuted, indicatorSize = spinnerSize)
+            } else {
+                MdiIcon("mdi:music-note", tint = overlay.muted, size = fallbackIconSize)
+            }
         }
         return
     }
