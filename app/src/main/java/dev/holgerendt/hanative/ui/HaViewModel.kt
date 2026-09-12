@@ -633,6 +633,8 @@ class HaViewModel(
     )
     private var musicWallJob: Job? = null
     private var musicMediaWatchJob: Job? = null
+    private var homeMediaWatchJob: Job? = null
+    private var homeMediaWatchUsers = 0
     private var musicDiscoveryJob: Job? = null
     private var musicSearchJob: Job? = null
     private var musicBrowseJob: Job? = null
@@ -1014,6 +1016,51 @@ class HaViewModel(
         viewModelScope.launch {
             runCatching { client.mediaPlayerCommand(entityId, "media_play_pause") }
             refreshMusicQueueSoon()
+        }
+    }
+
+    fun mediaPlayerCommand(entityId: String, service: String) {
+        val id = CredentialsStore.normalizeEntityId(entityId)
+        if (id.isBlank()) return
+        viewModelScope.launch {
+            runCatching { client.mediaPlayerCommand(id, service) }
+        }
+    }
+
+    /**
+     * Lightweight home-screen music/TV freshness for Phase 6 media card.
+     * Ref-counted so compact + full instances (or recompositions) don't stack jobs.
+     */
+    fun startHomeMediaWatch() {
+        if (PanelConfig.IS_ENTRANCE) return
+        homeMediaWatchUsers++
+        if (homeMediaWatchJob?.isActive == true) return
+        homeMediaWatchJob = viewModelScope.launch {
+            refreshMusicWall(forcePlayers = true)
+            if (_musicWall.value.discovery.recentlyPlayed.isEmpty() &&
+                !_musicWall.value.discovery.loading
+            ) {
+                loadMusicDiscovery()
+            }
+            var tick = 0
+            while (true) {
+                if (_ui.value.popupHash != "#music") {
+                    refreshMusicWall(forcePlayers = tick % 8 == 0)
+                }
+                if (tick > 0 && tick % 30 == 0) {
+                    loadMusicDiscovery()
+                }
+                delay(4_000L)
+                tick++
+            }
+        }
+    }
+
+    fun stopHomeMediaWatch() {
+        homeMediaWatchUsers = (homeMediaWatchUsers - 1).coerceAtLeast(0)
+        if (homeMediaWatchUsers == 0) {
+            homeMediaWatchJob?.cancel()
+            homeMediaWatchJob = null
         }
     }
 

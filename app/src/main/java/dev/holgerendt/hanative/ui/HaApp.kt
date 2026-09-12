@@ -296,9 +296,14 @@ private fun HomeScreen(viewModel: HaViewModel) {
             WeekPlanner(it, viewModel, Modifier.fillMaxWidth())
         }
         Spacer(Modifier.height(12.dp))
-        // Lovelace `(min-width: 1024px)`: 50% rooms | 50% timeline. Backyard person cams stack
-        // below the vision timeline in the right column instead of replacing it.
+        // Lovelace `(min-width: 1024px)`: 50% rooms | 50% media + activity.
+        // Phase 6: media at top when idle cameras; backyard streams take priority when active.
         val activePersonCameras by viewModel.activePersonCameras.collectAsState()
+        var timelineExpanded by remember { mutableStateOf(false) }
+        val camerasActive = activePersonCameras.isNotEmpty()
+        LaunchedEffect(camerasActive) {
+            if (!camerasActive) timelineExpanded = false
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -309,16 +314,78 @@ private fun HomeScreen(viewModel: HaViewModel) {
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                home.timeline?.let {
-                    VisionTimeline(it, viewModel, Modifier.fillMaxWidth())
-                }
-                if (activePersonCameras.isNotEmpty()) {
+                if (camerasActive) {
+                    Text(
+                        "Backyard activity",
+                        color = TextDark,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
                     PersonCameraOverlay(
                         cameras = activePersonCameras,
                         viewModel = viewModel,
                         fitContent = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    HomeMediaArea(
+                        viewModel = viewModel,
+                        compact = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    home.timeline?.let { timeline ->
+                        when {
+                            timelineExpanded -> {
+                                VisionTimeline(timeline, viewModel, Modifier.fillMaxWidth())
+                                Text(
+                                    "Hide history",
+                                    color = ActiveYellow,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier
+                                        .clickable { timelineExpanded = false }
+                                        .padding(vertical = 4.dp),
+                                )
+                            }
+                            activePersonCameras.size >= 3 -> {
+                                Text(
+                                    "View history",
+                                    color = ActiveYellow,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier
+                                        .clickable { timelineExpanded = true }
+                                        .padding(vertical = 4.dp),
+                                )
+                            }
+                            else -> {
+                                VisionTimeline(
+                                    widget = timeline,
+                                    viewModel = viewModel,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    maxEvents = 1,
+                                    showTitle = false,
+                                )
+                                Text(
+                                    "View history",
+                                    color = ActiveYellow,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier
+                                        .clickable { timelineExpanded = true }
+                                        .padding(vertical = 4.dp),
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    HomeMediaArea(
+                        viewModel = viewModel,
+                        compact = false,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    home.timeline?.let {
+                        VisionTimeline(it, viewModel, Modifier.fillMaxWidth())
+                    }
                 }
             }
         }

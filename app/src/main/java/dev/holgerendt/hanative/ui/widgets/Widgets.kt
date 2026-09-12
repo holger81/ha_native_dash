@@ -529,6 +529,13 @@ fun RoomGrid(rooms: List<WidgetNode>, viewModel: HaViewModel, modifier: Modifier
     }
 }
 
+/** Greatroom Phase 6: one five-day row stays compact; multi-row planners keep taller day wells. */
+private fun weekPlannerDayMinHeight(days: Int): Dp = when {
+    days <= 2 -> 140.dp
+    days <= 5 && !PanelConfig.IS_ENTRANCE -> 132.dp
+    else -> 280.dp
+}
+
 @Composable
 fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val zone = remember { ZoneId.systemDefault() }
@@ -703,7 +710,10 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                                 manageOverlay = WeekPlannerManageOverlay.ChooseAction(event)
                             },
                             now = now,
-                            modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = if ((widget.days ?: 10) <= 2) 140.dp else 280.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .heightIn(min = weekPlannerDayMinHeight(widget.days ?: 10)),
                         )
                     }
                     repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
@@ -967,9 +977,16 @@ private fun WeekPlannerDay(
 }
 
 @Composable
-fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
+fun VisionTimeline(
+    widget: WidgetNode,
+    viewModel: HaViewModel,
+    modifier: Modifier = Modifier,
+    /** When set, caps how many events are shown (Phase 6 camera-priority preview). */
+    maxEvents: Int? = null,
+    showTitle: Boolean = true,
+) {
     val timelineRevision by viewModel.visionTimelineRevision.collectAsState()
-    val limit = widget.numberOfEvents ?: 5
+    val limit = (maxEvents ?: widget.numberOfEvents ?: 5).coerceAtLeast(0)
     val hours = widget.numberOfHours ?: widget.hours
     val days = widget.days
     val entityId = widget.entity ?: "calendar.llm_vision_timeline"
@@ -979,6 +996,11 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
         loaded = false
     }
     LaunchedEffect(entityId, limit, hours, days, timelineRevision, viewModel.client.currentBaseUrl) {
+        if (limit == 0) {
+            events = emptyList()
+            loaded = true
+            return@LaunchedEffect
+        }
         while (true) {
             if (viewModel.client.currentBaseUrl.isBlank()) {
                 delay(400)
@@ -992,16 +1014,19 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
             delay(15_000)
         }
     }
+    if (limit == 0) return
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = widget.name.takeUnless { it.isNullOrBlank() } ?: "This happened around the house",
-            color = TextDark,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Medium,
-        )
+        if (showTitle) {
+            Text(
+                text = widget.name.takeUnless { it.isNullOrBlank() } ?: "This happened around the house",
+                color = TextDark,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+            )
+        }
         when {
             !loaded -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                repeat(4) { index ->
+                repeat(minOf(4, limit.coerceAtLeast(1))) { index ->
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1010,7 +1035,7 @@ fun VisionTimeline(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
                             .background(CardLight),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (index == 1) {
+                        if (index == 0) {
                             LoadingSpinner(color = TextDark, indicatorSize = 28.dp)
                         }
                     }

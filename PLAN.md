@@ -676,54 +676,55 @@ were considered and deliberately dropped — they are not backlog.
 ## Phase 6 — Greatroom Wall: media and live backyard activity
 
 **Scope: Greatroom Wall only** (`greatroom` flavor / `PanelConfig.PANEL_ID ==
-"greatroom"`). This is a design and implementation plan, not completed work.
-Do not apply these layout changes to Entrance Wall or `EntranceHomeScreen`.
-The target is the portrait UniFi Connect display, tested at 1080 × 1920 with
-the project's 160-dpi emulator configuration; confirm sizing on the real panel.
+"greatroom"`). Layout and media plumbing are implemented; on-device visual
+acceptance checks below remain. Do not apply these layout changes to Entrance
+Wall or `EntranceHomeScreen`. The target is the portrait UniFi Connect display,
+tested at 1080 × 1920 with the project's 160-dpi emulator configuration;
+confirm sizing on the real panel.
 
 ### Non-negotiable room geometry
 
-- [ ] Preserve **today's room tile sizes**, room order, spans, and mosaic from
+- [x] Preserve **today's room tile sizes**, room order, spans, and mosaic from
   `ui/widgets/Widgets.kt::RoomGrid`. The generated mockups illustrate content
   priority only: their more regular room rectangles are **not** the sizing or
   placement specification.
-- [ ] Keep the existing 50/50 rooms/right-column split, 16 dp home side margins,
+- [x] Keep the existing 50/50 rooms/right-column split, 16 dp home side margins,
   8 dp inter-column gap, and 8 dp room-grid gaps. Preserve `RoomGrid`'s row tracks
   `[146, 70, 146, 146, 146, 70, 146]` dp and its current span assignments.
   At a 1080 dp viewport this gives a 520 dp room column, 256 dp single-column
   tiles, 146 or 224 dp tile heights, and a 520 × 146 dp Office tile. The full
   mosaic remains 918 dp high. Do not resize tiles to fill reclaimed space.
-- [ ] Keep all nine rooms: Emilia's Room, Great Room, Jonathan's Room, Main
+- [x] Keep all nine rooms: Emilia's Room, Great Room, Jonathan's Room, Main
   Bedroom, Office, Hallway, Main Bath, Guestroom, and Second Bath. Preserve
   their current controls, readings, and tap/hold behavior.
-- [ ] Room geometry and the dock must remain stable when media starts, pauses,
+- [x] Room geometry and the dock must remain stable when media starts, pauses,
   stops, or backyard detection changes. Compacting the calendar may move the
   entire mosaic upward once in the redesigned layout; media/camera transitions
   must not move it again. No state-dependent calendar height changes.
 
 ### Home layout and media states
 
-- [ ] Retain the presence/weather header, status chips, and bottom dock.
+- [x] Retain the presence/weather header, status chips, and bottom dock.
   Compact the home calendar to one five-day row, with access to the remaining
   planner dates and existing calendar actions. Avoid the current large gaps
   between mostly empty calendar rows. Scope changes in shared calendar code
   explicitly to Greatroom Wall.
-- [ ] Use **one shared media area** at the top of the right column when no
+- [x] Use **one shared media area** at the top of the right column when no
   backyard streams are active. Music and Apple TV are mutually exclusive in
   this household; do not show simultaneous music and TV cards as the early
   mockup did. Handle transient conflicting/stale states deterministically
   without flickering or automatically cycling cards.
-- [ ] **Music playing:** show crisp album art, title, artist, playing room/group,
+- [x] **Music playing:** show crisp album art, title, artist, playing room/group,
   progress, pause, previous/next, and volume. Tap through to the existing native
   Music Assistant popup for queue, grouping, browsing, and detailed controls.
   Reuse the existing data and service paths rather than building a second player.
-- [ ] **TV playing:** replace the music presentation with suitably framed show
+- [x] **TV playing:** replace the music presentation with suitably framed show
   artwork, title, app, episode information and remaining time when supplied by
   the integration, plus supported playback controls. Missing metadata must not
   produce invented episode details, blank artwork wells, or unusable controls.
-- [ ] **Paused:** retain the current media and artwork with an explicit Paused
+- [x] **Paused:** retain the current media and artwork with an explicit Paused
   label and Resume control. Do not treat paused playback as advancing progress.
-- [ ] **Idle / nothing playing:** use a smaller neutral Listen card containing
+- [x] **Idle / nothing playing:** use a smaller neutral Listen card containing
   a Resume last session action when a resumable session exists and a few real
   music favorites when available. Remove the immersive art background, progress,
   and active transport controls. Move recent activity up beneath this card.
@@ -733,23 +734,23 @@ the project's 160-dpi emulator configuration; confirm sizing on the real panel.
 
 ### Subtle artwork treatment
 
-- [ ] Keep the original cover sharp and unchanged. Extend its atmosphere behind
+- [x] Keep the original cover sharp and unchanged. Extend its atmosphere behind
   the cover within the media card, with low saturation/contrast and a gentle
   fade to the neutral background before text and controls. Allow only a faint
   local spill into the right column; no full-screen artwork wallpaper.
-- [ ] Start with a softened enlarged copy of the existing artwork for an
+- [x] Start with a softened enlarged copy of the existing artwork for an
   immediate local effect while any AI job is pending or unavailable.
-- [ ] **ComfyUI outpainting (LAN):** configurable `comfyUiUrl` (private-LAN only,
+- [x] **ComfyUI outpainting (LAN):** configurable `comfyUiUrl` (private-LAN only,
   same NetworkGuard policy as go2rtc). When set, asynchronously upload the
   cover to ComfyUI, run the bundled pad/outpaint workflow, and store the result
   on-device under `filesDir/outpaint_cache/`, keyed by SHA-256 of the source
   cover bytes. On a later request for the same cover, use the cached file with
   no network. Blank URL disables outpaint (local soft treatment only).
-- [ ] Never block playback transport or backyard cameras on outpaint. Cap wait
+- [x] Never block playback transport or backyard cameras on outpaint. Cap wait
   (~60–90s), cancel when the track/cover identity changes, and fall back to the
   local softened enlarge on miss, timeout, or error. Single-flight per hash so
   concurrent UI does not spam ComfyUI. Soft size/count cap on the disk cache.
-- [ ] Remove the extended background in idle and compact camera-priority states.
+- [x] Remove the extended background in idle and compact camera-priority states.
   Readability and a calm wall display take precedence over decorative effects.
 
 ### Live backyard activity takes priority
@@ -764,29 +765,29 @@ time. Once all detections clear, the configured **15-second cooldown** expires
 before clearing streams, stopping targets, and refreshing the vision timeline;
 renewed detection cancels the pending cooldown.
 
-Today, `HaApp.HomeScreen` renders `VisionTimeline` followed by
-`PersonCameraOverlay(fitContent = true)` in the right column. The change below
-deliberately changes that visual ordering, not the detection or stream lifecycle.
+Greatroom `HaApp.HomeScreen` now puts backyard streams first when active, then a
+compact media strip and a limited timeline preview. Detection lifecycle is
+unchanged.
 
-- [ ] While backyard cameras are active, put **live streams first** in the
+- [x] While backyard cameras are active, put **live streams first** in the
   right column under a concise Backyard activity heading with camera labels
   and live indicators. Reuse `activePersonCameras`, `PersonCameraOverlay`, and
   `CameraCard`; keep uncropped 16:9 views and the existing stream lifecycle.
-- [ ] Preserve the existing camera grid behavior: one camera fills the column;
+- [x] Preserve the existing camera grid behavior: one camera fills the column;
   two cameras stack vertically; three use the existing 2×2 arrangement. Do not
   introduce automatic feed cycling or hide an active camera to make room for
   entertainment.
-- [ ] If music or TV is active, collapse its card to one compact strip below
+- [x] If music or TV is active, collapse its card to one compact strip below
   the live cameras: small artwork, title, room, and pause/resume. Detailed
   controls remain available on tap. If media is idle, temporarily omit the
   Listen/favorites card entirely.
-- [ ] With one or two streams, show at most one recent timeline event below the
+- [x] With one or two streams, show at most one recent timeline event below the
   media strip and a View history action. With three streams, omit the history
   preview before sacrificing camera space; retain access to full history.
-- [ ] After the existing detection cooldown finishes, restore the appropriate
+- [x] After the existing detection cooldown finishes, restore the appropriate
   full media or idle presentation and its normal activity preview. Do not
   interrupt actual media playback during these visual transitions.
-- [ ] Preserve the separate doorbell/front-camera popup command flow and its
+- [x] Preserve the separate doorbell/front-camera popup command flow and its
   wake-up behavior. This redesign concerns the home-screen backyard streams;
   it must not intercept or replace that popup.
 
@@ -797,7 +798,7 @@ deliberately changes that visual ordering, not the detection or stream lifecycle
   to see an active camera. Reserve dock clearance and comfortable gaps. Remove
   secondary previews before reducing typography or touch targets. Do not fill
   spare space with extra widgets solely to make the screen look full.
-- [ ] Validate music data availability while the popup is closed, reusing the
+- [x] Validate music data availability while the popup is closed, reusing the
   current music refresh architecture and per-entity subscriptions. Avoid
   introducing duplicate polling or recomposing the full home screen on each
   progress tick. Scope all shared-code layout changes by panel.
