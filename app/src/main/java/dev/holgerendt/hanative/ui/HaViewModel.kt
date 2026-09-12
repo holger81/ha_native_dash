@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import dev.holgerendt.hanative.HaNativeApp
 import dev.holgerendt.hanative.PanelConfig
+import dev.holgerendt.hanative.data.AlbumArtOutpaintRepository
 import dev.holgerendt.hanative.data.CalendarInfo
 import dev.holgerendt.hanative.data.CameraStreams
 import dev.holgerendt.hanative.data.ConnectionState
@@ -154,6 +155,8 @@ data class UiState(
     val displayIlluminanceEntity: String = "",
     /** Blank keeps dashboard `stream_server` / existing camera fallbacks. */
     val go2rtcUrl: String = "",
+    /** Blank disables ComfyUI album-art outpainting. */
+    val comfyUiUrl: String = "",
 )
 
 data class MediaPreview(
@@ -170,6 +173,11 @@ class HaViewModel(
 ) : ViewModel() {
     private val credentials = CredentialsStore(app)
     val client = HaClient()
+    val albumArtOutpaint = AlbumArtOutpaintRepository(
+        context = app,
+        haClient = client,
+        comfyUiUrl = { credentials.comfyUiUrl },
+    )
 
     val states: StateFlow<Map<String, EntityState>> = client.states
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
@@ -295,6 +303,7 @@ class HaViewModel(
             displayBrightnessEntity = credentials.displayBrightnessEntity,
             displayIlluminanceEntity = credentials.displayIlluminanceEntity,
             go2rtcUrl = credentials.go2rtcUrl,
+            comfyUiUrl = credentials.comfyUiUrl,
         )
         client.onKioskEvent = { params ->
             if (KioskCommands.panelAllowed(params)) {
@@ -1449,6 +1458,26 @@ class HaViewModel(
         }
         credentials.go2rtcUrl = trimmed
         _ui.value = _ui.value.copy(go2rtcUrl = credentials.go2rtcUrl)
+        return Result.success(Unit)
+    }
+
+    suspend fun setComfyUiUrl(url: String): Result<Unit> {
+        val trimmed = url.trim().trimEnd('/')
+        if (trimmed.isNotBlank()) {
+            if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+                return Result.failure(
+                    IllegalArgumentException("URL must start with http:// or https://"),
+                )
+            }
+            val host = NetworkGuard.hostOf(trimmed)
+                ?: return Result.failure(IllegalArgumentException("Enter a valid ComfyUI base URL"))
+            val privateHost = withContext(Dispatchers.IO) { NetworkGuard.isPrivateHost(host) }
+            if (!privateHost) {
+                return Result.failure(IllegalArgumentException(NetworkGuard.hostRejectionReason(host)))
+            }
+        }
+        credentials.comfyUiUrl = trimmed
+        _ui.value = _ui.value.copy(comfyUiUrl = credentials.comfyUiUrl)
         return Result.success(Unit)
     }
 

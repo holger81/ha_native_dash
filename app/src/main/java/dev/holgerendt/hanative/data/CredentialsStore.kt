@@ -75,6 +75,13 @@ class CredentialsStore(context: Context) {
             persist()
         }
 
+    /** LAN ComfyUI base URL for album-art outpainting. Blank disables outpaint. */
+    var comfyUiUrl: String = readPref(KEY_COMFYUI_URL)
+        set(value) {
+            field = value.trim().trimEnd('/')
+            persist()
+        }
+
     /** Null means default (all light.* except screen/segment/led); empty means none. */
     var monitoredLightEntities: List<String>? = readMonitoredLightsPref()
         set(value) {
@@ -231,6 +238,7 @@ class CredentialsStore(context: Context) {
             .putString(KEY_URL, baseUrl)
             .putString(KEY_TOKEN, token)
             .putString(KEY_GO2RTC_URL, go2rtcUrl)
+            .putString(KEY_COMFYUI_URL, comfyUiUrl)
             .putString(KEY_PIN, managementPin)
             .putInt(KEY_TIMEOUT_SECONDS, screenTimeoutSeconds)
             .putString(KEY_DISPLAY_OFF, displayOffEntity)
@@ -270,6 +278,7 @@ class CredentialsStore(context: Context) {
             put("ha_url", url)
             put("ha_token", accessToken)
             put("go2rtc_url", go2rtcUrl)
+            put("comfyui_url", comfyUiUrl)
             put("management_pin", pin)
             put("screen_timeout_seconds", screenTimeoutSeconds)
             if (displayOffEntity.isNotBlank()) put("display_off_entity", displayOffEntity)
@@ -344,6 +353,10 @@ class CredentialsStore(context: Context) {
         if (go2rtcUrl.isBlank()) {
             val url = obj.optString("go2rtc_url").trim().trimEnd('/')
             if (url.isNotBlank()) go2rtcUrl = url
+        }
+        if (comfyUiUrl.isBlank()) {
+            val url = obj.optString("comfyui_url").trim().trimEnd('/')
+            if (url.isNotBlank()) comfyUiUrl = url
         }
         if (token.isBlank()) {
             val value = obj.optString("ha_token").trim()
@@ -423,6 +436,7 @@ class CredentialsStore(context: Context) {
         private const val KEY_URL = "ha_url"
         private const val KEY_TOKEN = "ha_token"
         private const val KEY_GO2RTC_URL = "go2rtc_url"
+        private const val KEY_COMFYUI_URL = "comfyui_url"
         private const val KEY_PIN = "management_pin"
         private const val KEY_TIMEOUT_SECONDS = "screen_timeout_seconds"
         private const val KEY_TIMEOUT_MINUTES_LEGACY = "screen_timeout_minutes"

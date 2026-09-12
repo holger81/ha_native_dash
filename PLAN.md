@@ -738,10 +738,17 @@ the project's 160-dpi emulator configuration; confirm sizing on the real panel.
   fade to the neutral background before text and controls. Allow only a faint
   local spill into the right column; no full-screen artwork wallpaper.
 - [ ] Start with a softened enlarged copy of the existing artwork for an
-  immediate local effect. This is an approximation, not true AI outpainting.
-  Genuine outpainting is an optional later enhancement generated once per
-  distinct artwork and cached, never a blocking dependency for playback or
-  camera display. Fall back to the local treatment when unavailable.
+  immediate local effect while any AI job is pending or unavailable.
+- [ ] **ComfyUI outpainting (LAN):** configurable `comfyUiUrl` (private-LAN only,
+  same NetworkGuard policy as go2rtc). When set, asynchronously upload the
+  cover to ComfyUI, run the bundled pad/outpaint workflow, and store the result
+  on-device under `filesDir/outpaint_cache/`, keyed by SHA-256 of the source
+  cover bytes. On a later request for the same cover, use the cached file with
+  no network. Blank URL disables outpaint (local soft treatment only).
+- [ ] Never block playback transport or backyard cameras on outpaint. Cap wait
+  (~60–90s), cancel when the track/cover identity changes, and fall back to the
+  local softened enlarge on miss, timeout, or error. Single-flight per hash so
+  concurrent UI does not spam ComfyUI. Soft size/count cap on the disk cache.
 - [ ] Remove the extended background in idle and compact camera-priority states.
   Readability and a calm wall display take precedence over decorative effects.
 

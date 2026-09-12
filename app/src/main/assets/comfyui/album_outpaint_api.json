@@ -1,0 +1,81 @@
+{
+  "_meta": {
+    "title": "Album art outpaint (API)",
+    "notes": "Requires a standard SD1.5 checkpoint named below on the ComfyUI box. The app rewrites the LoadImage filename (node 10) after upload. Export/replace this file from ComfyUI File → Export (API) if your node graph differs."
+  },
+  "4": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "v1-5-pruned-emaonly.safetensors"
+    }
+  },
+  "10": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "PLACEHOLDER_COVER.png"
+    }
+  },
+  "12": {
+    "class_type": "ImagePadForOutpaint",
+    "inputs": {
+      "image": ["10", 0],
+      "left": 256,
+      "top": 128,
+      "right": 256,
+      "bottom": 128,
+      "feathering": 40
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "album artwork, seamless extended background, soft atmosphere, matching colors, no text, no logos",
+      "clip": ["4", 1]
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "blurry, low quality, watermark, text, logo, border, frame, cropped, cut off",
+      "clip": ["4", 1]
+    }
+  },
+  "11": {
+    "class_type": "VAEEncodeForInpaint",
+    "inputs": {
+      "pixels": ["12", 0],
+      "vae": ["4", 2],
+      "mask": ["12", 1],
+      "grow_mask_by": 6
+    }
+  },
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 0,
+      "steps": 20,
+      "cfg": 7,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1,
+      "model": ["4", 0],
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "latent_image": ["11", 0]
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["3", 0],
+      "vae": ["4", 2]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "ha_album_outpaint",
+      "images": ["8", 0]
+    }
+  }
+}

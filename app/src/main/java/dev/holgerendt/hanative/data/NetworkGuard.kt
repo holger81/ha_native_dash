@@ -11,7 +11,7 @@ import java.net.InetAddress
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * The app only talks to the local network: Home Assistant, go2rtc, and HA-provided media URLs.
+ * The app only talks to the local network: Home Assistant, go2rtc, ComfyUI, and HA-provided media URLs.
  * Android's network-security XML cannot express IP ranges, so the "private networks only"
  * policy from network_security_config is enforced here at every egress point instead.
  *

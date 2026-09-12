@@ -485,6 +485,7 @@ private fun SettingsPopup(popup: PopupNode, viewModel: HaViewModel) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ScreenTimeoutCard(viewModel)
         Go2rtcUrlCard(viewModel)
+        ComfyUiUrlCard(viewModel)
         ManagementPinCard(viewModel)
         CalendarSubscriptionsCard(viewModel)
         if (PanelConfig.IS_ENTRANCE) {
@@ -1061,6 +1062,89 @@ private fun Go2rtcUrlCard(viewModel: HaViewModel) {
                             if (result.isSuccess) {
                                 error = null
                                 message = "Using dashboard stream_server"
+                            } else {
+                                message = null
+                                error = result.exceptionOrNull()?.message ?: "Could not clear URL"
+                            }
+                        }
+                    },
+                ) {
+                    Text("Clear", color = overlay.text)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ComfyUiUrlCard(viewModel: HaViewModel) {
+    val overlay = LocalOverlay.current
+    val ui by viewModel.ui.collectAsState()
+    var urlText by remember { mutableStateOf(ui.comfyUiUrl) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var message by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(ui.comfyUiUrl) {
+        urlText = ui.comfyUiUrl
+    }
+    val fieldColors = settingsFieldColors(overlay)
+    val scope = rememberCoroutineScope()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .background(overlay.card)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("ComfyUI outpaint", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            "LAN ComfyUI base URL for extending album art behind the media card. Leave blank to use a local soft enlarge only. Results are cached on this tablet.",
+            color = overlay.muted,
+            fontSize = 14.sp,
+        )
+        OutlinedTextField(
+            value = urlText,
+            onValueChange = {
+                urlText = it
+                error = null
+                message = null
+            },
+            label = { Text("ComfyUI base URL") },
+            placeholder = { Text("http://192.168.10.50:8188") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = fieldColors,
+        )
+        error?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 13.sp) }
+        message?.let { Text(it, color = Color(0xFFC5E1A5), fontSize = 13.sp) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = {
+                    scope.launch {
+                        val result = viewModel.setComfyUiUrl(urlText)
+                        if (result.isSuccess) {
+                            error = null
+                            message = if (urlText.isBlank()) "Outpaint disabled" else "ComfyUI URL saved"
+                        } else {
+                            message = null
+                            error = result.exceptionOrNull()?.message ?: "Could not save URL"
+                        }
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(ActiveYellow),
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Save URL", color = Color.Black)
+            }
+            if (ui.comfyUiUrl.isNotBlank() || urlText.isNotBlank()) {
+                TextButton(
+                    onClick = {
+                        urlText = ""
+                        scope.launch {
+                            val result = viewModel.setComfyUiUrl("")
+                            if (result.isSuccess) {
+                                error = null
+                                message = "Outpaint disabled"
                             } else {
                                 message = null
                                 error = result.exceptionOrNull()?.message ?: "Could not clear URL"
