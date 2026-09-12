@@ -613,6 +613,15 @@ class HaViewModel(
 
     private val _musicWall = MutableStateFlow(MusicWallState(selectedEntityId = credentials.musicPlayerEntity.ifBlank { null }))
     val musicWall: StateFlow<MusicWallState> = _musicWall
+    private val musicRefresher = MusicWallRefresher(
+        state = _musicWall,
+        loadPlayers = { client.musicAssistantPlayers() },
+        refreshPlayers = { client.refreshMusicPlayerTelemetry(it) },
+        loadQueue = { selected, players -> client.musicAssistantQueue(selected, players) },
+        savedSelection = { credentials.musicPlayerEntity.takeIf { it.isNotBlank() } },
+        saveSelection = { credentials.musicPlayerEntity = it },
+        playerState = { client.state(it)?.state },
+    )
     private var musicWallJob: Job? = null
     private var musicMediaWatchJob: Job? = null
     private var musicDiscoveryJob: Job? = null
@@ -629,6 +638,7 @@ class HaViewModel(
     fun selectMusicPlayer(entityId: String) {
         val normalized = CredentialsStore.normalizeEntityId(entityId)
         if (normalized.isBlank()) return
+        musicRefresher.invalidate()
         credentials.musicPlayerEntity = normalized
         _musicWall.value = _musicWall.value.copy(selectedEntityId = normalized, error = null)
         refreshMusicQueue()
@@ -1114,6 +1124,7 @@ class HaViewModel(
     }
 
     private fun closeMusicWall() {
+        musicRefresher.invalidate()
         musicWallJob?.cancel()
         musicWallJob = null
         musicMediaWatchJob?.cancel()
@@ -1227,60 +1238,7 @@ class HaViewModel(
     }
 
     private suspend fun refreshMusicWall(forcePlayers: Boolean) {
-        try {
-            val current = _musicWall.value
-            val players = when {
-                forcePlayers || current.players.isEmpty() -> {
-                    runCatching { client.musicAssistantPlayers() }
-                        .getOrElse { error ->
-                            _musicWall.value = current.copy(
-                                loading = false,
-                                error = error.message ?: "Could not load media players",
-                            )
-                            return
-                        }
-                }
-                else -> runCatching { client.refreshMusicPlayerTelemetry(current.players) }
-                    .getOrElse { current.players }
-            }
-            val preferred = current.selectedEntityId
-                ?: credentials.musicPlayerEntity.takeIf { it.isNotBlank() }
-            val selected = when {
-                preferred != null && players.any { it.entityId == preferred } -> preferred
-                players.isEmpty() -> null
-                else -> {
-                    players.firstOrNull { client.state(it.entityId)?.state == "playing" }?.entityId
-                        ?: players.firstOrNull { client.state(it.entityId)?.state == "paused" }?.entityId
-                        ?: players.first().entityId
-                }
-            }
-            if (selected != null && selected != credentials.musicPlayerEntity) {
-                credentials.musicPlayerEntity = selected
-            }
-            val queue = if (selected != null) {
-                runCatching { client.musicAssistantQueue(selected, players) }.getOrNull()
-            } else {
-                null
-            }
-            _musicWall.value = current.copy(
-                loading = false,
-                players = players,
-                selectedEntityId = selected,
-                queue = queue,
-                error = when {
-                    players.isEmpty() ->
-                        "No media players found. Add the Music Assistant integration in Home Assistant for the full wall player."
-                    else -> null
-                },
-            )
-        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            _musicWall.value = _musicWall.value.copy(
-                loading = false,
-                error = error.message ?: "Music player failed to load",
-            )
-        }
+        musicRefresher.refresh(forcePlayers)
     }
 
     fun openSetup() {

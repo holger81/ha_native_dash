@@ -4,9 +4,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -181,17 +181,21 @@ class HaClient {
         private const val SNAPSHOT_CACHE_MAX_ENTRIES = 16
     }
 
-    private var webSocket: WebSocket? = null
+    @Volatile private var webSocket: WebSocket? = null
     private var baseUrl: String = ""
     private var token: String = ""
     private val nextId = AtomicInteger(1)
+    private var initialStatesRequestId: Int? = null
     private val pending = ConcurrentHashMap<Int, (Result<JsonElement>) -> Unit>()
     private val forecastSubscriptions = ConcurrentHashMap<Int, (List<JsonObject>) -> Unit>()
 
-    private val messageChannel = Channel<String>(capacity = 2_048, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    // Overflow must fail the connection explicitly: this queue also carries command replies
+    // and kiosk events, which cannot safely be dropped like intermediate entity states.
+    private val messageChannel = Channel<Pair<WebSocket, String>>(capacity = 2_048)
+    private val messageLock = Any()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val stateBatch = ConcurrentHashMap<String, EntityState>()
-    @Volatile private var batchScheduled = false
+    private val stateBatch = mutableMapOf<String, EntityState?>()
+    private var batchJob: Job? = null
     @Volatile private var messageCollectorStarted = false
 
     private val _states = MutableStateFlow<Map<String, EntityState>>(emptyMap())
@@ -252,15 +256,17 @@ class HaClient {
         openSocket()
     }
 
-    fun disconnect() {
+    fun disconnect(): Unit = synchronized(messageLock) {
         webSocket?.close(1000, "bye")
         webSocket = null
         drainPending(IllegalStateException("Disconnected"))
         massIngress = null
         massAddonSlug = null
         massPlayersCache = null
+        initialStatesRequestId = null
         stateBatch.clear()
-        batchScheduled = false
+        batchJob?.cancel()
+        batchJob = null
         snapshotCache.clear()
         while (true) {
             if (!messageChannel.tryReceive().isSuccess) break
@@ -281,26 +287,24 @@ class HaClient {
         forecastSubscriptions.clear()
     }
 
-    private fun openSocket() {
+    private fun openSocket(): Unit = synchronized(messageLock) {
         val wsUrl = baseUrl
             .replace(Regex("^http://"), "ws://")
             .replace(Regex("^https://"), "wss://") + "/api/websocket"
         val request = Request.Builder().url(wsUrl).build()
         webSocket = http.newWebSocket(request, object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
-                if (webSocket !== this@HaClient.webSocket) return
-                // DROP_OLDEST keeps the channel moving under bursty state_changed traffic.
-                messageChannel.trySend(text)
+                enqueueMessage(webSocket, text)
             }
 
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?): Unit = synchronized(messageLock) {
                 if (this@HaClient.webSocket !== webSocket) return
                 this@HaClient.webSocket = null
                 drainPending(t)
                 _connection.value = ConnectionState.Error(t.message ?: "WebSocket failed")
             }
 
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String): Unit = synchronized(messageLock) {
                 if (this@HaClient.webSocket !== webSocket) return
                 this@HaClient.webSocket = null
                 drainPending(IllegalStateException("Connection closed ($code: $reason)"))
@@ -312,18 +316,30 @@ class HaClient {
         ensureMessageCollector()
     }
 
+    internal fun enqueueMessage(socket: WebSocket, text: String): Unit = synchronized(messageLock) {
+        if (socket !== webSocket) return
+        if (messageChannel.trySend(socket to text).isFailure) {
+            disconnect()
+            socket.cancel()
+            _connection.value = ConnectionState.Error("WebSocket backlog exceeded; reconnecting")
+        }
+    }
+
     private fun ensureMessageCollector() {
         if (messageCollectorStarted) return
         messageCollectorStarted = true
         scope.launch {
             while (true) {
-                val text = messageChannel.receive()
-                runCatching { handleMessage(text) }
+                val (socket, text) = messageChannel.receive()
+                synchronized(messageLock) {
+                    // A message already dequeued when disconnect() ran belongs to the old session.
+                    if (socket === webSocket) runCatching { handleMessage(text) }
+                }
             }
         }
     }
 
-    private fun handleMessage(text: String) {
+    internal fun handleMessage(text: String): Unit = synchronized(messageLock) {
         val obj = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
         when (obj["type"]?.jsonPrimitive?.contentOrNull) {
             "auth_required" -> {
@@ -349,8 +365,10 @@ class HaClient {
                     put("type", "subscribe_events")
                     put("event_type", "zha_event")
                 })
+                val statesId = nextId.getAndIncrement()
+                initialStatesRequestId = statesId
                 send(buildJsonObject {
-                    put("id", nextId.getAndIncrement())
+                    put("id", statesId)
                     put("type", "get_states")
                 })
             }
@@ -380,8 +398,9 @@ class HaClient {
                             ?.jsonPrimitive?.contentOrNull ?: "Command failed"
                         callback(Result.failure(IllegalStateException(message)))
                     }
-                } else if (success) {
-                    obj["result"]?.let { maybeLoadStates(it) }
+                } else if (id == initialStatesRequestId) {
+                    initialStatesRequestId = null
+                    if (success) obj["result"]?.let { maybeLoadStates(it) }
                 }
             }
             "event" -> {
@@ -399,7 +418,11 @@ class HaClient {
                     "state_changed" -> {
                         val data = event["data"]?.jsonObject ?: return
                         val newState = data["new_state"]
-                        if (newState is JsonObject) {
+                        if (newState == JsonNull) {
+                            val entityId = data["entity_id"]?.jsonPrimitive?.contentOrNull ?: return
+                            stateBatch[entityId] = null
+                            scheduleBatchFlush()
+                        } else if (newState is JsonObject) {
                             parseEntity(newState)?.let { entity ->
                                 stateBatch[entity.entityId] = entity
                                 scheduleBatchFlush()
@@ -420,20 +443,27 @@ class HaClient {
     }
 
     private fun scheduleBatchFlush() {
-        if (batchScheduled) return
-        batchScheduled = true
-        scope.launch {
+        if (batchJob?.isActive == true) return
+        batchJob = scope.launch {
             delay(80)
-            batchScheduled = false
-            flushStateBatch()
+            synchronized(messageLock) {
+                flushStateBatch()
+                batchJob = null
+            }
         }
     }
 
-    private fun flushStateBatch() {
+    internal fun flushStateBatch(): Unit = synchronized(messageLock) {
         if (stateBatch.isEmpty()) return
         val batch = stateBatch.toMap()
         stateBatch.clear()
-        _states.update { current -> current + batch }
+        _states.update { current ->
+            current.toMutableMap().apply {
+                batch.forEach { (id, state) ->
+                    if (state == null) remove(id) else put(id, state)
+                }
+            }
+        }
     }
 
     private fun maybeLoadStates(result: JsonElement) {
@@ -441,9 +471,9 @@ class HaClient {
         val mapped = result.mapNotNull { element ->
             (element as? JsonObject)?.let(::parseEntity)
         }.associateBy { it.entityId }
-        if (mapped.isNotEmpty()) {
-            _states.value = mapped
-        }
+        // The full snapshot supersedes every state event received before it, including deletes.
+        stateBatch.clear()
+        _states.value = mapped
     }
 
     private fun parseEntity(obj: JsonObject): EntityState? {
