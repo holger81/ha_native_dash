@@ -221,7 +221,7 @@ class ComfyUiOutpaintClient(
         const val OUTPAINT_PROMPT = ""
 
         /** Bump when pad strategy / prompt / workflow quality changes. */
-        const val OUTPAINT_CACHE_VERSION = "empty-prompt-feather0-v3"
+        const val OUTPAINT_CACHE_VERSION = "empty-prompt-feather0-v4"
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .addInterceptor(NetworkGuard.interceptor)

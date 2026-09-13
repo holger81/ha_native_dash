@@ -76,6 +76,13 @@ class AlbumArtOutpaintRepository(
         return cache.cachedFile(source)
     }
 
+    /** True when the cached pad was written by Flux (`.flux` sidecar), not a local edge pad. */
+    suspend fun peekFluxComplete(coverRef: String?): Boolean {
+        if (coverRef.isNullOrBlank() || comfyUiUrl().isBlank()) return false
+        val source = fetchCoverBytes(coverRef) ?: return false
+        return cache.isFluxComplete(source)
+    }
+
     /**
      * Prefer cache; if missing, register [coverRef] as current backfill and poll
      * while the priority worker runs (upcoming still goes first).
@@ -178,15 +185,12 @@ class AlbumArtOutpaintRepository(
         return local
     }
 
-    /** True when the on-disk pad should not be regenerated (Flux or textured). */
+    /** True when the on-disk pad should not be regenerated (Flux only). */
     private fun isFluxPadSettled(source: ByteArray, cached: File): Boolean {
-        if (cache.isFluxComplete(source)) return true
-        val bytes = runCatching { cached.readBytes() }.getOrNull() ?: return false
-        if (AlbumArtLocalOutpaint.looksLikeLocalSolidPad(bytes)) return false
-        if (AlbumArtLocalOutpaint.shouldRejectFluxPad(bytes, source)) return false
-        // Textured, edge-faithful pad without a sidecar — treat as Flux and mark.
-        cache.markFluxComplete(source)
-        return true
+        // Only the `.flux` sidecar means a generative upgrade landed. Local edge
+        // pads are textured enough to look "done" and used to freeze upgrades.
+        if (!cached.isFile || cached.length() <= 0L) return false
+        return cache.isFluxComplete(source)
     }
 
     private suspend fun hasUncachedWork(plan: OutpaintTargets): Boolean =

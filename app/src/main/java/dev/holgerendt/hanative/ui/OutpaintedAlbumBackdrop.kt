@@ -84,24 +84,28 @@ fun AlbumOutpaintHero(
     var outpaintFile by remember(coverPath) { mutableStateOf<File?>(null) }
     var layout by remember(coverPath) { mutableStateOf<OutpaintCoverLayout?>(null) }
     var fileStamp by remember(coverPath) { mutableStateOf(0L) }
+    var fluxComplete by remember(coverPath) { mutableStateOf(false) }
 
     LaunchedEffect(coverPath, ui.comfyUiUrl) {
         outpaintFile = null
         layout = null
         fileStamp = 0L
+        fluxComplete = false
         if (coverPath.isNullOrBlank() || ui.comfyUiUrl.isBlank()) return@LaunchedEffect
         viewModel.scheduleAlbumArtOutpaintPrefetch(currentCoverOverride = coverPath)
         var lastStamp = 0L
-        var unchangedSince = 0L
         while (true) {
             val hit = runCatching {
                 viewModel.albumArtOutpaint.peekOutpaintedFile(coverPath)
             }.getOrNull()
+            val fluxDone = runCatching {
+                viewModel.albumArtOutpaint.peekFluxComplete(coverPath)
+            }.getOrDefault(false)
+            fluxComplete = fluxDone
             if (hit != null) {
                 val stamp = hit.length() xor hit.lastModified()
                 if (stamp != lastStamp) {
                     lastStamp = stamp
-                    unchangedSince = 0L
                     val bounds = withContext(Dispatchers.IO) {
                         val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                         BitmapFactory.decodeFile(hit.absolutePath, opts)
@@ -113,19 +117,15 @@ fun AlbumOutpaintHero(
                         layout = nextLayout
                         fileStamp = stamp
                     }
-                } else if (unchangedSince == 0L) {
-                    unchangedSince = System.nanoTime()
-                } else if (System.nanoTime() - unchangedSince > UPGRADE_POLL_NS) {
-                    // Local pad often lands first; keep watching for a Flux replace.
-                    return@LaunchedEffect
                 }
             }
-            delay(2_000L)
+            // Keep watching until Flux lands — local pads must not freeze the hero.
+            delay(if (fluxDone) 30_000L else 2_000L)
         }
     }
 
     Crossfade(
-        targetState = Triple(outpaintFile, layout, fileStamp),
+        targetState = if (fluxComplete) Triple(outpaintFile, layout, fileStamp) else Triple(null, null, 0L),
         modifier = modifier.fillMaxWidth(),
         label = "album-outpaint-hero",
     ) { (file, geo, stamp) ->
@@ -138,6 +138,8 @@ fun AlbumOutpaintHero(
                 viewModel = viewModel,
             )
         } else {
+            // Local edge pads look blocky under a floating cover — keep the soft
+            // enlarge + centered art until Flux actually lands.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -175,8 +177,6 @@ private fun HoveringOutpaintStage(
 ) {
     val context = LocalContext.current
     val loader = rememberHaImageLoader(viewModel.client)
-    // Match typical cover corner radius; keep in sync with the float scale below so
-    // rounded clips fully hide the square cover baked into the Flux pad.
     val coverShape = RoundedCornerShape(22.dp)
     val cacheKey = "outpaint-${outpaintFile.name}-$fileStamp"
     BoxWithConstraints(
@@ -194,13 +194,13 @@ private fun HoveringOutpaintStage(
                 .build(),
             contentDescription = null,
             imageLoader = loader,
-            contentScale = ContentScale.Fit,
+            // FillBounds avoids Fit letterboxing that showed as a grey strip under the cover.
+            contentScale = ContentScale.FillBounds,
             colorFilter = desaturateFilter(0.9f),
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer { alpha = 0.88f },
         )
-        // Soft veil so the sharp cover reads as a lifted plane.
         Box(
             Modifier
                 .fillMaxSize()
@@ -208,20 +208,28 @@ private fun HoveringOutpaintStage(
         )
         val coverW = maxWidth * layout.coverWidthFrac
         val coverH = maxHeight * layout.coverHeightFrac
-        // Grow ~6% so the rounded cover fully covers the square pad corners underneath,
-        // and nudge up so the float reads clearly above the atmosphere.
-        val grow = 0.06f
-        val floatUp = coverH * 0.012f
+        val coverLeft = maxWidth * layout.coverLeftFrac
+        val coverTop = maxHeight * layout.coverTopFrac
+        // Exact pad region: hide the square cover baked into the outpaint so a
+        // lifted rounded overlay cannot reveal a mismatched strip underneath.
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .offset(x = coverLeft, y = coverTop)
+                .size(coverW, coverH)
+                .background(Color.Black.copy(alpha = 0.55f)),
+        )
+        // Slight grow only — lift comes from shadow, not Y offset (offset exposed the pad).
+        val grow = 0.04f
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .offset(
-                    x = maxWidth * layout.coverLeftFrac - coverW * (grow / 2f),
-                    y = maxHeight * layout.coverTopFrac - coverH * (grow / 2f) - floatUp,
+                    x = coverLeft - coverW * (grow / 2f),
+                    y = coverTop - coverH * (grow / 2f),
                 )
                 .size(coverW * (1f + grow), coverH * (1f + grow)),
         ) {
-            // Deep contact shadow cast onto the pad (separate layer so clip stays crisp).
             Box(
                 modifier = Modifier
                     .matchParentSize()
@@ -235,7 +243,6 @@ private fun HoveringOutpaintStage(
                     )
                     .background(Color.Transparent, coverShape),
             )
-            // Near shadow + clipped art: clip before border so pixels hug the radius.
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -281,10 +288,10 @@ private fun BoxScope.SoftAtmosphereLayer(
         hasOutpaint = false
         if (ui.comfyUiUrl.isBlank()) return@LaunchedEffect
         while (true) {
-            val hit = runCatching {
-                viewModel.albumArtOutpaint.peekOutpaintedFile(coverPath)
-            }.getOrNull()
-            if (hit != null) {
+            val fluxDone = runCatching {
+                viewModel.albumArtOutpaint.peekFluxComplete(coverPath)
+            }.getOrDefault(false)
+            if (fluxDone) {
                 hasOutpaint = true
                 return@LaunchedEffect
             }
@@ -292,7 +299,7 @@ private fun BoxScope.SoftAtmosphereLayer(
         }
     }
 
-    // Real outpaint hero replaces the soft enlarge; keep soft only while waiting.
+    // Soft enlarge stays until Flux lands (local edge pads are not shown as the hero).
     if (hasOutpaint) return
     val url = coverUrl ?: return
     AsyncImage(
@@ -342,6 +349,3 @@ private fun Modifier.fadeSoftAtmosphere(): Modifier = drawWithContent {
         ),
     )
 }
-
-/** Keep watching for a Flux replace after the instant local pad lands. */
-private const val UPGRADE_POLL_NS = 3L * 60L * 1_000_000_000L
