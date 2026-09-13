@@ -2796,7 +2796,7 @@
         }
       ],
       "weather_entity": "weather.forecast_tankerland_ct",
-      "days": 5,
+      "days": 10,
       "columns": 5,
       "show_navigation": true,
       "combine_similar": true,

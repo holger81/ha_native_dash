@@ -556,10 +556,10 @@ fun RoomGrid(rooms: List<WidgetNode>, viewModel: HaViewModel, modifier: Modifier
     }
 }
 
-/** Greatroom Phase 6: one five-day row stays compact; multi-row planners keep taller day wells. */
+/** Keep both five-day Greatroom rows compact; Entrance retains its taller day wells. */
 private fun weekPlannerDayMinHeight(days: Int): Dp = when {
     days <= 2 -> 140.dp
-    days <= 5 && !PanelConfig.IS_ENTRANCE -> 132.dp
+    days <= 10 && !PanelConfig.IS_ENTRANCE -> 132.dp
     else -> 280.dp
 }
 
@@ -739,14 +739,14 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                             onShowMore = { dayEvents ->
                                 manageOverlay = WeekPlannerManageOverlay.DayEvents(day, dayEvents)
                             },
-                            maxVisibleEvents = if (!PanelConfig.IS_ENTRANCE && dayCount <= 5) 2 else null,
+                            maxVisibleEvents = if (!PanelConfig.IS_ENTRANCE && dayCount <= 10) 2 else null,
                             now = now,
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxHeight()
                                 .heightIn(
                                     min = weekPlannerDayMinHeight(widget.days ?: 10),
-                                    max = if (!PanelConfig.IS_ENTRANCE && dayCount <= 5) 200.dp else Dp.Unspecified,
+                                    max = if (!PanelConfig.IS_ENTRANCE && dayCount <= 10) 200.dp else Dp.Unspecified,
                                 ),
                         )
                     }
