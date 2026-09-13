@@ -901,9 +901,11 @@ reviewed on emulator/wall.
   no atmospheric background. Do not redesign the ComfyUI service for this task.
   Soft enlarge / flat pad must never be mistaken for the finished look — real
   Flux fill outpainting is the atmosphere source once cached (see Subtle
-  artwork treatment).
+  artwork treatment). Outpaint presentation should stay clearly visible (not
+  buried under heavy blur/desat/alpha); wash mainly behind text and controls.
   **Done in code:** light `CardLight` fade, single Crossfade atmosphere layer,
-  `matchParentSize`, soft pre-S fallback via desaturate/alpha.
+  `matchParentSize`, soft pre-S fallback via desaturate/alpha; outpaint path
+  uses higher alpha, little desat, no blur, lower-band wash.
 
 #### 6.R2 — P1: give the full player wall-display proportions
 

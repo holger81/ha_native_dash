@@ -15,9 +15,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.graphicsLayer
@@ -103,6 +101,7 @@ private fun BoxScope.AtmosphereLayer(
             Box(Modifier.fillMaxSize().drawWithContent { /* light card shows through */ })
             return@Crossfade
         }
+        val isOutpaint = file != null
         AsyncImage(
             model = ImageRequest.Builder(context)
                 .data(model)
@@ -111,26 +110,28 @@ private fun BoxScope.AtmosphereLayer(
             contentDescription = null,
             imageLoader = loader,
             contentScale = ContentScale.Crop,
-            colorFilter = desaturateFilter(0.35f),
+            // Soft local stays muted; real outpaint keeps most of its color.
+            colorFilter = desaturateFilter(if (isOutpaint) 0.82f else 0.4f),
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    scaleX = 1.25f
-                    scaleY = 1.25f
-                    // ~15–25% visible image contribution before the light fade.
-                    alpha = if (file != null) 0.22f else 0.18f
+                    // Outpaint is already padded — avoid extra zoom that crops the fill.
+                    val scale = if (isOutpaint) 1.02f else 1.25f
+                    scaleX = scale
+                    scaleY = scale
+                    alpha = if (isOutpaint) 0.72f else 0.28f
                 }
-                .then(softBlurFallback())
-                .fadeEdgesToLightCard(),
+                // Blur only the interim soft enlarge; keep Flux fill crisp.
+                .then(if (isOutpaint) Modifier else softBlurFallback())
+                .fadeAtmosphereToLightCard(outpaint = isOutpaint),
         )
     }
 }
 
 private fun softBlurFallback(): Modifier =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        Modifier.blur(32.dp)
+        Modifier.blur(28.dp)
     } else {
-        // Pre-S: extra desaturation/alpha already softens; slight extra scale via parent.
         Modifier
     }
 
@@ -139,20 +140,37 @@ private fun desaturateFilter(saturation: Float): ColorFilter {
     return ColorFilter.colorMatrix(matrix)
 }
 
-/** Fade atmosphere into the light media card so dark text stays readable. */
-private fun Modifier.fadeEdgesToLightCard(): Modifier = drawWithContent {
+/**
+ * Keep dark text readable without burying the atmosphere.
+ * Real outpaint: light veil + stronger wash only on the lower text/controls band.
+ * Soft fallback: heavier overall wash (it is only a temporary stand-in).
+ */
+private fun Modifier.fadeAtmosphereToLightCard(outpaint: Boolean): Modifier = drawWithContent {
     drawContent()
     val card = CardLight
-    drawRect(
-        brush = Brush.radialGradient(
-            colorStops = arrayOf(
-                0.0f to card.copy(alpha = 0.35f),
-                0.45f to card.copy(alpha = 0.72f),
-                0.75f to card.copy(alpha = 0.92f),
-                1.0f to card.copy(alpha = 1.0f),
+    if (outpaint) {
+        drawRect(card.copy(alpha = 0.12f))
+        drawRect(
+            brush = Brush.verticalGradient(
+                colorStops = arrayOf(
+                    0.00f to card.copy(alpha = 0.05f),
+                    0.40f to card.copy(alpha = 0.12f),
+                    0.62f to card.copy(alpha = 0.38f),
+                    0.82f to card.copy(alpha = 0.68f),
+                    1.00f to card.copy(alpha = 0.82f),
+                ),
             ),
-            center = Offset(size.width * 0.32f, size.height * 0.28f),
-            radius = size.maxDimension * 0.95f,
-        ),
-    )
+        )
+    } else {
+        drawRect(
+            brush = Brush.verticalGradient(
+                colorStops = arrayOf(
+                    0.00f to card.copy(alpha = 0.35f),
+                    0.50f to card.copy(alpha = 0.55f),
+                    0.75f to card.copy(alpha = 0.78f),
+                    1.00f to card.copy(alpha = 0.92f),
+                ),
+            ),
+        )
+    }
 }
