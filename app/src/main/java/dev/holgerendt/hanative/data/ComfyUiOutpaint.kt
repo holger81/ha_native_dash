@@ -208,27 +208,20 @@ class ComfyUiOutpaintClient(
         const val OUTPAINT_PAD_BOTTOM = 128
 
         /**
-         * Positive CLIP text for Flux fill outpaint.
-         * Prefer continuing whatever is visible at the cover edges. Flat color is
-         * only correct when the edge itself is already a uniform field — not a
-         * default beige/gray pad.
+         * Positive CLIP text for Flux fill outpaint: intentionally empty.
+         *
+         * Flux fill extends the image on its own; an instruction-style prompt makes
+         * it *worse*. Measured against real covers on the household box, a prompt
+         * naming what to avoid ("never beige, cream, paper, frames") produced exactly
+         * that — flat cream pads and invented frames/slide mounts — because Flux has
+         * no negative conditioning here (node 46 zeroes it out) and simply draws the
+         * nouns it reads. With an empty prompt the same covers extended their own
+         * scene, matching cover edge colors within a few RGB units.
          */
-        const val OUTPAINT_PROMPT =
-            "Expand the album cover into the empty padded border by continuing " +
-                "exactly what is already visible at each edge of the square. " +
-                "Copy the edge colors, lighting, and textures outward: blue water " +
-                "stays blue water, sky stays sky, photo grain stays photo grain, " +
-                "illustration lines keep going. " +
-                "If the cover already has a black matte, black frame, or any flat " +
-                "uniform border color, fill the pad with that same flat color only — " +
-                "do not invent scene content past a matte. " +
-                "Never fill with generic beige, cream, gray, white, or paper unless " +
-                "that is literally the cover's edge color. " +
-                "No new people, objects, text, logos, frames, or borders. " +
-                "Keep the original cover pixels unchanged."
+        const val OUTPAINT_PROMPT = ""
 
         /** Bump when pad strategy / prompt / workflow quality changes. */
-        const val OUTPAINT_CACHE_VERSION = "hybrid-edge-v1"
+        const val OUTPAINT_CACHE_VERSION = "empty-prompt-feather0-v1"
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .addInterceptor(NetworkGuard.interceptor)

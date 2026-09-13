@@ -223,10 +223,14 @@ object AlbumArtLocalOutpaint {
     }
 
     /**
-     * True when the Flux (or other) padded result fills the margin with a near-flat
-     * color that does not match the source cover's edge colors — classic beige fail.
+     * True when a generated pad's color belongs to no edge of the cover — the
+     * "invented cream paper / gray wall" failure, whether flat or textured.
+     *
+     * Measured on real covers: faithful continuations land within ~13 of a cover
+     * edge color, invented pads sit at 89 and above, so [MAX_PAD_MISMATCH] cleanly
+     * separates them without requiring the bad pad to be flat.
      */
-    fun isLazyFlatPad(
+    fun isPadColorMismatch(
         paddedBytes: ByteArray,
         sourceBytes: ByteArray,
         padLeft: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_LEFT,
@@ -243,37 +247,58 @@ object AlbumArtLocalOutpaint {
         return try {
             val outW = padded.width
             val outH = padded.height
-            val srcW = outW - padLeft - padRight
-            val srcH = outH - padTop - padBottom
-            if (srcW <= 0 || srcH <= 0) return false
+            if (outW - padLeft - padRight <= 0 || outH - padTop - padBottom <= 0) return false
             val padPixels = IntArray(outW * outH)
             padded.getPixels(padPixels, 0, outW, 0, 0, outW, outH)
             val srcPixels = IntArray(source.width * source.height)
             source.getPixels(srcPixels, 0, source.width, 0, 0, source.width, source.height)
-            val expected = analyzeSideMeans(source.width, source.height, srcPixels)
-            val leftMean = meanRect(padPixels, outW, 0, padLeft, 0, outH)
-            val rightMean = meanRect(padPixels, outW, outW - padRight, outW, 0, outH)
-            val topMean = meanRect(padPixels, outW, padLeft, outW - padRight, 0, padTop)
-            val bottomMean = meanRect(padPixels, outW, padLeft, outW - padRight, outH - padBottom, outH)
-            val padStd = maxOf(
-                colorDistance(leftMean, rightMean),
-                colorDistance(topMean, bottomMean),
-                colorDistance(leftMean, topMean),
+            val padSides = SideMeans(
+                left = meanRectRaw(padPixels, outW, 0, padLeft, 0, outH),
+                top = meanRectRaw(padPixels, outW, padLeft, outW - padRight, 0, padTop),
+                right = meanRectRaw(padPixels, outW, outW - padRight, outW, 0, outH),
+                bottom = meanRectRaw(padPixels, outW, padLeft, outW - padRight, outH - padBottom, outH),
             )
-            // Flat invented pad (all margins nearly the same color).
-            if (padStd > 28.0) return false
-            val padColor = leftMean
-            val match = minOf(
-                colorDistance(padColor, expected.left),
-                colorDistance(padColor, expected.top),
-                colorDistance(padColor, expected.right),
-                colorDistance(padColor, expected.bottom),
-            )
-            match > 45.0
+            val coverEdge = analyzeEdgeMeanArgb(source.width, source.height, srcPixels)
+            padMismatchDistance(padSides, coverEdge) > MAX_PAD_MISMATCH
         } finally {
             padded.recycle()
             source.recycle()
         }
+    }
+
+    /** Closest color distance between any pad margin and the cover's overall rim color. */
+    fun padMismatchDistance(padSides: SideMeans, coverEdgeMean: Int): Double =
+        listOf(padSides.left, padSides.top, padSides.right, padSides.bottom)
+            .minOf { colorDistance(it, coverEdgeMean) }
+
+    /** Mean color of the cover's outer rim, without the pad path's black snapping. */
+    fun analyzeEdgeMeanArgb(width: Int, height: Int, pixels: IntArray): Int {
+        val band = edgeBand(width, height)
+        var sumR = 0.0
+        var sumG = 0.0
+        var sumB = 0.0
+        var n = 0
+        fun add(c: Int) {
+            sumR += red(c)
+            sumG += green(c)
+            sumB += blue(c)
+            n++
+        }
+        for (i in 0 until band) {
+            for (x in 0 until width) {
+                add(pixels[i * width + x])
+                add(pixels[(height - 1 - i) * width + x])
+            }
+            for (y in band until (height - band)) {
+                add(pixels[y * width + i])
+                add(pixels[y * width + (width - 1 - i)])
+            }
+        }
+        if (n == 0) return 0xFF000000.toInt()
+        val r = (sumR / n).roundToInt().coerceIn(0, 255)
+        val g = (sumG / n).roundToInt().coerceIn(0, 255)
+        val b = (sumB / n).roundToInt().coerceIn(0, 255)
+        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
     }
 
     fun hasUniformEdges(sourceBytes: ByteArray): Boolean {
@@ -285,6 +310,35 @@ object AlbumArtLocalOutpaint {
         } finally {
             src.recycle()
         }
+    }
+
+    private fun meanRectRaw(
+        pixels: IntArray,
+        stride: Int,
+        x0: Int,
+        x1: Int,
+        y0: Int,
+        y1: Int,
+    ): Int {
+        var sumR = 0.0
+        var sumG = 0.0
+        var sumB = 0.0
+        var n = 0
+        for (y in y0.coerceAtLeast(0) until y1.coerceAtLeast(0)) {
+            val row = y * stride
+            for (x in x0.coerceIn(0, stride) until x1.coerceIn(0, stride)) {
+                val c = pixels[row + x]
+                sumR += red(c)
+                sumG += green(c)
+                sumB += blue(c)
+                n++
+            }
+        }
+        if (n == 0) return 0xFF000000.toInt()
+        val r = (sumR / n).roundToInt().coerceIn(0, 255)
+        val g = (sumG / n).roundToInt().coerceIn(0, 255)
+        val b = (sumB / n).roundToInt().coerceIn(0, 255)
+        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
     }
 
     private fun colorDistance(a: Int, b: Int): Double {
@@ -306,4 +360,7 @@ object AlbumArtLocalOutpaint {
 
     /** Luma at or below this → pad with pure black. */
     const val BLACK_LUMA_MAX = 40.0
+
+    /** Above this distance from every cover edge, a generated pad is invented. */
+    const val MAX_PAD_MISMATCH = 45.0
 }

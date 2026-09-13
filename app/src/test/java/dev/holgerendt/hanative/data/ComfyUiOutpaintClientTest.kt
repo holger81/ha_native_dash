@@ -118,8 +118,8 @@ class ComfyUiOutpaintClientTest {
         val clip = prepared["23"]!!.jsonObject["inputs"]!!.jsonObject
         assertEquals("cover_xyz.png", load["image"]!!.jsonPrimitive.content)
         assertEquals(ComfyUiOutpaintClient.OUTPAINT_PROMPT, clip["text"]!!.jsonPrimitive.content)
-        assertTrue(clip["text"]!!.jsonPrimitive.content.contains("Never fill with generic beige"))
-        assertTrue(clip["text"]!!.jsonPrimitive.content.contains("continuing"))
+        // Empty on purpose: naming colors to avoid made Flux paint them instead.
+        assertEquals("", clip["text"]!!.jsonPrimitive.content)
         assertNull(prepared["_meta"])
     }
 

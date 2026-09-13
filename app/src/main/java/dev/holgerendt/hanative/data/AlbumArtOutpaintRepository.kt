@@ -157,7 +157,7 @@ class AlbumArtOutpaintRepository(
         val flux = runCatching { comfy.outpaint(comfyBase, source) }.getOrNull()
             ?.takeIf { it.isNotEmpty() }
             ?: return local
-        if (AlbumArtLocalOutpaint.isLazyFlatPad(flux, source)) return local
+        if (AlbumArtLocalOutpaint.isPadColorMismatch(flux, source)) return local
         return cache.replace(source, flux) ?: local
     }
 
