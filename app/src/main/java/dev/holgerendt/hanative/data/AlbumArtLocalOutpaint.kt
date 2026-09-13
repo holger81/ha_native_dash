@@ -223,12 +223,12 @@ object AlbumArtLocalOutpaint {
     }
 
     /**
-     * True when a generated pad's color belongs to no edge of the cover — the
-     * "invented cream paper / gray wall" failure, whether flat or textured.
+     * True when a generated pad's margins do not match the cover's corresponding
+     * edges — the "invented cream paper / gray wall" failure.
      *
-     * Measured on real covers: faithful continuations land within ~13 of a cover
-     * edge color, invented pads sit at 89 and above, so [MAX_PAD_MISMATCH] cleanly
-     * separates them without requiring the bad pad to be flat.
+     * Measured on real covers: faithful continuations land within ~28 per side,
+     * invented pads sit at 89+ on every side. Uses the **worst** side (max), not
+     * the best (min): a single lucky margin must not excuse three cream ones.
      */
     fun isPadColorMismatch(
         paddedBytes: ByteArray,
@@ -258,18 +258,35 @@ object AlbumArtLocalOutpaint {
                 right = meanRectRaw(padPixels, outW, outW - padRight, outW, 0, outH),
                 bottom = meanRectRaw(padPixels, outW, padLeft, outW - padRight, outH - padBottom, outH),
             )
-            val coverEdge = analyzeEdgeMeanArgb(source.width, source.height, srcPixels)
-            padMismatchDistance(padSides, coverEdge) > MAX_PAD_MISMATCH
+            val coverSides = analyzeSideMeansRaw(source.width, source.height, srcPixels)
+            padMismatchDistance(padSides, coverSides) > MAX_PAD_MISMATCH
         } finally {
             padded.recycle()
             source.recycle()
         }
     }
 
-    /** Closest color distance between any pad margin and the cover's overall rim color. */
-    fun padMismatchDistance(padSides: SideMeans, coverEdgeMean: Int): Double =
-        listOf(padSides.left, padSides.top, padSides.right, padSides.bottom)
-            .minOf { colorDistance(it, coverEdgeMean) }
+    /**
+     * Worst-side color distance between each pad margin and the matching cover edge.
+     * High = invented fill; low = edge-faithful continuation.
+     */
+    fun padMismatchDistance(padSides: SideMeans, coverSides: SideMeans): Double = maxOf(
+        colorDistance(padSides.left, coverSides.left),
+        colorDistance(padSides.top, coverSides.top),
+        colorDistance(padSides.right, coverSides.right),
+        colorDistance(padSides.bottom, coverSides.bottom),
+    )
+
+    /** Per-side rim means without black snapping (for Flux quality checks). */
+    fun analyzeSideMeansRaw(width: Int, height: Int, pixels: IntArray): SideMeans {
+        val band = edgeBand(width, height)
+        return SideMeans(
+            left = meanRectRaw(pixels, width, 0, band, 0, height),
+            top = meanRectRaw(pixels, width, 0, width, 0, band),
+            right = meanRectRaw(pixels, width, width - band, width, 0, height),
+            bottom = meanRectRaw(pixels, width, 0, width, height - band, height),
+        )
+    }
 
     /** Mean color of the cover's outer rim, without the pad path's black snapping. */
     fun analyzeEdgeMeanArgb(width: Int, height: Int, pixels: IntArray): Int {

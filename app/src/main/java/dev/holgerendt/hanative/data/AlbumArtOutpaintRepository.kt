@@ -154,11 +154,17 @@ class AlbumArtOutpaintRepository(
             return local
         }
         if (!fluxAttemptedRefs.add(coverRef)) return local
-        val flux = runCatching { comfy.outpaint(comfyBase, source) }.getOrNull()
-            ?.takeIf { it.isNotEmpty() }
-            ?: return local
-        if (AlbumArtLocalOutpaint.isPadColorMismatch(flux, source)) return local
-        return cache.replace(source, flux) ?: local
+        // Empty-prompt Flux is usually good but seed-dependent; retry a few times
+        // before keeping the local edge pad (never accept invented cream).
+        repeat(FLUX_ATTEMPTS) {
+            val flux = runCatching { comfy.outpaint(comfyBase, source) }.getOrNull()
+                ?.takeIf { it.isNotEmpty() }
+                ?: return@repeat
+            if (!AlbumArtLocalOutpaint.isPadColorMismatch(flux, source)) {
+                return cache.replace(source, flux) ?: local
+            }
+        }
+        return local
     }
 
     private suspend fun hasUncachedWork(plan: OutpaintTargets): Boolean =
@@ -249,6 +255,9 @@ class AlbumArtOutpaintRepository(
 
         /** @deprecated Use [MAX_PLAYLIST_OUTPAINT]. */
         const val MAX_UPCOMING = MAX_PLAYLIST_OUTPAINT
+
+        /** Max Flux tries per cover before keeping the local edge pad. */
+        const val FLUX_ATTEMPTS = 3
 
         fun imageFetchClient(): OkHttpClient = OkHttpClient.Builder()
             .addInterceptor { chain ->

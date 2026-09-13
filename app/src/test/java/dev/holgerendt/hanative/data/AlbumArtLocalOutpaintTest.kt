@@ -71,8 +71,13 @@ class AlbumArtLocalOutpaintTest {
             right = argb(149, 139, 122),
             bottom = argb(121, 89, 40),
         )
-        val coverRim = argb(148, 144, 126)
-        val d = AlbumArtLocalOutpaint.padMismatchDistance(padSides, coverRim)
+        val coverSides = AlbumArtLocalOutpaint.SideMeans(
+            left = argb(133, 128, 109),
+            top = argb(176, 210, 231),
+            right = argb(146, 137, 122),
+            bottom = argb(138, 102, 42),
+        )
+        val d = AlbumArtLocalOutpaint.padMismatchDistance(padSides, coverSides)
         assertTrue("expected close match, was $d", d < AlbumArtLocalOutpaint.MAX_PAD_MISMATCH)
     }
 
@@ -84,8 +89,13 @@ class AlbumArtLocalOutpaintTest {
             right = argb(146, 139, 118),
             bottom = argb(128, 123, 105),
         )
-        val coverRim = argb(47, 87, 112)
-        val d = AlbumArtLocalOutpaint.padMismatchDistance(padSides, coverRim)
+        val coverSides = AlbumArtLocalOutpaint.SideMeans(
+            left = argb(40, 84, 115),
+            top = argb(104, 129, 129),
+            right = argb(30, 78, 119),
+            bottom = argb(15, 57, 86),
+        )
+        val d = AlbumArtLocalOutpaint.padMismatchDistance(padSides, coverSides)
         assertTrue("expected mismatch, was $d", d > AlbumArtLocalOutpaint.MAX_PAD_MISMATCH)
     }
 
@@ -97,9 +107,33 @@ class AlbumArtLocalOutpaintTest {
             right = argb(154, 149, 139),
             bottom = argb(123, 122, 115),
         )
-        val coverRim = argb(17, 17, 17)
-        val d = AlbumArtLocalOutpaint.padMismatchDistance(padSides, coverRim)
+        val coverSides = AlbumArtLocalOutpaint.SideMeans(
+            left = argb(17, 17, 17),
+            top = argb(19, 19, 19),
+            right = argb(15, 15, 15),
+            bottom = argb(18, 18, 18),
+        )
+        val d = AlbumArtLocalOutpaint.padMismatchDistance(padSides, coverSides)
         assertTrue("expected mismatch, was $d", d > AlbumArtLocalOutpaint.MAX_PAD_MISMATCH)
+    }
+
+    @Test
+    fun oneLuckySideDoesNotExcuseCreamPads() {
+        // Three cream margins + one blue that happens to match the cover left edge.
+        val padSides = AlbumArtLocalOutpaint.SideMeans(
+            left = argb(40, 84, 115),
+            top = argb(170, 157, 128),
+            right = argb(146, 139, 118),
+            bottom = argb(128, 123, 105),
+        )
+        val coverSides = AlbumArtLocalOutpaint.SideMeans(
+            left = argb(40, 84, 115),
+            top = argb(104, 129, 129),
+            right = argb(30, 78, 119),
+            bottom = argb(15, 57, 86),
+        )
+        val d = AlbumArtLocalOutpaint.padMismatchDistance(padSides, coverSides)
+        assertTrue("worst-side must reject, was $d", d > AlbumArtLocalOutpaint.MAX_PAD_MISMATCH)
     }
 
     @Test
