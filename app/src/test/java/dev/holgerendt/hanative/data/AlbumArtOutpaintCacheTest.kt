@@ -79,4 +79,15 @@ class AlbumArtOutpaintCacheTest {
         val remaining = dir.listFiles { f -> f.isFile && f.name.endsWith(".jpg") }?.size ?: 0
         assertEquals(3, remaining)
     }
+
+    @Test
+    fun replaceMarksFluxComplete() = runBlocking {
+        val cache = AlbumArtOutpaintCache(tmp.newFolder("outpaint"))
+        val source = byteArrayOf(1, 2, 3)
+        cache.getOrEnqueue(source) { byteArrayOf(9) }
+        assertTrue(!cache.isFluxComplete(source))
+        cache.replace(source, byteArrayOf(7, 7))
+        assertTrue(cache.isFluxComplete(source))
+        assertTrue(cache.cachedFile(source)!!.readBytes().contentEquals(byteArrayOf(7, 7)))
+    }
 }

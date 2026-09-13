@@ -152,6 +152,61 @@ class AlbumArtLocalOutpaintTest {
         assertEquals(30, rim and 0xFF)
     }
 
+    @Test
+    fun solidLocalPadIsDetectedAsLocal() {
+        val padL = 20
+        val padT = 4
+        val padR = 20
+        val padB = 4
+        val coverW = 40
+        val coverH = 40
+        val outW = coverW + padL + padR
+        val outH = coverH + padT + padB
+        val left = argb(200, 180, 150)
+        val right = argb(90, 80, 70)
+        val top = argb(40, 40, 40)
+        val bottom = argb(20, 20, 20)
+        val center = argb(60, 100, 140)
+        val pixels = IntArray(outW * outH) { idx ->
+            val x = idx % outW
+            val y = idx / outW
+            when {
+                x < padL -> left
+                x >= outW - padR -> right
+                y < padT -> top
+                y >= outH - padB -> bottom
+                else -> center
+            }
+        }
+        assertTrue(
+            AlbumArtLocalOutpaint.looksLikeLocalSolidPadPixels(outW, outH, pixels, padL, padT, padR, padB),
+        )
+    }
+
+    @Test
+    fun texturedPadIsNotTreatedAsLocal() {
+        val padL = 24
+        val padT = 4
+        val padR = 24
+        val padB = 4
+        val coverW = 48
+        val coverH = 48
+        val outW = coverW + padL + padR
+        val outH = coverH + padT + padB
+        val pixels = IntArray(outW * outH) { idx ->
+            val x = idx % outW
+            val y = idx / outW
+            if (x < padL || x >= outW - padR || y < padT || y >= outH - padB) {
+                argb((x * 17 + y * 13) % 180, (x * 7 + y * 29) % 180, (x * 3 + y * 41) % 180)
+            } else {
+                argb(90, 70, 60)
+            }
+        }
+        assertTrue(
+            !AlbumArtLocalOutpaint.looksLikeLocalSolidPadPixels(outW, outH, pixels, padL, padT, padR, padB),
+        )
+    }
+
     private fun argb(r: Int, g: Int, b: Int): Int = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
 
     @Test

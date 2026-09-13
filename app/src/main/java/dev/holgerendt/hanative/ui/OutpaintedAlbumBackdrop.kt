@@ -83,26 +83,40 @@ fun AlbumOutpaintHero(
     val ui by viewModel.ui.collectAsState()
     var outpaintFile by remember(coverPath) { mutableStateOf<File?>(null) }
     var layout by remember(coverPath) { mutableStateOf<OutpaintCoverLayout?>(null) }
+    var fileStamp by remember(coverPath) { mutableStateOf(0L) }
 
     LaunchedEffect(coverPath, ui.comfyUiUrl) {
         outpaintFile = null
         layout = null
+        fileStamp = 0L
         if (coverPath.isNullOrBlank() || ui.comfyUiUrl.isBlank()) return@LaunchedEffect
         viewModel.scheduleAlbumArtOutpaintPrefetch(currentCoverOverride = coverPath)
+        var lastStamp = 0L
+        var unchangedSince = 0L
         while (true) {
             val hit = runCatching {
                 viewModel.albumArtOutpaint.peekOutpaintedFile(coverPath)
             }.getOrNull()
             if (hit != null) {
-                val bounds = withContext(Dispatchers.IO) {
-                    val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    BitmapFactory.decodeFile(hit.absolutePath, opts)
-                    opts.outWidth to opts.outHeight
-                }
-                val nextLayout = outpaintCoverLayout(bounds.first, bounds.second)
-                if (nextLayout != null) {
-                    outpaintFile = hit
-                    layout = nextLayout
+                val stamp = hit.length() xor hit.lastModified()
+                if (stamp != lastStamp) {
+                    lastStamp = stamp
+                    unchangedSince = 0L
+                    val bounds = withContext(Dispatchers.IO) {
+                        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeFile(hit.absolutePath, opts)
+                        opts.outWidth to opts.outHeight
+                    }
+                    val nextLayout = outpaintCoverLayout(bounds.first, bounds.second)
+                    if (nextLayout != null) {
+                        outpaintFile = hit
+                        layout = nextLayout
+                        fileStamp = stamp
+                    }
+                } else if (unchangedSince == 0L) {
+                    unchangedSince = System.nanoTime()
+                } else if (System.nanoTime() - unchangedSince > UPGRADE_POLL_NS) {
+                    // Local pad often lands first; keep watching for a Flux replace.
                     return@LaunchedEffect
                 }
             }
@@ -111,13 +125,14 @@ fun AlbumOutpaintHero(
     }
 
     Crossfade(
-        targetState = outpaintFile to layout,
+        targetState = Triple(outpaintFile, layout, fileStamp),
         modifier = modifier.fillMaxWidth(),
         label = "album-outpaint-hero",
-    ) { (file, geo) ->
+    ) { (file, geo, stamp) ->
         if (file != null && geo != null) {
             HoveringOutpaintStage(
                 outpaintFile = file,
+                fileStamp = stamp,
                 layout = geo,
                 coverPath = coverPath,
                 viewModel = viewModel,
@@ -147,6 +162,7 @@ fun AlbumOutpaintHero(
 @Composable
 private fun HoveringOutpaintStage(
     outpaintFile: File,
+    fileStamp: Long,
     layout: OutpaintCoverLayout,
     coverPath: String?,
     viewModel: HaViewModel,
@@ -154,6 +170,7 @@ private fun HoveringOutpaintStage(
     val context = LocalContext.current
     val loader = rememberHaImageLoader(viewModel.client)
     val coverShape = RoundedCornerShape(18.dp)
+    val cacheKey = "outpaint-${outpaintFile.name}-$fileStamp"
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
@@ -163,6 +180,8 @@ private fun HoveringOutpaintStage(
         AsyncImage(
             model = ImageRequest.Builder(context)
                 .data(outpaintFile)
+                .memoryCacheKey(cacheKey)
+                .diskCacheKey(cacheKey)
                 .crossfade(false)
                 .build(),
             contentDescription = null,
@@ -306,3 +325,6 @@ private fun Modifier.fadeSoftAtmosphere(): Modifier = drawWithContent {
         ),
     )
 }
+
+/** Keep watching for a Flux replace after the instant local pad lands. */
+private const val UPGRADE_POLL_NS = 3L * 60L * 1_000_000_000L

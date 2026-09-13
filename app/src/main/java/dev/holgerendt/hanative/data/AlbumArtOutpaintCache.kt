@@ -30,6 +30,19 @@ class AlbumArtOutpaintCache(
         return file.takeIf { it.isFile && it.length() > 0L }
     }
 
+    /** True after a successful Flux upgrade was written for this source. */
+    fun isFluxComplete(sourceBytes: ByteArray): Boolean =
+        fluxMarkerFor(cacheKey(sourceBytes)).isFile
+
+    fun markFluxComplete(sourceBytes: ByteArray) {
+        val hash = cacheKey(sourceBytes)
+        if (cachedFileForHash(hash) == null) return
+        runCatching {
+            directory.mkdirs()
+            fluxMarkerFor(hash).createNewFile()
+        }
+    }
+
     /**
      * Returns a cached outpaint file, or generates and stores one.
      * [generate] returning null leaves the cache empty (caller keeps soft local treatment).
@@ -60,7 +73,9 @@ class AlbumArtOutpaintCache(
         val flight = inFlight.getOrPut(hash) { Mutex() }
         return try {
             flight.withLock {
-                writeBytesLocked(hash, generated)
+                writeBytesLocked(hash, generated)?.also {
+                    fluxMarkerFor(hash).createNewFile()
+                }
             }
         } finally {
             inFlight.remove(hash, flight)
@@ -90,6 +105,8 @@ class AlbumArtOutpaintCache(
 
     private fun fileFor(hash: String): File = File(directory, "$hash.jpg")
 
+    private fun fluxMarkerFor(hash: String): File = File(directory, "$hash.flux")
+
     private fun cacheKey(sourceBytes: ByteArray): String =
         sha256Hex(cacheVersion.toByteArray(Charsets.UTF_8) + sourceBytes)
 
@@ -102,7 +119,9 @@ class AlbumArtOutpaintCache(
         while (files.size > maxFiles || total > maxBytes) {
             val oldest = files.removeFirstOrNull() ?: break
             total -= oldest.length()
+            val hash = oldest.name.removeSuffix(".jpg")
             oldest.delete()
+            File(directory, "$hash.flux").delete()
         }
     }
 

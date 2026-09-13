@@ -329,6 +329,92 @@ object AlbumArtLocalOutpaint {
         }
     }
 
+    /**
+     * True when pad margins are nearly solid (local edge-mean fills). Flux
+     * continuations have texture / variance in those regions.
+     */
+    fun looksLikeLocalSolidPad(
+        paddedBytes: ByteArray,
+        padLeft: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_LEFT,
+        padTop: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_TOP,
+        padRight: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_RIGHT,
+        padBottom: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_BOTTOM,
+    ): Boolean {
+        if (paddedBytes.isEmpty()) return false
+        val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
+        val padded = BitmapFactory.decodeByteArray(paddedBytes, 0, paddedBytes.size, opts) ?: return false
+        return try {
+            val outW = padded.width
+            val outH = padded.height
+            val pixels = IntArray(outW * outH)
+            padded.getPixels(pixels, 0, outW, 0, 0, outW, outH)
+            looksLikeLocalSolidPadPixels(outW, outH, pixels, padLeft, padTop, padRight, padBottom)
+        } finally {
+            padded.recycle()
+        }
+    }
+
+    /** Visible for tests — solid-margin check without Bitmap encode/decode. */
+    fun looksLikeLocalSolidPadPixels(
+        outW: Int,
+        outH: Int,
+        pixels: IntArray,
+        padLeft: Int,
+        padTop: Int,
+        padRight: Int,
+        padBottom: Int,
+    ): Boolean {
+        if (outW - padLeft - padRight <= 0 || outH - padTop - padBottom <= 0) return false
+        if (pixels.size < outW * outH) return false
+        val regions = listOf(
+            Rect(0, 0, padLeft, outH),
+            Rect(outW - padRight, 0, outW, outH),
+            Rect(padLeft, 0, outW - padRight, padTop),
+            Rect(padLeft, outH - padBottom, outW - padRight, outH),
+        )
+        return regions.filter { it.width() > 0 && it.height() > 0 }.all { rect ->
+            regionStdDev(pixels, outW, rect) <= LOCAL_PAD_MAX_STD
+        }
+    }
+
+    private data class Rect(val x0: Int, val y0: Int, val x1: Int, val y1: Int) {
+        fun width(): Int = (x1 - x0).coerceAtLeast(0)
+        fun height(): Int = (y1 - y0).coerceAtLeast(0)
+    }
+
+    private fun regionStdDev(pixels: IntArray, stride: Int, rect: Rect): Double {
+        var sumR = 0.0
+        var sumG = 0.0
+        var sumB = 0.0
+        var n = 0
+        for (y in rect.y0 until rect.y1) {
+            val row = y * stride
+            for (x in rect.x0 until rect.x1) {
+                val c = pixels[row + x]
+                sumR += red(c)
+                sumG += green(c)
+                sumB += blue(c)
+                n++
+            }
+        }
+        if (n == 0) return 0.0
+        val meanR = sumR / n
+        val meanG = sumG / n
+        val meanB = sumB / n
+        var varSum = 0.0
+        for (y in rect.y0 until rect.y1) {
+            val row = y * stride
+            for (x in rect.x0 until rect.x1) {
+                val c = pixels[row + x]
+                val dr = red(c) - meanR
+                val dg = green(c) - meanG
+                val db = blue(c) - meanB
+                varSum += dr * dr + dg * dg + db * db
+            }
+        }
+        return sqrt(varSum / n)
+    }
+
     private fun meanRectRaw(
         pixels: IntArray,
         stride: Int,
@@ -380,4 +466,7 @@ object AlbumArtLocalOutpaint {
 
     /** Above this distance from every cover edge, a generated pad is invented. */
     const val MAX_PAD_MISMATCH = 45.0
+
+    /** Per-region RGB std-dev at or below this → solid local edge pad, not Flux. */
+    const val LOCAL_PAD_MAX_STD = 12.0
 }

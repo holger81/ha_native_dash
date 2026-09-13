@@ -151,16 +151,16 @@ class AlbumArtOutpaintRepository(
      * Instant local edge pad for the UI, then optional Comfy Flux upgrade for
      * pictorial covers (skipped for black/studio mattes). Lazy beige fills are rejected.
      *
-     * **Never regenerates** when a pad is already on disk — that was overwriting good
-     * Flux fills on every process start (in-memory [fluxAttemptedRefs] reset).
+     * Disk hits: keep textured / Flux pads; solid local pads still get one Flux
+     * upgrade attempt (otherwise the instant pad would freeze forever).
      */
     private suspend fun warmCover(comfyBase: String, coverRef: String, source: ByteArray): File? {
-        // Disk hit = done. Do not call Comfy again for this cover bytes.
-        cache.cachedFile(source)?.let {
+        val existing = cache.cachedFile(source)
+        if (existing != null && isFluxPadSettled(source, existing)) {
             fluxAttemptedRefs.add(coverRef)
-            return it
+            return existing
         }
-        val local = cache.getOrEnqueue(source) { bytes ->
+        val local = existing ?: cache.getOrEnqueue(source) { bytes ->
             AlbumArtLocalOutpaint.padFromEdges(bytes)
         } ?: return null
         if (AlbumArtLocalOutpaint.hasUniformEdges(source)) {
@@ -178,6 +178,16 @@ class AlbumArtOutpaintRepository(
             }
         }
         return local
+    }
+
+    /** True when the on-disk pad should not be regenerated (Flux or textured). */
+    private fun isFluxPadSettled(source: ByteArray, cached: File): Boolean {
+        if (cache.isFluxComplete(source)) return true
+        val bytes = runCatching { cached.readBytes() }.getOrNull() ?: return false
+        if (AlbumArtLocalOutpaint.looksLikeLocalSolidPad(bytes)) return false
+        // Textured pad without a sidecar (older cache) — treat as Flux and mark.
+        cache.markFluxComplete(source)
+        return true
     }
 
     private suspend fun hasUncachedWork(plan: OutpaintTargets): Boolean =
@@ -199,10 +209,20 @@ class AlbumArtOutpaintRepository(
             failedRefs.add(coverRef)
             return true
         }
-        // Any on-disk pad counts — local or Flux. Do not re-queue for a Flux upgrade.
-        if (cache.cachedFile(source) != null) {
+        val cached = cache.cachedFile(source) ?: return false
+        if (AlbumArtLocalOutpaint.hasUniformEdges(source)) {
             warmRefs.add(coverRef)
             fluxAttemptedRefs.add(coverRef)
+            return true
+        }
+        if (isFluxPadSettled(source, cached)) {
+            warmRefs.add(coverRef)
+            fluxAttemptedRefs.add(coverRef)
+            return true
+        }
+        // Solid local pad still waiting for a Flux upgrade this process.
+        if (fluxAttemptedRefs.contains(coverRef)) {
+            warmRefs.add(coverRef)
             return true
         }
         return false
