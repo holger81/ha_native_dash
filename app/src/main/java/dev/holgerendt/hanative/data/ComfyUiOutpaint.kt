@@ -201,6 +201,12 @@ class ComfyUiOutpaintClient(
         private const val POSITIVE_PROMPT_NODE_ID = "23"
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
+        /** Must match `ImagePadForOutpaint` node 44 in [WORKFLOW_ASSET]. */
+        const val OUTPAINT_PAD_LEFT = 256
+        const val OUTPAINT_PAD_TOP = 128
+        const val OUTPAINT_PAD_RIGHT = 256
+        const val OUTPAINT_PAD_BOTTOM = 128
+
         /**
          * Positive CLIP text for Flux fill outpaint.
          * Solid cover borders may correctly extend as the same flat color;

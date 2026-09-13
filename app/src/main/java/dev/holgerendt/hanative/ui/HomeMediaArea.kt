@@ -376,14 +376,10 @@ private fun FullMusicCard(
             if (snapshot.paused) {
                 Text("Paused", color = TextDark, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             }
-            MusicCover(
-                path = snapshot.art,
+            AlbumOutpaintHero(
+                coverPath = snapshot.art,
                 viewModel = viewModel,
-                modifier = Modifier
-                    .size(196.dp)
-                    .clip(RoundedCornerShape(20.dp)),
-                spinnerSize = 28.dp,
-                fallbackIconSize = 64.dp,
+                modifier = Modifier.fillMaxWidth(),
             )
             Text(
                 snapshot.title,
