@@ -481,6 +481,14 @@ class HaViewModel(
                 }
             },
             onCommand = { applyKioskCommand(it) },
+            onTap = { x, y, holdMs ->
+                noteUserActivity()
+                capture.injectTap(x, y, holdMs)
+            },
+            onSwipe = { x0, y0, x1, y1, durationMs ->
+                noteUserActivity()
+                capture.injectSwipe(x0, y0, x1, y1, durationMs)
+            },
             kioskStateProvider = {
                 KioskSnapshot(
                     popup = _ui.value.popupHash,

@@ -16,6 +16,10 @@ class ManagementServer(
     private val screenshotProvider: () -> ScreenCapture.Jpeg,
     private val onSubmit: (url: String, token: String) -> Result<Unit>,
     private val onCommand: (KioskCommand) -> Unit,
+    /** Normalized 0–1 tap; optional holdMs. Returns error message or null. */
+    private val onTap: (x: Float, y: Float, holdMs: Long) -> String?,
+    /** Normalized swipe; returns error message or null. */
+    private val onSwipe: (x0: Float, y0: Float, x1: Float, y1: Float, durationMs: Long) -> String?,
     private val kioskStateProvider: () -> KioskSnapshot,
     private val panelName: String,
     private val appVersionProvider: () -> Pair<Long, String>,
@@ -55,10 +59,13 @@ class ManagementServer(
             session.method == Method.POST && uri == "/logout" -> handleLogout(session)
             session.method == Method.GET && uri == "/screenshot" -> handleScreenshot(session)
             session.method == Method.OPTIONS &&
-                (uri == "/api/command" || uri == "/api/state" || uri == "/api/crash" || uri == "/api/update") ->
+                (uri == "/api/command" || uri == "/api/state" || uri == "/api/crash" ||
+                    uri == "/api/update" || uri == "/api/tap" || uri == "/api/swipe") ->
                 corsPreflight(session)
             session.method == Method.GET && uri == "/api/state" -> handleKioskState(session)
             session.method == Method.GET && uri == "/api/update" -> handleUpdateStatus(session)
+            session.method == Method.POST && uri == "/api/tap" -> handleTap(session)
+            session.method == Method.POST && uri == "/api/swipe" -> handleSwipe(session)
             session.method == Method.POST && uri == "/update" -> handleUpdate(session)
             (session.method == Method.GET || session.method == Method.POST) && uri == "/api/command" ->
                 handleKioskCommand(session)
@@ -178,6 +185,77 @@ class ManagementServer(
         runCatching { session.parseBody(HashMap()) }
         onCommand(KioskCommand.Wake)
         return html(adminPage(savedUrlProvider(), "Waking the wall display.", true))
+    }
+
+    private fun handleTap(session: IHTTPSession): Response {
+        val params = readInputParams(session)
+        authorizeApi(session, params["pin"])?.let {
+            return json(session, Response.Status.UNAUTHORIZED, errorJson(it))
+        }
+        val x = params["x"]?.toFloatOrNull()
+        val y = params["y"]?.toFloatOrNull()
+        if (x == null || y == null) {
+            return json(
+                session,
+                Response.Status.BAD_REQUEST,
+                errorJson("Provide normalized x and y in 0..1 (JSON or form)."),
+            )
+        }
+        val holdMs = params["holdMs"]?.toLongOrNull() ?: params["hold"]?.toLongOrNull() ?: 0L
+        onCommand(KioskCommand.Wake)
+        val err = onTap(x, y, holdMs)
+        return if (err == null) {
+            json(session, Response.Status.OK, JSONObject().put("ok", true).toString())
+        } else {
+            json(session, Response.Status.BAD_REQUEST, errorJson(err))
+        }
+    }
+
+    private fun handleSwipe(session: IHTTPSession): Response {
+        val params = readInputParams(session)
+        authorizeApi(session, params["pin"])?.let {
+            return json(session, Response.Status.UNAUTHORIZED, errorJson(it))
+        }
+        val x0 = params["x0"]?.toFloatOrNull()
+        val y0 = params["y0"]?.toFloatOrNull()
+        val x1 = params["x1"]?.toFloatOrNull()
+        val y1 = params["y1"]?.toFloatOrNull()
+        if (x0 == null || y0 == null || x1 == null || y1 == null) {
+            return json(
+                session,
+                Response.Status.BAD_REQUEST,
+                errorJson("Provide normalized x0,y0,x1,y1 in 0..1."),
+            )
+        }
+        val durationMs = params["durationMs"]?.toLongOrNull()
+            ?: params["duration"]?.toLongOrNull()
+            ?: 280L
+        onCommand(KioskCommand.Wake)
+        val err = onSwipe(x0, y0, x1, y1, durationMs)
+        return if (err == null) {
+            json(session, Response.Status.OK, JSONObject().put("ok", true).toString())
+        } else {
+            json(session, Response.Status.BAD_REQUEST, errorJson(err))
+        }
+    }
+
+    private fun readInputParams(session: IHTTPSession): Map<String, String> {
+        val files = HashMap<String, String>()
+        if (session.method == Method.POST) {
+            runCatching { session.parseBody(files) }
+        }
+        val params = mutableMapOf<String, String>()
+        session.parameters.forEach { (key, values) ->
+            values.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }?.let { params[key] = it }
+        }
+        formParams(session, files).forEach { (key, value) ->
+            if (value.isNotBlank()) params[key] = value
+        }
+        val body = files["postData"].orEmpty()
+        if (body.trimStart().startsWith("{")) {
+            params.putAll(flattenBody(body))
+        }
+        return params
     }
 
     private fun handleUpdateStatus(session: IHTTPSession): Response {
@@ -556,6 +634,7 @@ class ManagementServer(
                 <section class="live-wrap">
                   <h2>Live screen</h2>
                   <p id="live-status" class="meta">Loading live screen…</p>
+                  <p class="meta">Click to tap · drag to swipe · Shift+click for a long-press. The tablet receives the gesture.</p>
                   <div class="live"><img id="live" alt="Wall panel screen" hidden /></div>
                   <div class="actions">
                     <button class="inline" type="button" id="reload">Reload</button>
@@ -590,14 +669,27 @@ class ManagementServer(
                   var blobUrl = '';
                   var INTERVAL = 1500;
                   var inFlight = false;
+                  var interacting = false;
+                  var pointer = null;
 
                   function setStatus(text, isErr) {
                     status.textContent = text;
                     status.className = isErr ? 'err' : 'meta';
                   }
 
+                  function fracFromEvent(ev) {
+                    var rect = img.getBoundingClientRect();
+                    if (rect.width <= 0 || rect.height <= 0) return null;
+                    var x = (ev.clientX - rect.left) / rect.width;
+                    var y = (ev.clientY - rect.top) / rect.height;
+                    return {
+                      x: Math.min(1, Math.max(0, x)),
+                      y: Math.min(1, Math.max(0, y))
+                    };
+                  }
+
                   async function refresh(manual) {
-                    if (inFlight && !manual) return;
+                    if ((inFlight || interacting) && !manual) return;
                     inFlight = true;
                     if (manual) setStatus('Reloading…', false);
                     try {
@@ -615,13 +707,94 @@ class ManagementServer(
                       img.src = blobUrl;
                       img.hidden = false;
                       if (err) setStatus(err, true);
-                      else setStatus('Live · updates every 1.5s', false);
+                      else setStatus('Live · click to tap · drag to swipe', false);
                     } catch (e) {
                       setStatus('Could not reach the wall panel.', true);
                     } finally {
                       inFlight = false;
                     }
                   }
+
+                  async function postGesture(path, body) {
+                    setStatus('Sending…', false);
+                    var res = await fetch(path, {
+                      method: 'POST',
+                      credentials: 'same-origin',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(body)
+                    });
+                    if (res.status === 401 || res.status === 403) {
+                      window.location.href = '/logout';
+                      return false;
+                    }
+                    var data = await res.json().catch(function () { return {}; });
+                    if (!res.ok || data.ok === false) {
+                      setStatus(data.error || 'Gesture failed', true);
+                      return false;
+                    }
+                    return true;
+                  }
+
+                  img.addEventListener('pointerdown', function (ev) {
+                    if (img.hidden) return;
+                    var f = fracFromEvent(ev);
+                    if (!f) return;
+                    interacting = true;
+                    pointer = {
+                      id: ev.pointerId,
+                      x0: f.x,
+                      y0: f.y,
+                      x1: f.x,
+                      y1: f.y,
+                      shift: !!ev.shiftKey,
+                      moved: false
+                    };
+                    try { img.setPointerCapture(ev.pointerId); } catch (e) {}
+                    ev.preventDefault();
+                  });
+
+                  img.addEventListener('pointermove', function (ev) {
+                    if (!pointer || pointer.id !== ev.pointerId) return;
+                    var f = fracFromEvent(ev);
+                    if (!f) return;
+                    pointer.x1 = f.x;
+                    pointer.y1 = f.y;
+                    var dx = pointer.x1 - pointer.x0;
+                    var dy = pointer.y1 - pointer.y0;
+                    if ((dx * dx + dy * dy) > 0.0004) pointer.moved = true;
+                  });
+
+                  async function endPointer(ev) {
+                    if (!pointer || pointer.id !== ev.pointerId) return;
+                    var p = pointer;
+                    pointer = null;
+                    try { img.releasePointerCapture(ev.pointerId); } catch (e) {}
+                    ev.preventDefault();
+                    var ok = false;
+                    try {
+                      if (p.moved) {
+                        ok = await postGesture('/api/swipe', {
+                          x0: p.x0, y0: p.y0, x1: p.x1, y1: p.y1, durationMs: 280
+                        });
+                      } else {
+                        ok = await postGesture('/api/tap', {
+                          x: p.x0, y: p.y0, holdMs: p.shift ? 650 : 0
+                        });
+                      }
+                    } catch (e) {
+                      setStatus('Could not reach the wall panel.', true);
+                    }
+                    interacting = false;
+                    if (ok) setTimeout(function () { refresh(true); }, 450);
+                  }
+
+                  img.addEventListener('pointerup', endPointer);
+                  img.addEventListener('pointercancel', function (ev) {
+                    if (!pointer || pointer.id !== ev.pointerId) return;
+                    pointer = null;
+                    interacting = false;
+                  });
+                  img.addEventListener('dragstart', function (ev) { ev.preventDefault(); });
 
                   reload.addEventListener('click', function () { refresh(true); });
                   wake.addEventListener('click', async function () {
@@ -712,7 +885,7 @@ class ManagementServer(
                 :root { color-scheme: dark; }
                 body { font-family: -apple-system, system-ui, sans-serif; background:#111; color:#f3f1ec;
                        margin:0; padding:24px; }
-                main { max-width: 480px; margin: 0 auto; }
+                main { max-width: 960px; margin: 0 auto; }
                 h1 { font-size: 1.4rem; font-weight: 650; }
                 h2 { font-size: 1.05rem; font-weight: 650; margin: 18px 0 6px; }
                 p { color:#cfc9c0; line-height:1.4; }
@@ -733,8 +906,10 @@ class ManagementServer(
                 .err { background:#5d1a1a; color:#ffd0d0; padding:12px 14px; border-radius:12px; }
                 .meta { color:#cfc9c0; font-size:.85rem; margin:0 0 8px; }
                 .live-wrap { margin: 16px 0 8px; }
-                .live { background:#000; border-radius:14px; overflow:hidden; min-height:220px; }
-                .live img { width:100%; height:auto; display:block; }
+                .live { background:#000; border-radius:14px; overflow:hidden; min-height:220px;
+                  touch-action: none; user-select: none; }
+                .live img { width:100%; height:auto; display:block; cursor: crosshair;
+                  -webkit-user-drag: none; user-select: none; }
                 .update-box { margin: 16px 0; padding: 4px 0 8px; }
         """
 

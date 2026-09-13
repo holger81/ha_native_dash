@@ -6,6 +6,8 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.view.MotionEvent
 import android.view.PixelCopy
 import android.view.Surface
 import android.view.SurfaceView
@@ -41,6 +43,167 @@ class ScreenCapture {
         if (attached == null || attached === activity) {
             activityRef.compareAndSet(current, null)
         }
+    }
+
+    /**
+     * Inject a tap (or short hold) at normalized screen coordinates (0–1).
+     * Used by the admin live view for remote testing. Returns null on success.
+     */
+    fun injectTap(xFrac: Float, yFrac: Float, holdMs: Long = 0L): String? {
+        val activity = activityRef.get()?.get()
+            ?: return "Wall panel activity is not available"
+        if (activity.isDestroyed || activity.isFinishing) {
+            return "Wall panel activity is not available"
+        }
+        val xN = xFrac.coerceIn(0f, 1f)
+        val yN = yFrac.coerceIn(0f, 1f)
+        val hold = holdMs.coerceIn(0L, 5_000L)
+        val error = AtomicReference<String?>(null)
+        val latch = CountDownLatch(1)
+        activity.runOnUiThread {
+            try {
+                val target = topRootView(activity) ?: activity.window?.decorView
+                if (target == null || target.width <= 0 || target.height <= 0) {
+                    error.set("Window is not ready")
+                    latch.countDown()
+                    return@runOnUiThread
+                }
+                val loc = IntArray(2)
+                target.getLocationOnScreen(loc)
+                val dm = activity.resources.displayMetrics
+                val screenW = dm.widthPixels.coerceAtLeast(1)
+                val screenH = dm.heightPixels.coerceAtLeast(1)
+                val screenX = xN * screenW
+                val screenY = yN * screenH
+                val localX = screenX - loc[0]
+                val localY = screenY - loc[1]
+                val downTime = SystemClock.uptimeMillis()
+                val down = MotionEvent.obtain(
+                    downTime, downTime, MotionEvent.ACTION_DOWN, localX, localY, 0,
+                )
+                val delivered = target.dispatchTouchEvent(down)
+                down.recycle()
+                if (!delivered) {
+                    // Fall back to activity dispatch in window coordinates.
+                    val winDown = MotionEvent.obtain(
+                        downTime, downTime, MotionEvent.ACTION_DOWN,
+                        xN * target.width, yN * target.height, 0,
+                    )
+                    activity.dispatchTouchEvent(winDown)
+                    winDown.recycle()
+                }
+                val finishUp = {
+                    try {
+                        if (!activity.isDestroyed && !activity.isFinishing) {
+                            val upTime = SystemClock.uptimeMillis()
+                            val up = MotionEvent.obtain(
+                                downTime, upTime, MotionEvent.ACTION_UP, localX, localY, 0,
+                            )
+                            if (!target.dispatchTouchEvent(up)) {
+                                val winUp = MotionEvent.obtain(
+                                    downTime, upTime, MotionEvent.ACTION_UP,
+                                    xN * target.width, yN * target.height, 0,
+                                )
+                                activity.dispatchTouchEvent(winUp)
+                                winUp.recycle()
+                            }
+                            up.recycle()
+                        }
+                    } catch (e: Exception) {
+                        error.compareAndSet(null, e.message ?: "Tap release failed")
+                    } finally {
+                        latch.countDown()
+                    }
+                }
+                if (hold <= 0L) {
+                    finishUp()
+                } else {
+                    mainHandler.postDelayed({ finishUp() }, hold)
+                }
+            } catch (e: Exception) {
+                error.set(e.message ?: "Tap injection failed")
+                latch.countDown()
+            }
+        }
+        val waitMs = (hold + 2_000L).coerceAtMost(8_000L)
+        if (!latch.await(waitMs, TimeUnit.MILLISECONDS)) {
+            return "Tap timed out"
+        }
+        return error.get()
+    }
+
+    /**
+     * Inject a swipe from (x0,y0) to (x1,y1) in normalized 0–1 screen coords.
+     */
+    fun injectSwipe(
+        x0: Float,
+        y0: Float,
+        x1: Float,
+        y1: Float,
+        durationMs: Long = 280L,
+    ): String? {
+        val activity = activityRef.get()?.get()
+            ?: return "Wall panel activity is not available"
+        if (activity.isDestroyed || activity.isFinishing) {
+            return "Wall panel activity is not available"
+        }
+        val steps = 12
+        val duration = durationMs.coerceIn(80L, 2_000L)
+        val error = AtomicReference<String?>(null)
+        val latch = CountDownLatch(1)
+        activity.runOnUiThread {
+            try {
+                val target = topRootView(activity) ?: activity.window?.decorView
+                if (target == null || target.width <= 0 || target.height <= 0) {
+                    error.set("Window is not ready")
+                    latch.countDown()
+                    return@runOnUiThread
+                }
+                val loc = IntArray(2)
+                target.getLocationOnScreen(loc)
+                val dm = activity.resources.displayMetrics
+                val screenW = dm.widthPixels.coerceAtLeast(1).toFloat()
+                val screenH = dm.heightPixels.coerceAtLeast(1).toFloat()
+                fun local(xf: Float, yf: Float): Pair<Float, Float> {
+                    val sx = xf.coerceIn(0f, 1f) * screenW
+                    val sy = yf.coerceIn(0f, 1f) * screenH
+                    return (sx - loc[0]) to (sy - loc[1])
+                }
+                val (startX, startY) = local(x0, y0)
+                val (endX, endY) = local(x1, y1)
+                val downTime = SystemClock.uptimeMillis()
+                val down = MotionEvent.obtain(
+                    downTime, downTime, MotionEvent.ACTION_DOWN, startX, startY, 0,
+                )
+                target.dispatchTouchEvent(down)
+                down.recycle()
+                for (i in 1..steps) {
+                    val t = i / steps.toFloat()
+                    val x = startX + (endX - startX) * t
+                    val y = startY + (endY - startY) * t
+                    val eventTime = downTime + (duration * t).toLong()
+                    val move = MotionEvent.obtain(
+                        downTime, eventTime, MotionEvent.ACTION_MOVE, x, y, 0,
+                    )
+                    target.dispatchTouchEvent(move)
+                    move.recycle()
+                }
+                val upTime = downTime + duration
+                val up = MotionEvent.obtain(
+                    downTime, upTime, MotionEvent.ACTION_UP, endX, endY, 0,
+                )
+                target.dispatchTouchEvent(up)
+                up.recycle()
+                latch.countDown()
+            } catch (e: Exception) {
+                error.set(e.message ?: "Swipe injection failed")
+                latch.countDown()
+            }
+        }
+        if (!latch.await(duration + 2_000L, TimeUnit.MILLISECONDS)) {
+            return "Swipe timed out"
+        }
+        return error.get()
     }
 
     fun captureJpeg(): Jpeg = synchronized(lock) {
@@ -331,6 +494,10 @@ class ScreenCapture {
             val view = activity.window?.decorView ?: return emptyList()
             return if (view.width > 0 && view.height > 0) listOf(view) else emptyList()
         }
+
+        /** Topmost interactive window (dialogs/sheets first). */
+        private fun topRootView(activity: Activity): View? =
+            collectRootViews(activity).lastOrNull()
 
         private fun collectMediaSurfaces(view: View, out: MutableList<View>) {
             when (view) {

@@ -145,19 +145,28 @@ object CrashLogger {
     private fun checkDropBoxForCrash(context: Context): String? {
         return runCatching {
             val dropbox = context.getSystemService(Context.DROPBOX_SERVICE) as? DropBoxManager ?: return null
-            // Check for any data_app_crash within the last 24 hours
             val since = System.currentTimeMillis() - 24 * 3600 * 1000L
-            var entry = dropbox.getNextEntry("data_app_crash", since)
-            var foundText: String? = null
-            while (entry != null) {
-                val text = entry.getText(4096)
-                if (text != null && text.contains(context.packageName)) {
-                    foundText = "=== DROPBOX CRASH LOG ===\nTime: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(entry.timeMillis))}\n$text"
+            // Native aborts / ANRs never hit the Java uncaught handler — surface them too.
+            val tags = listOf("data_app_crash", "data_app_native_crash", "data_app_anr")
+            var newest: Pair<Long, String>? = null
+            for (tag in tags) {
+                var entry = dropbox.getNextEntry(tag, since)
+                while (entry != null) {
+                    val text = entry.getText(12_000)
+                    if (text != null && text.contains(context.packageName)) {
+                        val stamp = entry.timeMillis
+                        val current = newest
+                        if (current == null || stamp > current.first) {
+                            newest = stamp to
+                                "=== DROPBOX $tag ===\nTime: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(stamp))}\n$text"
+                        }
+                    }
+                    val nextSince = entry.timeMillis
+                    entry.close()
+                    entry = dropbox.getNextEntry(tag, nextSince)
                 }
-                entry.close()
-                entry = dropbox.getNextEntry("data_app_crash", entry.timeMillis)
             }
-            foundText
+            newest?.second
         }.getOrNull()
     }
 }

@@ -168,9 +168,8 @@ class AlbumArtOutpaintRepository(
             return local
         }
         if (!fluxAttemptedRefs.add(coverRef)) return local
-        // One Flux pass: empty-prompt fills are usually good. Only reject solid
-        // cream/gray pads (color mismatch *and* near-uniform margins); textured
-        // continuations that drift in mean color still count as success.
+        // One Flux pass: keep only edge-faithful fills. Color-mismatched invents
+        // (including textured brown mats) fall back to the local pad.
         val flux = runCatching { comfy.outpaint(comfyBase, source) }.getOrNull()
             ?.takeIf { it.isNotEmpty() }
         if (flux != null && !AlbumArtLocalOutpaint.shouldRejectFluxPad(flux, source)) {
@@ -184,7 +183,8 @@ class AlbumArtOutpaintRepository(
         if (cache.isFluxComplete(source)) return true
         val bytes = runCatching { cached.readBytes() }.getOrNull() ?: return false
         if (AlbumArtLocalOutpaint.looksLikeLocalSolidPad(bytes)) return false
-        // Textured pad without a sidecar (older cache) — treat as Flux and mark.
+        if (AlbumArtLocalOutpaint.shouldRejectFluxPad(bytes, source)) return false
+        // Textured, edge-faithful pad without a sidecar — treat as Flux and mark.
         cache.markFluxComplete(source)
         return true
     }

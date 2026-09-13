@@ -270,10 +270,18 @@ private fun HomeScreen(viewModel: HaViewModel) {
     } else 120.dp
     val menu = home.header.firstOrNull { it.type == "menu_button" }
     val weather = home.header.firstOrNull { it.type == "weather_header" }
+    val activePersonCameras by viewModel.activePersonCameras.collectAsState()
+    var showHistoryOverlay by remember { mutableStateOf(false) }
+    val camerasActive = activePersonCameras.isNotEmpty()
+    LaunchedEffect(camerasActive) {
+        if (!camerasActive) showHistoryOverlay = false
+    }
+    // Overlay must sit outside the scrolling Column: fillMaxHeight inside
+    // verticalScroll gets infinite max height and nested scrolls crash.
+    Box(Modifier.fillMaxSize().onSizeChanged { viewportHeightPx = it.height }) {
     Column(
         Modifier
             .fillMaxSize()
-            .onSizeChanged { viewportHeightPx = it.height }
             .verticalScroll(rememberScrollState())
             .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 96.dp),
     ) {
@@ -314,12 +322,6 @@ private fun HomeScreen(viewModel: HaViewModel) {
         Spacer(Modifier.height(sectionGap))
         // Lovelace `(min-width: 1024px)`: 50% rooms | 50% media + activity.
         // Phase 6: media at top when idle cameras; backyard streams take priority when active.
-        val activePersonCameras by viewModel.activePersonCameras.collectAsState()
-        var showHistoryOverlay by remember { mutableStateOf(false) }
-        val camerasActive = activePersonCameras.isNotEmpty()
-        LaunchedEffect(camerasActive) {
-            if (!camerasActive) showHistoryOverlay = false
-        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -403,59 +405,61 @@ private fun HomeScreen(viewModel: HaViewModel) {
                 }
             }
         }
-        if (showHistoryOverlay) {
-            home.timeline?.let { timeline ->
-                InWindowOverlay(
-                    onDismiss = { showHistoryOverlay = false },
-                    dismissOnScrim = true,
-                    scrim = PopupScrim,
+    }
+    if (showHistoryOverlay) {
+        home.timeline?.let { timeline ->
+            InWindowOverlay(
+                onDismiss = { showHistoryOverlay = false },
+                dismissOnScrim = true,
+                scrim = PopupScrim,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth(0.94f)
+                        .fillMaxHeight(0.82f)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(CardLight)
+                        .padding(16.dp),
                 ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "History",
+                            color = TextDark,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            "Close",
+                            color = TextDark,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .clickable { showHistoryOverlay = false }
+                                .padding(8.dp),
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
                     Column(
                         modifier = Modifier
-                            .fillMaxWidth(0.94f)
-                            .fillMaxHeight(0.82f)
-                            .clip(RoundedCornerShape(24.dp))
-                            .background(CardLight)
-                            .padding(16.dp),
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
                     ) {
-                        Row(
+                        VisionTimeline(
+                            widget = timeline,
+                            viewModel = viewModel,
                             modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                "History",
-                                color = TextDark,
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Text(
-                                "Close",
-                                color = TextDark,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier
-                                    .clickable { showHistoryOverlay = false }
-                                    .padding(8.dp),
-                            )
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .verticalScroll(rememberScrollState()),
-                        ) {
-                            VisionTimeline(
-                                widget = timeline,
-                                viewModel = viewModel,
-                                modifier = Modifier.fillMaxWidth(),
-                                showTitle = false,
-                            )
-                        }
+                            showTitle = false,
+                        )
                     }
                 }
             }
         }
+    }
     }
 }
 
