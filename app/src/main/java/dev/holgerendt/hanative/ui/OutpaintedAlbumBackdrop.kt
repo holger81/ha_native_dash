@@ -181,22 +181,47 @@ private fun HoveringOutpaintStage(
         )
         val coverW = maxWidth * layout.coverWidthFrac
         val coverH = maxHeight * layout.coverHeightFrac
-        MusicCover(
-            path = coverPath,
-            viewModel = viewModel,
+        // Offset soft shadow toward bottom-right so the cover reads as a lifted card.
+        Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .offset(
                     x = maxWidth * layout.coverLeftFrac,
                     y = maxHeight * layout.coverTopFrac,
                 )
-                .size(coverW, coverH)
-                .shadow(18.dp, coverShape, clip = false)
-                .border(1.5.dp, Color.White.copy(alpha = 0.55f), coverShape)
-                .clip(coverShape),
-            spinnerSize = 22.dp,
-            fallbackIconSize = 40.dp,
-        )
+                .size(coverW, coverH),
+        ) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .offset(x = 7.dp, y = 9.dp)
+                    .shadow(
+                        elevation = 22.dp,
+                        shape = coverShape,
+                        clip = false,
+                        ambientColor = Color.Black.copy(alpha = 0.28f),
+                        spotColor = Color.Black.copy(alpha = 0.55f),
+                    )
+                    .background(Color.Transparent, coverShape),
+            )
+            MusicCover(
+                path = coverPath,
+                viewModel = viewModel,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .shadow(
+                        elevation = 10.dp,
+                        shape = coverShape,
+                        clip = false,
+                        ambientColor = Color.Black.copy(alpha = 0.12f),
+                        spotColor = Color.Black.copy(alpha = 0.35f),
+                    )
+                    .border(1.5.dp, Color.White.copy(alpha = 0.55f), coverShape)
+                    .clip(coverShape),
+                spinnerSize = 22.dp,
+                fallbackIconSize = 40.dp,
+            )
+        }
     }
 }
 

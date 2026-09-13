@@ -10,10 +10,10 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeMediaVisibilityTest {
-    @Test fun hidesAfterOneMinuteWithoutPlayback() = runTest {
+    @Test fun hidesAfterGraceWithoutPlayback() = runTest {
         val visibility = HomeMediaVisibility(backgroundScope)
         visibility.updatePlaying(false)
-        advanceTimeBy(59_999)
+        advanceTimeBy(HomeMediaVisibility.HIDE_AFTER_MS - 1)
         assertTrue(visibility.visible.value)
         advanceTimeBy(1)
         runCurrent()
@@ -23,24 +23,24 @@ class HomeMediaVisibilityTest {
     @Test fun refreshesAndCameraRemountsDoNotRestartOrRevealIdleCard() = runTest {
         val visibility = HomeMediaVisibility(backgroundScope)
         visibility.updatePlaying(false)
-        advanceTimeBy(30_000)
+        advanceTimeBy(HomeMediaVisibility.HIDE_AFTER_MS / 2)
         visibility.updatePlaying(false)
-        advanceTimeBy(30_000)
+        advanceTimeBy(HomeMediaVisibility.HIDE_AFTER_MS / 2)
         runCurrent()
         assertFalse(visibility.visible.value)
         visibility.updatePlaying(false)
         assertFalse(visibility.visible.value)
     }
 
-    @Test fun playbackCancelsPendingHideAndNextPauseGetsFullMinute() = runTest {
+    @Test fun playbackCancelsPendingHideAndNextPauseGetsFullGrace() = runTest {
         val visibility = HomeMediaVisibility(backgroundScope)
         visibility.updatePlaying(false)
-        advanceTimeBy(30_000)
+        advanceTimeBy(HomeMediaVisibility.HIDE_AFTER_MS / 2)
         visibility.updatePlaying(true)
-        advanceTimeBy(60_000)
+        advanceTimeBy(HomeMediaVisibility.HIDE_AFTER_MS)
         assertTrue(visibility.visible.value)
         visibility.updatePlaying(false)
-        advanceTimeBy(59_999)
+        advanceTimeBy(HomeMediaVisibility.HIDE_AFTER_MS - 1)
         assertTrue(visibility.visible.value)
         advanceTimeBy(1)
         runCurrent()

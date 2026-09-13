@@ -15,16 +15,25 @@ internal class HomeMediaVisibility(private val scope: CoroutineScope) {
     private var hideJob: Job? = null
 
     fun updatePlaying(playing: Boolean) {
-        if (wasPlaying == playing) return
-        wasPlaying = playing
-        hideJob?.cancel()
         if (playing) {
+            wasPlaying = true
+            hideJob?.cancel()
+            hideJob = null
             _visible.value = true
-        } else {
-            hideJob = scope.launch {
-                delay(60_000L)
-                _visible.value = false
-            }
+            return
         }
+        // Already counting down or already hidden — ignore repeated paused refreshes.
+        if (wasPlaying == false && (hideJob?.isActive == true || !_visible.value)) return
+        wasPlaying = false
+        hideJob?.cancel()
+        hideJob = scope.launch {
+            delay(HIDE_AFTER_MS)
+            _visible.value = false
+        }
+    }
+
+    companion object {
+        /** Auto-hide paused/stopped home music card (1–2 minute window). */
+        const val HIDE_AFTER_MS = 90_000L
     }
 }

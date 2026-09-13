@@ -303,6 +303,36 @@ class HomeMediaResolveTest {
     }
 
     @Test
+    fun haPausedBeatsStaleMassPlaying() {
+        val office = MusicAssistantPlayer(
+            entityId = "media_player.office",
+            name = "Office",
+            massPlayerId = "office",
+            massPlaybackState = "playing",
+        )
+        val snap = resolveHomeMediaSession(
+            players = listOf(office),
+            states = mapOf(
+                "media_player.office" to EntityState(
+                    entityId = "media_player.office",
+                    state = "paused",
+                    attributes = mapOf(
+                        "mass_player_type" to JsonPrimitive("player"),
+                        "media_title" to JsonPrimitive("Paused Song"),
+                    ),
+                ),
+                APPLE_TV_ENTITY to EntityState(APPLE_TV_ENTITY, "standby"),
+            ),
+            browseSelectedId = "media_player.office",
+            queue = null,
+        )
+        assertEquals(HomeMediaKind.Music, snap.kind)
+        assertFalse(snap.playing)
+        assertTrue(snap.paused)
+        assertEquals("Paused Song", snap.title)
+    }
+
+    @Test
     fun massOnlyPlayingStateIsRepresented() {
         val office = MusicAssistantPlayer(
             entityId = "media_player.office",

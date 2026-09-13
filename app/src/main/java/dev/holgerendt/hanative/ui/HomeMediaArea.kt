@@ -172,9 +172,16 @@ internal fun resolveHomeMediaSession(
 
     val musicHits = musicCandidates.mapNotNull { player ->
         val st = states[player.entityId]
-        val haState = st?.state
+        val haState = st?.state?.lowercase()
         val massState = player.massPlaybackState?.lowercase()
-        val playing = haState == "playing" || massState == "playing"
+        // HA "paused" wins over a stale MASS "playing" flag (otherwise the home
+        // card never starts its auto-hide timer). Idle HA still allows MASS-only playing.
+        val playing = when {
+            haState == "paused" -> false
+            haState == "playing" -> true
+            massState == "playing" -> true
+            else -> false
+        }
         val paused = !playing && (
             haState == "paused" || massState == "paused"
             ) && (!st?.mediaTitle().isNullOrBlank() || queue?.current != null && player.entityId == browseSelectedId)

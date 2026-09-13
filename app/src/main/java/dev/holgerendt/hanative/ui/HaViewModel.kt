@@ -1036,7 +1036,10 @@ class HaViewModel(
         if (id.isBlank()) return
         viewModelScope.launch {
             runCatching { client.mediaPlayerCommand(id, service) }
-            refreshMusicQueueSoon()
+            refreshMusicWall(forcePlayers = false)
+            if (service == "media_next_track" || service == "media_previous_track") {
+                scheduleAlbumArtOutpaintPrefetch()
+            }
         }
     }
 
@@ -1134,7 +1137,8 @@ class HaViewModel(
         val entityId = _musicWall.value.selectedEntityId ?: return
         viewModelScope.launch {
             runCatching { client.mediaPlayerCommand(entityId, "media_next_track") }
-            refreshMusicQueueSoon()
+            refreshMusicWall(forcePlayers = false)
+            scheduleAlbumArtOutpaintPrefetch()
         }
     }
 
@@ -1142,7 +1146,8 @@ class HaViewModel(
         val entityId = _musicWall.value.selectedEntityId ?: return
         viewModelScope.launch {
             runCatching { client.mediaPlayerCommand(entityId, "media_previous_track") }
-            refreshMusicQueueSoon()
+            refreshMusicWall(forcePlayers = false)
+            scheduleAlbumArtOutpaintPrefetch()
         }
     }
 

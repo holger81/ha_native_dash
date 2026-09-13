@@ -56,24 +56,24 @@ class AlbumArtOutpaintPriorityTest {
     }
 
     @Test
-    fun playlistPlanCapsAtFiveIncludingCurrent() {
+    fun playlistPlanCapsAtTenIncludingCurrent() {
         val plan = playlistOutpaintPlan(
             currentCover = "now",
-            upcomingCovers = listOf("1", "2", "3", "4", "5", "6"),
+            upcomingCovers = (1..12).map { "$it" },
         )
         assertEquals("now", plan.current)
-        assertEquals(listOf("1", "2", "3", "4"), plan.upcoming)
-        assertEquals(5, (listOfNotNull(plan.current) + plan.upcoming).size)
+        assertEquals((1..9).map { "$it" }, plan.upcoming)
+        assertEquals(10, (listOfNotNull(plan.current) + plan.upcoming).size)
     }
 
     @Test
-    fun playlistPlanAllowsFiveUpcomingWhenIdle() {
+    fun playlistPlanAllowsTenUpcomingWhenIdle() {
         val plan = playlistOutpaintPlan(
             currentCover = null,
-            upcomingCovers = listOf("1", "2", "3", "4", "5", "6"),
+            upcomingCovers = (1..12).map { "$it" },
         )
         assertNull(plan.current)
-        assertEquals(listOf("1", "2", "3", "4", "5"), plan.upcoming)
+        assertEquals((1..10).map { "$it" }, plan.upcoming)
     }
 
     @Test

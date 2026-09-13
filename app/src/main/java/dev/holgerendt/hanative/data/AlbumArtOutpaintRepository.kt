@@ -59,7 +59,13 @@ class AlbumArtOutpaintRepository(
     fun setTargets(currentCover: String?, upcomingCovers: List<String>) {
         if (comfyUiUrl().isBlank()) return
         val plan = playlistOutpaintPlan(currentCover, upcomingCovers)
-        targets.set(OutpaintTargets(current = plan.current, upcoming = plan.upcoming))
+        val next = OutpaintTargets(current = plan.current, upcoming = plan.upcoming)
+        // Home media watch reschedules every few seconds; skip churn when the plan is unchanged.
+        if (targets.get() == next) {
+            kickWorker()
+            return
+        }
+        targets.set(next)
         kickWorker()
     }
 
@@ -144,8 +150,16 @@ class AlbumArtOutpaintRepository(
     /**
      * Instant local edge pad for the UI, then optional Comfy Flux upgrade for
      * pictorial covers (skipped for black/studio mattes). Lazy beige fills are rejected.
+     *
+     * **Never regenerates** when a pad is already on disk — that was overwriting good
+     * Flux fills on every process start (in-memory [fluxAttemptedRefs] reset).
      */
     private suspend fun warmCover(comfyBase: String, coverRef: String, source: ByteArray): File? {
+        // Disk hit = done. Do not call Comfy again for this cover bytes.
+        cache.cachedFile(source)?.let {
+            fluxAttemptedRefs.add(coverRef)
+            return it
+        }
         val local = cache.getOrEnqueue(source) { bytes ->
             AlbumArtLocalOutpaint.padFromEdges(bytes)
         } ?: return null
@@ -154,8 +168,7 @@ class AlbumArtOutpaintRepository(
             return local
         }
         if (!fluxAttemptedRefs.add(coverRef)) return local
-        // Empty-prompt Flux is usually good but seed-dependent; retry a few times
-        // before keeping the local edge pad (never accept invented cream).
+        // First-time only: try Flux upgrade; keep local if every seed invents cream.
         repeat(FLUX_ATTEMPTS) {
             val flux = runCatching { comfy.outpaint(comfyBase, source) }.getOrNull()
                 ?.takeIf { it.isNotEmpty() }
@@ -186,10 +199,10 @@ class AlbumArtOutpaintRepository(
             failedRefs.add(coverRef)
             return true
         }
-        val hit = cache.cachedFile(source) ?: return false
-        // Local pad present: still need one Flux attempt for pictorial covers.
-        if (AlbumArtLocalOutpaint.hasUniformEdges(source) || fluxAttemptedRefs.contains(coverRef)) {
+        // Any on-disk pad counts — local or Flux. Do not re-queue for a Flux upgrade.
+        if (cache.cachedFile(source) != null) {
             warmRefs.add(coverRef)
+            fluxAttemptedRefs.add(coverRef)
             return true
         }
         return false
@@ -251,7 +264,7 @@ class AlbumArtOutpaintRepository(
          * Hard cap on covers warmed from the active playlist (now-playing + next).
          * Also the max upcoming rows fetched from Music Assistant.
          */
-        const val MAX_PLAYLIST_OUTPAINT = 5
+        const val MAX_PLAYLIST_OUTPAINT = 10
 
         /** @deprecated Use [MAX_PLAYLIST_OUTPAINT]. */
         const val MAX_UPCOMING = MAX_PLAYLIST_OUTPAINT
