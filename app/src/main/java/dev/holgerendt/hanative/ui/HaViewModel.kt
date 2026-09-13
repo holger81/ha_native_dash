@@ -1088,10 +1088,8 @@ class HaViewModel(
     }
 
     /**
-     * Prefer outpainting upcoming queue covers (+1…+5); backfill the now-playing
-     * cover only after those are cached (Flux jobs are ~1–2+ minutes).
-     * Runs for the selected player's queue even when playback is idle so the
-     * next-up row is warm before play resumes.
+     * Warm at most [AlbumArtOutpaintRepository.MAX_PLAYLIST_OUTPAINT] covers from
+     * the **current** Music Assistant playlist (now-playing + next tracks).
      */
     fun scheduleAlbumArtOutpaintPrefetch(currentCoverOverride: String? = null) {
         if (credentials.comfyUiUrl.isBlank()) return
@@ -1109,16 +1107,21 @@ class HaViewModel(
             val queueId = queue?.queueId
                 ?: selectedPlayer?.massPlayerId
                 ?: musicId?.removePrefix("media_player.")
-            if (!queueId.isNullOrBlank()) {
+            // Fetch only as many next tracks as the playlist budget still allows.
+            val upcomingBudget = if (current.isNullOrBlank()) {
+                AlbumArtOutpaintRepository.MAX_PLAYLIST_OUTPAINT
+            } else {
+                AlbumArtOutpaintRepository.MAX_PLAYLIST_OUTPAINT - 1
+            }
+            if (!queueId.isNullOrBlank() && upcomingBudget > 0) {
                 runCatching {
                     client.musicAssistantUpcomingCoverUrls(
                         queueId = queueId,
                         currentIndex = queue?.currentIndex,
-                        limit = AlbumArtOutpaintRepository.MAX_UPCOMING,
+                        limit = upcomingBudget,
                     )
                 }.getOrDefault(emptyList()).forEach { upcoming.add(it) }
             }
-            // Idle or playing: still enqueue upcoming covers so ComfyUI warms them.
             if (current.isNullOrBlank() && upcoming.isEmpty()) return@launch
             albumArtOutpaint.setTargets(
                 currentCover = current,

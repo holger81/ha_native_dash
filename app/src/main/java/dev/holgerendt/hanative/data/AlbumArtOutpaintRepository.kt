@@ -52,19 +52,14 @@ class AlbumArtOutpaintRepository(
     private val fluxAttemptedRefs = ConcurrentHashMap.newKeySet<String>()
 
     /**
-     * Update the generation plan. [upcomingCovers] should be next tracks first
-     * (+1 … +[MAX_UPCOMING]). [currentCover] is backfilled only after upcoming are cached.
+     * Update the generation plan from the **active playlist only**.
+     * At most [MAX_PLAYLIST_OUTPAINT] covers total: now-playing (if any) plus the
+     * next tracks, never more.
      */
     fun setTargets(currentCover: String?, upcomingCovers: List<String>) {
         if (comfyUiUrl().isBlank()) return
-        val upcoming = upcomingCovers
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .distinct()
-            .filter { it != currentCover?.trim() }
-            .take(MAX_UPCOMING)
-        val current = currentCover?.trim()?.takeIf { it.isNotBlank() }
-        targets.set(OutpaintTargets(current = current, upcoming = upcoming))
+        val plan = playlistOutpaintPlan(currentCover, upcomingCovers)
+        targets.set(OutpaintTargets(current = plan.current, upcoming = plan.upcoming))
         kickWorker()
     }
 
@@ -246,7 +241,14 @@ class AlbumArtOutpaintRepository(
     )
 
     companion object {
-        const val MAX_UPCOMING = 5
+        /**
+         * Hard cap on covers warmed from the active playlist (now-playing + next).
+         * Also the max upcoming rows fetched from Music Assistant.
+         */
+        const val MAX_PLAYLIST_OUTPAINT = 5
+
+        /** @deprecated Use [MAX_PLAYLIST_OUTPAINT]. */
+        const val MAX_UPCOMING = MAX_PLAYLIST_OUTPAINT
 
         fun imageFetchClient(): OkHttpClient = OkHttpClient.Builder()
             .addInterceptor { chain ->
@@ -267,6 +269,31 @@ class AlbumArtOutpaintRepository(
             .build()
     }
 }
+
+/**
+ * Cap playlist outpaint targets to [maxTotal] covers: [current] (optional) plus
+ * the next distinct upcoming URLs, in order.
+ */
+fun playlistOutpaintPlan(
+    currentCover: String?,
+    upcomingCovers: List<String>,
+    maxTotal: Int = AlbumArtOutpaintRepository.MAX_PLAYLIST_OUTPAINT,
+): PlaylistOutpaintPlan {
+    val current = currentCover?.trim()?.takeIf { it.isNotBlank() }
+    val upcomingBudget = if (current != null) (maxTotal - 1).coerceAtLeast(0) else maxTotal
+    val upcoming = upcomingCovers
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .distinct()
+        .filter { it != current }
+        .take(upcomingBudget)
+    return PlaylistOutpaintPlan(current = current, upcoming = upcoming)
+}
+
+data class PlaylistOutpaintPlan(
+    val current: String?,
+    val upcoming: List<String>,
+)
 
 /**
  * Pick the next cover to generate: now-playing first, then first uncached upcoming.

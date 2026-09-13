@@ -678,20 +678,22 @@ class HaClient {
 
     /**
      * Cover URLs for the next [limit] queue items after [currentIndex]
-     * (playlist positions +1 … +limit). Used to prefetch outpaint ahead of now-playing.
+     * (playlist positions +1 … +limit). Used to prefetch outpaint for the
+     * active playlist only (capped by [AlbumArtOutpaintRepository.MAX_PLAYLIST_OUTPAINT]).
      */
     suspend fun musicAssistantUpcomingCoverUrls(
         queueId: String,
         currentIndex: Int?,
-        limit: Int = AlbumArtOutpaintRepository.MAX_UPCOMING,
+        limit: Int = AlbumArtOutpaintRepository.MAX_PLAYLIST_OUTPAINT,
     ): List<String> = withContext(Dispatchers.IO) {
         val offset = ((currentIndex ?: 0) + 1).coerceAtLeast(0)
+        val capped = limit.coerceIn(1, AlbumArtOutpaintRepository.MAX_PLAYLIST_OUTPAINT)
         val result = runCatching {
             massCommand(
                 "player_queues/items",
                 buildJsonObject {
                     put("queue_id", queueId)
-                    put("limit", limit.coerceIn(1, AlbumArtOutpaintRepository.MAX_UPCOMING))
+                    put("limit", capped)
                     put("offset", offset)
                 },
             )
@@ -704,7 +706,7 @@ class HaClient {
         } ?: return@withContext emptyList()
         rows.mapNotNull { element ->
             parseQueueItem(element)?.imageUrl?.takeIf { it.isNotBlank() }
-        }
+        }.take(capped)
     }
 
     suspend fun mediaPlayerCommand(entityId: String, service: String, data: Map<String, JsonElement> = emptyMap()) {
