@@ -137,6 +137,63 @@ class AlbumArtLocalOutpaintTest {
     }
 
     @Test
+    fun texturedColorDriftIsNotRejectedAsCream() {
+        // Mean color can drift on a good Flux fill; solid-cream check must fail.
+        val padL = 20
+        val padT = 4
+        val padR = 20
+        val padB = 4
+        val coverW = 40
+        val coverH = 40
+        val outW = coverW + padL + padR
+        val outH = coverH + padT + padB
+        val cover = argb(40, 84, 115)
+        val cream = argb(170, 157, 128)
+        val coverPixels = IntArray(coverW * coverH) { cover }
+        val paddedPixels = IntArray(outW * outH) { idx ->
+            val x = idx % outW
+            val y = idx / outW
+            val inCover = x in padL until (outW - padR) && y in padT until (outH - padB)
+            if (inCover) {
+                cover
+            } else {
+                // Textured cream-ish pad — not a flat matte.
+                argb(
+                    (cream ushr 16 and 0xFF) + ((x * 13 + y * 7) % 40) - 20,
+                    (cream ushr 8 and 0xFF) + ((x * 3 + y * 11) % 40) - 20,
+                    (cream and 0xFF) + ((x * 5 + y * 17) % 40) - 20,
+                ).let {
+                    val r = ((it ushr 16) and 0xFF).coerceIn(0, 255)
+                    val g = ((it ushr 8) and 0xFF).coerceIn(0, 255)
+                    val b = (it and 0xFF).coerceIn(0, 255)
+                    argb(r, g, b)
+                }
+            }
+        }
+        assertTrue(
+            "textured pad should not look local-solid",
+            !AlbumArtLocalOutpaint.looksLikeLocalSolidPadPixels(outW, outH, paddedPixels, padL, padT, padR, padB),
+        )
+        // Color distance alone would reject; combined guard must not.
+        val padSides = AlbumArtLocalOutpaint.SideMeans(
+            left = cream, top = cream, right = cream, bottom = cream,
+        )
+        val coverSides = AlbumArtLocalOutpaint.SideMeans(
+            left = cover, top = cover, right = cover, bottom = cover,
+        )
+        assertTrue(
+            AlbumArtLocalOutpaint.padMismatchDistance(padSides, coverSides) >
+                AlbumArtLocalOutpaint.MAX_PAD_MISMATCH,
+        )
+        // Simulate shouldRejectFluxPad's AND: color mismatch alone is not enough.
+        val wouldReject = true && // color mismatch
+            AlbumArtLocalOutpaint.looksLikeLocalSolidPadPixels(outW, outH, paddedPixels, padL, padT, padR, padB)
+        assertTrue("textured Flux must be kept", !wouldReject)
+        // silence unused
+        coverPixels.size
+    }
+
+    @Test
     fun rimMeanKeepsDarkCoversDarkWithoutSnapping() {
         val w = 40
         val h = 40

@@ -37,6 +37,7 @@ import dev.holgerendt.hanative.data.mediaPositionSec
 import dev.holgerendt.hanative.data.mediaPositionUpdatedAtMs
 import dev.holgerendt.hanative.data.mediaTitle
 import dev.holgerendt.hanative.data.repeatMode
+import dev.holgerendt.hanative.data.resolveMusicWallSelection
 import dev.holgerendt.hanative.data.resolveNowPlayingCover
 import dev.holgerendt.hanative.model.ActionNode
 import dev.holgerendt.hanative.model.CalendarSourceNode
@@ -634,6 +635,7 @@ class HaViewModel(
         savedSelection = { credentials.musicPlayerEntity.takeIf { it.isNotBlank() } },
         saveSelection = { credentials.musicPlayerEntity = it },
         playerState = { client.state(it)?.state },
+        playerDisplayName = { client.state(it)?.friendlyName },
     )
     private var musicWallJob: Job? = null
     private var musicMediaWatchJob: Job? = null
@@ -653,9 +655,19 @@ class HaViewModel(
     fun selectMusicPlayer(entityId: String) {
         val normalized = CredentialsStore.normalizeEntityId(entityId)
         if (normalized.isBlank()) return
+        val players = _musicWall.value.players
+        val resolved = when {
+            players.isEmpty() || players.any { it.entityId == normalized } -> normalized
+            else -> resolveMusicWallSelection(
+                players = players,
+                preferredEntityId = normalized,
+                playerState = { client.state(it)?.state },
+                preferredDisplayName = client.state(normalized)?.friendlyName,
+            ) ?: normalized
+        }
         musicRefresher.invalidate()
-        credentials.musicPlayerEntity = normalized
-        _musicWall.value = _musicWall.value.copy(selectedEntityId = normalized, error = null)
+        credentials.musicPlayerEntity = resolved
+        _musicWall.value = _musicWall.value.copy(selectedEntityId = resolved, error = null)
         refreshMusicQueue()
     }
 

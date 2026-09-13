@@ -267,6 +267,22 @@ object AlbumArtLocalOutpaint {
     }
 
     /**
+     * Reject only lazy cream/gray mattes: wrong edge color *and* near-solid pads.
+     * Textured Flux continuations often shift mean color without looking fake —
+     * those must be kept (otherwise we burn 3×80s seeds on good fills).
+     */
+    fun shouldRejectFluxPad(
+        paddedBytes: ByteArray,
+        sourceBytes: ByteArray,
+        padLeft: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_LEFT,
+        padTop: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_TOP,
+        padRight: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_RIGHT,
+        padBottom: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_BOTTOM,
+    ): Boolean =
+        isPadColorMismatch(paddedBytes, sourceBytes, padLeft, padTop, padRight, padBottom) &&
+            looksLikeLocalSolidPad(paddedBytes, padLeft, padTop, padRight, padBottom)
+
+    /**
      * Worst-side color distance between each pad margin and the matching cover edge.
      * High = invented fill; low = edge-faithful continuation.
      */

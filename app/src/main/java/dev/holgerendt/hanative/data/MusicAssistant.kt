@@ -463,3 +463,54 @@ fun normalizeMusicPlayerName(name: String): String =
     name.lowercase()
         .replace(APOSTROPHE_REGEX, "")
         .replace(NON_ALPHANUMERIC_REGEX, "")
+
+/**
+ * Pick which Music Assistant player the wall / home card should drive.
+ *
+ * Prefers an exact saved id when it is still a MASS player. If the saved id is a
+ * leftover Sonos (or other) entity with the same room name — e.g. `media_player.office`
+ * friendly-named "Dining Room" vs `media_player.dining_room` — remap by display name.
+ * When several are active, prefer the group leader over sync members.
+ */
+fun resolveMusicWallSelection(
+    players: List<MusicAssistantPlayer>,
+    preferredEntityId: String?,
+    playerState: (String) -> String?,
+    preferredDisplayName: String? = null,
+): String? {
+    if (players.isEmpty()) return null
+    val preferred = preferredEntityId?.trim()?.takeIf { it.isNotBlank() }
+    if (preferred != null && players.any { it.entityId == preferred }) {
+        return preferred
+    }
+    matchPlayerByDisplayName(players, preferredDisplayName)?.let { return it.entityId }
+
+    val playing = players.filter { playerState(it.entityId) == "playing" }
+    preferGroupLeader(playing)?.entityId?.let { return it }
+    val paused = players.filter { playerState(it.entityId) == "paused" }
+    preferGroupLeader(paused)?.entityId?.let { return it }
+    return players.firstOrNull()?.entityId
+}
+
+internal fun matchPlayerByDisplayName(
+    players: List<MusicAssistantPlayer>,
+    displayName: String?,
+): MusicAssistantPlayer? {
+    val target = displayName?.let(::normalizeMusicPlayerName)?.takeIf { it.isNotBlank() }
+        ?: return null
+    players.firstOrNull { normalizeMusicPlayerName(it.name) == target }?.let { return it }
+    return players.firstOrNull {
+        val other = normalizeMusicPlayerName(it.name)
+        other.contains(target) || target.contains(other)
+    }
+}
+
+internal fun preferGroupLeader(candidates: List<MusicAssistantPlayer>): MusicAssistantPlayer? {
+    if (candidates.isEmpty()) return null
+    if (candidates.size == 1) return candidates.first()
+    // Synced members point at the leader; leaders have no syncedTo (or are the root).
+    candidates.firstOrNull { it.syncedToId.isNullOrBlank() && it.groupMemberIds.size > 1 }
+        ?.let { return it }
+    candidates.firstOrNull { it.syncedToId.isNullOrBlank() }?.let { return it }
+    return candidates.first()
+}

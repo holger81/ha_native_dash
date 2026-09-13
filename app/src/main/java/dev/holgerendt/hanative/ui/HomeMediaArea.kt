@@ -50,6 +50,7 @@ import dev.holgerendt.hanative.data.mediaDurationSec
 import dev.holgerendt.hanative.data.mediaPositionSec
 import dev.holgerendt.hanative.data.mediaPositionUpdatedAtMs
 import dev.holgerendt.hanative.data.mediaTitle
+import dev.holgerendt.hanative.data.preferGroupLeader
 import dev.holgerendt.hanative.data.resolveNowPlayingCover
 import dev.holgerendt.hanative.data.volumeLevel
 import dev.holgerendt.hanative.ui.theme.ActiveYellow
@@ -192,9 +193,14 @@ internal fun resolveHomeMediaSession(
         MusicHit(player, st, playing, paused)
     }
 
-    val bestMusic = musicHits.firstOrNull { it.playing }
-        ?: musicHits.firstOrNull { it.paused && it.player.entityId == browseSelectedId }
-        ?: musicHits.firstOrNull { it.paused }
+    val bestMusic = run {
+        val playing = musicHits.filter { it.playing }.map { it.player }
+        val leaderId = preferGroupLeader(playing)?.entityId
+        musicHits.firstOrNull { it.playing && it.player.entityId == leaderId }
+            ?: musicHits.firstOrNull { it.playing }
+            ?: musicHits.firstOrNull { it.paused && it.player.entityId == browseSelectedId }
+            ?: musicHits.firstOrNull { it.paused }
+    }
 
     // Household: music and Apple TV are mutually exclusive on the home card.
     // Playing TV wins; paused TV does not.

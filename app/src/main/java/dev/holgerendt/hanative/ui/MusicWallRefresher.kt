@@ -2,6 +2,7 @@ package dev.holgerendt.hanative.ui
 
 import dev.holgerendt.hanative.data.MusicAssistantPlayer
 import dev.holgerendt.hanative.data.MusicAssistantQueue
+import dev.holgerendt.hanative.data.resolveMusicWallSelection
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -18,6 +19,7 @@ internal class MusicWallRefresher(
     private val savedSelection: () -> String?,
     private val saveSelection: (String) -> Unit,
     private val playerState: (String) -> String?,
+    private val playerDisplayName: (String) -> String? = { null },
 ) {
     private val revision = AtomicLong()
 
@@ -37,10 +39,12 @@ internal class MusicWallRefresher(
             }
             if (!isCurrent()) return
             val preferred = initial.selectedEntityId ?: savedSelection()
-            val selected = preferred?.takeIf { id -> players.any { it.entityId == id } }
-                ?: players.firstOrNull { playerState(it.entityId) == "playing" }?.entityId
-                ?: players.firstOrNull { playerState(it.entityId) == "paused" }?.entityId
-                ?: players.firstOrNull()?.entityId
+            val selected = resolveMusicWallSelection(
+                players = players,
+                preferredEntityId = preferred,
+                playerState = playerState,
+                preferredDisplayName = preferred?.let(playerDisplayName),
+            )
             val queue = if (selected == null) null else {
                 try { loadQueue(selected, players) }
                 catch (cancelled: CancellationException) { throw cancelled }

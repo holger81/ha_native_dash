@@ -168,14 +168,13 @@ class AlbumArtOutpaintRepository(
             return local
         }
         if (!fluxAttemptedRefs.add(coverRef)) return local
-        // First-time only: try Flux upgrade; keep local if every seed invents cream.
-        repeat(FLUX_ATTEMPTS) {
-            val flux = runCatching { comfy.outpaint(comfyBase, source) }.getOrNull()
-                ?.takeIf { it.isNotEmpty() }
-                ?: return@repeat
-            if (!AlbumArtLocalOutpaint.isPadColorMismatch(flux, source)) {
-                return cache.replace(source, flux) ?: local
-            }
+        // One Flux pass: empty-prompt fills are usually good. Only reject solid
+        // cream/gray pads (color mismatch *and* near-uniform margins); textured
+        // continuations that drift in mean color still count as success.
+        val flux = runCatching { comfy.outpaint(comfyBase, source) }.getOrNull()
+            ?.takeIf { it.isNotEmpty() }
+        if (flux != null && !AlbumArtLocalOutpaint.shouldRejectFluxPad(flux, source)) {
+            return cache.replace(source, flux) ?: local
         }
         return local
     }
@@ -289,8 +288,8 @@ class AlbumArtOutpaintRepository(
         /** @deprecated Use [MAX_PLAYLIST_OUTPAINT]. */
         const val MAX_UPCOMING = MAX_PLAYLIST_OUTPAINT
 
-        /** Max Flux tries per cover before keeping the local edge pad. */
-        const val FLUX_ATTEMPTS = 3
+        /** @deprecated Retries removed; empty-prompt Flux is accepted on first pass. */
+        const val FLUX_ATTEMPTS = 1
 
         fun imageFetchClient(): OkHttpClient = OkHttpClient.Builder()
             .addInterceptor { chain ->
