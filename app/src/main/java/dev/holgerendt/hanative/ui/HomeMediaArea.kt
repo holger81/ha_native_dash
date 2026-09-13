@@ -50,6 +50,7 @@ import dev.holgerendt.hanative.data.mediaDurationSec
 import dev.holgerendt.hanative.data.mediaPositionSec
 import dev.holgerendt.hanative.data.mediaPositionUpdatedAtMs
 import dev.holgerendt.hanative.data.mediaTitle
+import dev.holgerendt.hanative.data.resolveNowPlayingCover
 import dev.holgerendt.hanative.data.volumeLevel
 import dev.holgerendt.hanative.ui.theme.ActiveYellow
 import dev.holgerendt.hanative.ui.theme.CardLight
@@ -208,8 +209,11 @@ internal fun resolveHomeMediaSession(
             val artist = (if (useQueue) queue?.current?.artists else null)
                 ?: st?.mediaArtist()
                 ?: ""
-            val art = st?.entityPicture
-                ?: (if (useQueue) queue?.current?.imageUrl else null)
+            val art = if (useQueue) {
+                resolveNowPlayingCover(queue?.current, st?.entityPicture)
+            } else {
+                st?.entityPicture
+            }
             HomeMediaSnapshot(
                 kind = HomeMediaKind.Music,
                 playing = bestMusic.playing,

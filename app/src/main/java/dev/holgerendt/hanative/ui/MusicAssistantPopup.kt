@@ -59,6 +59,7 @@ import dev.holgerendt.hanative.data.mediaPositionSec
 import dev.holgerendt.hanative.data.mediaPositionUpdatedAtMs
 import dev.holgerendt.hanative.data.mediaTitle
 import dev.holgerendt.hanative.data.repeatMode
+import dev.holgerendt.hanative.data.resolveNowPlayingCover
 import dev.holgerendt.hanative.data.isShuffleOn
 import dev.holgerendt.hanative.data.volumeLevel
 import dev.holgerendt.hanative.model.PopupNode
@@ -282,7 +283,7 @@ private fun NowPlayingPane(
         ?: entity?.state?.replaceFirstChar { it.uppercase() }
         ?: ""
     val album = wall.queue?.current?.album ?: entity?.mediaAlbum().orEmpty()
-    val art = entity?.entityPicture ?: wall.queue?.current?.imageUrl
+    val art = resolveNowPlayingCover(wall.queue?.current, entity?.entityPicture)
     val duration = wall.queue?.current?.durationSec?.toDouble() ?: entity?.mediaDurationSec()
     val position = rememberLiveMediaPosition(
         entity = entity,

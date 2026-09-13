@@ -37,6 +37,7 @@ import dev.holgerendt.hanative.data.mediaPositionSec
 import dev.holgerendt.hanative.data.mediaPositionUpdatedAtMs
 import dev.holgerendt.hanative.data.mediaTitle
 import dev.holgerendt.hanative.data.repeatMode
+import dev.holgerendt.hanative.data.resolveNowPlayingCover
 import dev.holgerendt.hanative.model.ActionNode
 import dev.holgerendt.hanative.model.CalendarSourceNode
 import dev.holgerendt.hanative.model.DashboardFile
@@ -1102,8 +1103,7 @@ class HaViewModel(
         val selectedPlayer = wall.players.firstOrNull { it.entityId == musicId }
         val entityArt = musicId?.let { client.state(it)?.entityPicture }
         val current = currentCoverOverride
-            ?: entityArt
-            ?: queue?.current?.imageUrl
+            ?: resolveNowPlayingCover(queue?.current, entityArt)
         viewModelScope.launch(Dispatchers.IO) {
             val upcoming = linkedSetOf<String>()
             queue?.next?.imageUrl?.takeIf { it.isNotBlank() }?.let { upcoming.add(it) }

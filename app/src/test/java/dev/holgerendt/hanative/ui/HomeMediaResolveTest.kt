@@ -2,6 +2,8 @@ package dev.holgerendt.hanative.ui
 
 import dev.holgerendt.hanative.data.EntityState
 import dev.holgerendt.hanative.data.MusicAssistantPlayer
+import dev.holgerendt.hanative.data.MusicAssistantQueue
+import dev.holgerendt.hanative.data.MusicAssistantQueueItem
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -330,6 +332,43 @@ class HomeMediaResolveTest {
         assertFalse(snap.playing)
         assertTrue(snap.paused)
         assertEquals("Paused Song", snap.title)
+    }
+
+    @Test
+    fun queueCoverBeatsStaleHaEntityPicture() {
+        val office = MusicAssistantPlayer(
+            entityId = "media_player.office",
+            name = "Dining Room",
+            massPlayerId = "office",
+            massPlaybackState = "playing",
+        )
+        val snap = resolveHomeMediaSession(
+            players = listOf(office),
+            states = mapOf(
+                "media_player.office" to EntityState(
+                    entityId = "media_player.office",
+                    state = "playing",
+                    attributes = mapOf(
+                        "mass_player_type" to JsonPrimitive("player"),
+                        "media_title" to JsonPrimitive("Wrong Title"),
+                        "entity_picture" to JsonPrimitive("/api/media_player_proxy/stale"),
+                    ),
+                ),
+                APPLE_TV_ENTITY to EntityState(APPLE_TV_ENTITY, "standby"),
+            ),
+            browseSelectedId = "media_player.office",
+            queue = MusicAssistantQueue(
+                queueId = "office",
+                current = MusicAssistantQueueItem(
+                    name = "Hit the Wall",
+                    imageUrl = "mass-imageproxy://correct",
+                    artists = "Gracie Abrams",
+                ),
+            ),
+        )
+        assertEquals(HomeMediaKind.Music, snap.kind)
+        assertEquals("Hit the Wall", snap.title)
+        assertEquals("mass-imageproxy://correct", snap.art)
     }
 
     @Test

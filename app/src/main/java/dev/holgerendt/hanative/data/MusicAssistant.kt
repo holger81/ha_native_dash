@@ -266,14 +266,27 @@ internal fun parseQueueItem(element: JsonElement?): MusicAssistantQueueItem? {
         durationSec = obj["duration"]?.jsonPrimitive?.intOrNull
             ?: obj["duration"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
             ?: obj["duration"]?.jsonPrimitive?.doubleOrNull?.toInt(),
-        imageUrl = extractMassImageUrl(obj)
-            ?: media?.let(::extractMassImageUrl),
+        // Prefer media_item art (the track) over the queue row's image (can be
+        // radio-station / playlist artwork while stream_title shows the song).
+        imageUrl = media?.let(::extractMassImageUrl)
+            ?: extractMassImageUrl(obj),
         artists = artists,
         album = album,
         mediaUri = media?.get("uri")?.jsonPrimitive?.contentOrNull,
         streamTitle = obj["stream_title"]?.jsonPrimitive?.contentOrNull,
     )
 }
+
+/**
+ * Cover for the now-playing UI. Prefer Music Assistant queue art so the large
+ * cover matches the "Now" row; HA [entity_picture] often lags a track or two on skip.
+ */
+fun resolveNowPlayingCover(
+    queueItem: MusicAssistantQueueItem?,
+    entityPicture: String?,
+): String? =
+    queueItem?.imageUrl?.takeIf { it.isNotBlank() }
+        ?: entityPicture?.takeIf { it.isNotBlank() }
 
 fun formatMediaClock(seconds: Double?): String {
     if (seconds == null || !seconds.isFinite() || seconds < 0) return "0:00"
