@@ -1,7 +1,7 @@
 {
   "_meta": {
     "title": "Album art outpaint (Flux fill)",
-    "notes": "API export of the household Flux fill outpaint graph on 192.168.10.31. Requires flux1-fill-dev.safetensors, DualCLIP (clip_l + t5xxl_fp16), and ae.safetensors. The app rewrites the LoadImage node (17) after upload."
+    "notes": "API export of the household Flux fill outpaint graph on 192.168.10.31. Requires flux1-fill-dev.safetensors, DualCLIP (clip_l + t5xxl_fp16), and ae.safetensors. The app rewrites LoadImage (17) after upload and injects the positive CLIP prompt (23) so solid-edge covers may extend as flat color while pictorial edges continue the scene."
   },
   "3": {
     "inputs": {
@@ -40,7 +40,7 @@
   },
   "23": {
     "inputs": {
-      "text": "album artwork, seamless extended atmosphere, matching colors and texture, soft background, no text, no logos, no watermark",
+      "text": "PLACEHOLDER_OUTPAINT_PROMPT",
       "clip": ["34", 0]
     },
     "class_type": "CLIPTextEncode"

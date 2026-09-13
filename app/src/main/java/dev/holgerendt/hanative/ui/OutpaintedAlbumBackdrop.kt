@@ -31,10 +31,15 @@ import java.io.File
 import kotlinx.coroutines.delay
 
 /**
- * Soft extended album atmosphere behind sharp cover content for the Phase 6 media card.
+ * Atmosphere behind the sharp Phase 6 album cover.
  *
- * Decorative layers use [matchParentSize] so they never inflate the card. One atmosphere
- * source is shown at a time (local soft enlarge, then outpaint) and fades into the light card.
+ * **Goal:** show a ComfyUI Flux fill of the cover (edge-faithful outpaint).
+ * Solid cover borders may correctly extend as the same flat color; pictorial
+ * edges should continue the scene. Soft local enlarge is only the interim layer
+ * until [AlbumArtOutpaintRepository] has a cached outpaint (or when ComfyUI is
+ * unset/unavailable).
+ *
+ * Decorative layers use [matchParentSize] so they never inflate the card.
  */
 @Composable
 fun OutpaintedAlbumBackdrop(

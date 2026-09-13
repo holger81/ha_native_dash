@@ -16,13 +16,15 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Resolves cover art, checks the on-disk outpaint cache, and optionally queues ComfyUI.
+ * Resolves cover art, checks the on-disk outpaint cache, and queues **real**
+ * ComfyUI Flux fill outpainting (generative scene extension), not soft blur.
  *
  * Generation priority (one ComfyUI job at a time):
  * 1. Upcoming covers (playlist +1 … +5)
  * 2. Current cover backfill — only after upcoming are cached or absent
  *
- * Never throws for network/Comfy failures — returns null so UI keeps soft local treatment.
+ * Never throws for network/Comfy failures — returns null so UI keeps the interim
+ * soft local treatment until a real outpaint is cached.
  */
 class AlbumArtOutpaintRepository(
     context: Context,

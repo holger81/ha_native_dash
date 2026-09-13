@@ -30,6 +30,9 @@ import kotlin.coroutines.coroutineContext
  *
  * ComfyUI box must have the models/nodes referenced by
  * `assets/comfyui/album_outpaint_api.json` (Flux fill outpaint by default).
+ * The app injects [OUTPAINT_PROMPT] into the positive CLIP node so the request
+ * asks for edge-faithful fill: solid edge → solid extension; pictorial edge →
+ * seamless scene continuation.
  */
 class ComfyUiOutpaintClient(
     private val workflowLoader: () -> String,
@@ -98,9 +101,10 @@ class ComfyUiOutpaintClient(
     }
 
     private fun queuePrompt(base: String, imageName: String): String? {
-        val workflow = injectLoadImage(
+        val workflow = prepareWorkflow(
             json.parseToJsonElement(workflowTemplate).jsonObject,
-            imageName,
+            imageName = imageName,
+            positivePrompt = OUTPAINT_PROMPT,
         )
         val payload = buildJsonObject {
             put("prompt", workflow)
@@ -185,29 +189,6 @@ class ComfyUiOutpaintClient(
         }.getOrNull()
     }
 
-    private fun injectLoadImage(workflow: JsonObject, imageName: String): JsonObject {
-        val mutable = workflow.toMutableMap()
-        mutable.remove("_meta")
-        for ((key, value) in workflow) {
-            if (key == "_meta") continue
-            val node = value as? JsonObject ?: continue
-            if (node["class_type"]?.jsonPrimitive?.contentOrNull != "LoadImage") continue
-            val inputs = (node["inputs"] as? JsonObject)?.toMutableMap() ?: mutableMapOf()
-            inputs["image"] = JsonPrimitive(imageName)
-            mutable[key] = JsonObject(
-                node.toMutableMap().apply { put("inputs", JsonObject(inputs)) },
-            )
-            return JsonObject(mutable)
-        }
-        val node = (mutable[LOAD_IMAGE_NODE_ID] as? JsonObject) ?: return JsonObject(mutable)
-        val inputs = (node["inputs"] as? JsonObject)?.toMutableMap() ?: mutableMapOf()
-        inputs["image"] = JsonPrimitive(imageName)
-        mutable[LOAD_IMAGE_NODE_ID] = JsonObject(
-            node.toMutableMap().apply { put("inputs", JsonObject(inputs)) },
-        )
-        return JsonObject(mutable)
-    }
-
     private data class ViewRef(
         val filename: String,
         val subfolder: String,
@@ -217,7 +198,23 @@ class ComfyUiOutpaintClient(
     companion object {
         const val WORKFLOW_ASSET = "comfyui/album_outpaint_api.json"
         private const val LOAD_IMAGE_NODE_ID = "17"
+        private const val POSITIVE_PROMPT_NODE_ID = "23"
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
+
+        /**
+         * Positive CLIP text for Flux fill outpaint.
+         * Solid cover borders may correctly extend as the same flat color;
+         * pictorial edges must continue the scene, not stretch or invent chrome.
+         */
+        const val OUTPAINT_PROMPT =
+            "Outpaint only the padded borders around this album cover. " +
+                "Match whatever already sits at each edge of the original square: " +
+                "if that edge is a solid color, flat field, or uniform studio backdrop, " +
+                "fill the padded area with that same flat color and nothing else; " +
+                "if that edge shows a photograph, illustration, landscape, or textured scene, " +
+                "seamlessly continue that scene with matching lighting, palette, and texture. " +
+                "Do not invent new subjects, people, text, logos, watermarks, frames, or borders. " +
+                "Do not stretch or blur the original cover. Keep the original cover pixels unchanged."
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .addInterceptor(NetworkGuard.interceptor)
@@ -226,5 +223,62 @@ class ComfyUiOutpaintClient(
             .writeTimeout(60, TimeUnit.SECONDS)
             .callTimeout(120, TimeUnit.SECONDS)
             .build()
+
+        /** Rewrite LoadImage filename and positive CLIP prompt for the queued graph. */
+        internal fun prepareWorkflow(
+            workflow: JsonObject,
+            imageName: String,
+            positivePrompt: String = OUTPAINT_PROMPT,
+        ): JsonObject {
+            val mutable = workflow.toMutableMap()
+            mutable.remove("_meta")
+            var wroteImage = false
+            var wrotePrompt = false
+            for ((key, value) in workflow) {
+                if (key == "_meta") continue
+                val node = value as? JsonObject ?: continue
+                val classType = node["class_type"]?.jsonPrimitive?.contentOrNull
+                val inputs = (node["inputs"] as? JsonObject)?.toMutableMap() ?: mutableMapOf()
+                when (classType) {
+                    "LoadImage" -> {
+                        inputs["image"] = JsonPrimitive(imageName)
+                        mutable[key] = JsonObject(
+                            node.toMutableMap().apply { put("inputs", JsonObject(inputs)) },
+                        )
+                        wroteImage = true
+                    }
+                    "CLIPTextEncode" -> {
+                        if (key == POSITIVE_PROMPT_NODE_ID) {
+                            inputs["text"] = JsonPrimitive(positivePrompt)
+                            mutable[key] = JsonObject(
+                                node.toMutableMap().apply { put("inputs", JsonObject(inputs)) },
+                            )
+                            wrotePrompt = true
+                        }
+                    }
+                }
+            }
+            if (!wroteImage) {
+                val node = (mutable[LOAD_IMAGE_NODE_ID] as? JsonObject)
+                if (node != null) {
+                    val inputs = (node["inputs"] as? JsonObject)?.toMutableMap() ?: mutableMapOf()
+                    inputs["image"] = JsonPrimitive(imageName)
+                    mutable[LOAD_IMAGE_NODE_ID] = JsonObject(
+                        node.toMutableMap().apply { put("inputs", JsonObject(inputs)) },
+                    )
+                }
+            }
+            if (!wrotePrompt) {
+                val node = (mutable[POSITIVE_PROMPT_NODE_ID] as? JsonObject)
+                if (node != null) {
+                    val inputs = (node["inputs"] as? JsonObject)?.toMutableMap() ?: mutableMapOf()
+                    inputs["text"] = JsonPrimitive(positivePrompt)
+                    mutable[POSITIVE_PROMPT_NODE_ID] = JsonObject(
+                        node.toMutableMap().apply { put("inputs", JsonObject(inputs)) },
+                    )
+                }
+            }
+            return JsonObject(mutable)
+        }
     }
 }

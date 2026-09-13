@@ -1,6 +1,9 @@
 package dev.holgerendt.hanative.data
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -90,6 +93,34 @@ class ComfyUiOutpaintClientTest {
         val view = server.takeRequest()
         assertTrue(view.path!!.startsWith("/view?"))
         assertTrue(view.path!!.contains("ha_album_outpaint_00001_.png"))
+    }
+
+    @Test
+    fun prepareWorkflowInjectsImageAndEdgeFaithfulPrompt() {
+        val template = """
+            {
+              "_meta": { "title": "test" },
+              "17": {
+                "class_type": "LoadImage",
+                "inputs": { "image": "PLACEHOLDER.png" }
+              },
+              "23": {
+                "class_type": "CLIPTextEncode",
+                "inputs": { "text": "PLACEHOLDER", "clip": ["34", 0] }
+              }
+            }
+        """.trimIndent()
+        val prepared = ComfyUiOutpaintClient.prepareWorkflow(
+            Json.parseToJsonElement(template).jsonObject,
+            imageName = "cover_xyz.png",
+        )
+        val load = prepared["17"]!!.jsonObject["inputs"]!!.jsonObject
+        val clip = prepared["23"]!!.jsonObject["inputs"]!!.jsonObject
+        assertEquals("cover_xyz.png", load["image"]!!.jsonPrimitive.content)
+        assertEquals(ComfyUiOutpaintClient.OUTPAINT_PROMPT, clip["text"]!!.jsonPrimitive.content)
+        assertTrue(clip["text"]!!.jsonPrimitive.content.contains("solid color"))
+        assertTrue(clip["text"]!!.jsonPrimitive.content.contains("continue that scene"))
+        assertNull(prepared["_meta"])
     }
 
     @Test

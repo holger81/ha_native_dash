@@ -744,6 +744,15 @@ confirm sizing on the real panel.
 
 ### Subtle artwork treatment
 
+**Intent — edge-faithful ComfyUI outpainting.** The finished media-card
+atmosphere comes from Flux fill on the LAN. Instruct Comfy to continue whatever
+is already at the cover edges: if an edge is a solid color / flat field,
+extending that same flat color is correct; if an edge is a photograph or
+illustration, continue that scene with matching light and texture. Soft
+enlarge, stretch, and desaturated blur remain **interim UI fallbacks only**
+while a job is pending, the URL is blank, or ComfyUI fails — not the design
+target for pictorial covers.
+
 - [x] Keep the original cover sharp and unchanged. Extend its atmosphere behind
   the cover within the media card, with low saturation/contrast and a gentle
   fade to the neutral background before text and controls. Allow only a faint
@@ -752,14 +761,21 @@ confirm sizing on the real panel.
   immediate local effect while any AI job is pending or unavailable.
 - [x] **ComfyUI outpainting (LAN):** configurable `comfyUiUrl` (private-LAN only,
   same NetworkGuard policy as go2rtc). When set, asynchronously upload the
-  cover to ComfyUI, run the bundled pad/outpaint workflow, and store the result
-  on-device under `filesDir/outpaint_cache/`, keyed by SHA-256 of the source
-  cover bytes. On a later request for the same cover, use the cached file with
-  no network. Blank URL disables outpaint (local soft treatment only).
+  cover to ComfyUI, run the bundled Flux fill pad/outpaint workflow, and store
+  the result on-device under `filesDir/outpaint_cache/`, keyed by SHA-256 of the
+  source cover bytes. On a later request for the same cover, use the cached
+  file with no network. Blank URL disables outpaint (local soft treatment only).
+  Prefetch up to five next-up queue covers even when playback is idle; backfill
+  the current cover after upcoming are cached.
 - [x] Never block playback transport or backyard cameras on outpaint. Cap wait
   (~60–90s), cancel when the track/cover identity changes, and fall back to the
   local softened enlarge on miss, timeout, or error. Single-flight per hash so
   concurrent UI does not spam ComfyUI. Soft size/count cap on the disk cache.
+- [ ] **Visual accept (still open):** with `comfyUiUrl` set and a successful Flux
+  job, the card atmosphere matches the cover edges (solid edge → same flat
+  color; pictorial edge → generated scene continuation). Soft stretch of the
+  cover is not acceptable as the final pictorial look. Cache hits must swap in
+  without resetting to soft enlarge. Idle/compact states stay without atmosphere.
 - [x] Remove the extended background in idle and compact camera-priority states.
   Readability and a calm wall display take precedence over decorative effects.
 
@@ -883,6 +899,9 @@ reviewed on emulator/wall.
   metadata, and controls retain readable contrast before/after outpaint arrives.
   Missing/failed artwork leaves a clean neutral card; idle/compact modes have
   no atmospheric background. Do not redesign the ComfyUI service for this task.
+  Soft enlarge / flat pad must never be mistaken for the finished look — real
+  Flux fill outpainting is the atmosphere source once cached (see Subtle
+  artwork treatment).
   **Done in code:** light `CardLight` fade, single Crossfade atmosphere layer,
   `matchParentSize`, soft pre-S fallback via desaturate/alpha.
 
