@@ -59,8 +59,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -255,48 +257,61 @@ private fun HomeScreen(viewModel: HaViewModel) {
         EntranceHomeScreen(home, viewModel)
         return
     }
+    val density = LocalDensity.current
+    var viewportHeightPx by remember { mutableStateOf(0) }
+    var headerHeightPx by remember { mutableStateOf(0) }
+    var roomsHeightPx by remember { mutableStateOf(0) }
+    // Keep the fixed-size room mosaic slightly above center between calendar and dock.
+    // Measure rooms only: music visibility and camera count must not move the whole section.
+    val sectionGap = if (headerHeightPx > 0 && roomsHeightPx > 0 && viewportHeightPx > 0) {
+        with(density) {
+            ((viewportHeightPx - headerHeightPx - roomsHeightPx).toDp() - 10.dp - 96.dp) * 0.35f
+        }.coerceAtLeast(24.dp)
+    } else 120.dp
     val menu = home.header.firstOrNull { it.type == "menu_button" }
     val weather = home.header.firstOrNull { it.type == "weather_header" }
     Column(
         Modifier
             .fillMaxSize()
+            .onSizeChanged { viewportHeightPx = it.height }
             .verticalScroll(rememberScrollState())
             .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 96.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .pointerInput(menu) {
-                        detectTapGestures(
-                            onTap = { viewModel.setDrawer(true) },
-                            onLongPress = { menu?.let { viewModel.onHold(it) } },
-                        )
-                    },
-                contentAlignment = Alignment.Center,
+        Column(Modifier.fillMaxWidth().onSizeChanged { headerHeightPx = it.height }) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                MdiIcon(menu?.icon ?: "mdi:menu", tint = TextDark, size = 28.dp)
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .pointerInput(menu) {
+                            detectTapGestures(
+                                onTap = { viewModel.setDrawer(true) },
+                                onLongPress = { menu?.let { viewModel.onHold(it) } },
+                            )
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MdiIcon(menu?.icon ?: "mdi:menu", tint = TextDark, size = 28.dp)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    home.people.forEach { PersonCard(it, viewModel) }
+                }
+                Spacer(Modifier.weight(1f))
+                weather?.let { WeatherHeader(it, viewModel) }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                home.people.forEach { PersonCard(it, viewModel) }
+            home.chips?.let {
+                Spacer(Modifier.height(16.dp))
+                ChipRow(it, viewModel)
             }
-            Spacer(Modifier.weight(1f))
-            weather?.let { WeatherHeader(it, viewModel) }
+            home.calendar?.let {
+                Spacer(Modifier.height(24.dp))
+                WeekPlanner(it, viewModel, Modifier.fillMaxWidth())
+            }
         }
-        home.chips?.let {
-            Spacer(Modifier.height(16.dp))
-            ChipRow(it, viewModel)
-        }
-        home.calendar?.let {
-            Spacer(Modifier.height(24.dp))
-            WeekPlanner(it, viewModel, Modifier.fillMaxWidth())
-        }
-        // Phase 6.R10: Greatroom-only calendar→mosaic gap (stable across media/camera states).
-        Spacer(Modifier.height(120.dp))
+        Spacer(Modifier.height(sectionGap))
         // Lovelace `(min-width: 1024px)`: 50% rooms | 50% media + activity.
         // Phase 6: media at top when idle cameras; backyard streams take priority when active.
         val activePersonCameras by viewModel.activePersonCameras.collectAsState()
@@ -310,7 +325,11 @@ private fun HomeScreen(viewModel: HaViewModel) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.Top,
         ) {
-            RoomGrid(home.rooms, viewModel, Modifier.weight(1f))
+            RoomGrid(
+                home.rooms,
+                viewModel,
+                Modifier.weight(1f).onSizeChanged { roomsHeightPx = it.height },
+            )
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(18.dp),

@@ -556,10 +556,10 @@ fun RoomGrid(rooms: List<WidgetNode>, viewModel: HaViewModel, modifier: Modifier
     }
 }
 
-/** Keep both five-day Greatroom rows compact; Entrance retains its taller day wells. */
+/** Reserve four compact events plus overflow per Greatroom day; Entrance stays unchanged. */
 private fun weekPlannerDayMinHeight(days: Int): Dp = when {
     days <= 2 -> 140.dp
-    days <= 10 && !PanelConfig.IS_ENTRANCE -> 132.dp
+    days <= 10 && !PanelConfig.IS_ENTRANCE -> 252.dp
     else -> 280.dp
 }
 
@@ -739,14 +739,14 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
                             onShowMore = { dayEvents ->
                                 manageOverlay = WeekPlannerManageOverlay.DayEvents(day, dayEvents)
                             },
-                            maxVisibleEvents = if (!PanelConfig.IS_ENTRANCE && dayCount <= 10) 2 else null,
+                            maxVisibleEvents = if (!PanelConfig.IS_ENTRANCE && dayCount <= 10) 4 else null,
                             now = now,
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxHeight()
                                 .heightIn(
                                     min = weekPlannerDayMinHeight(widget.days ?: 10),
-                                    max = if (!PanelConfig.IS_ENTRANCE && dayCount <= 10) 200.dp else Dp.Unspecified,
+                                    max = if (!PanelConfig.IS_ENTRANCE && dayCount <= 10) 252.dp else Dp.Unspecified,
                                 ),
                         )
                     }
@@ -966,7 +966,13 @@ private fun WeekPlannerDay(
         modifier = modifier.padding(vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier = Modifier.clickable(enabled = maxVisibleEvents != null && onAddEvent != null) {
+                onAddEvent?.invoke()
+            },
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
             Text(
                 day.dayOfMonth.toString(),
                 color = TextDark,
@@ -1006,7 +1012,7 @@ private fun WeekPlannerDay(
                         }
                     }
                 }
-                if (onAddEvent != null) {
+                if (onAddEvent != null && maxVisibleEvents == null) {
                     CalendarAddIcon(onClick = onAddEvent)
                 }
             }
@@ -1025,9 +1031,11 @@ private fun WeekPlannerDay(
             events.isEmpty() -> Box(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .then(if (maxVisibleEvents != null) Modifier.heightIn(min = 36.dp) else Modifier)
                     .clip(RoundedCornerShape(8.dp))
                     .background(CardLight)
-                    .padding(horizontal = 12.dp, vertical = 14.dp),
+                    .padding(horizontal = 12.dp, vertical = if (maxVisibleEvents != null) 4.dp else 14.dp),
+                contentAlignment = Alignment.CenterStart,
             ) {
                 Text("No events", color = TextMuted, fontSize = 13.sp)
             }
@@ -1056,7 +1064,7 @@ private fun WeekPlannerDay(
                                 },
                         ) {
                             Box(Modifier.width(3.dp).fillMaxHeight().background(stripeColor))
-                            Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp).weight(1f)) {
+                            Column(Modifier.padding(horizontal = 10.dp, vertical = if (maxVisibleEvents != null) 4.dp else 8.dp).weight(1f)) {
                                 Text(
                                     text = eventTimeLabel(event),
                                     color = timeColor,
@@ -1068,7 +1076,8 @@ private fun WeekPlannerDay(
                                     color = summaryColor,
                                     fontSize = 14.sp,
                                     fontWeight = summaryWeight,
-                                    maxLines = 3,
+                                    maxLines = if (maxVisibleEvents != null) 1 else 3,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
                         }
