@@ -12,6 +12,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
@@ -25,6 +26,9 @@ import java.util.concurrent.atomic.AtomicReference
  *
  * Never throws for network/Comfy failures — returns null so UI keeps the interim
  * soft local treatment until a real outpaint is cached.
+ *
+ * Each cover ref is attempted at most once per process after a failed Comfy job,
+ * and warm refs are remembered so flaky re-downloads cannot re-queue the same art.
  */
 class AlbumArtOutpaintRepository(
     context: Context,
@@ -40,6 +44,10 @@ class AlbumArtOutpaintRepository(
     private val workerMutex = Mutex()
     private val targets = AtomicReference(OutpaintTargets())
     private var workerJob: Job? = null
+    /** Cover refs that already have a successful cache hit or generation this process. */
+    private val warmRefs = ConcurrentHashMap.newKeySet<String>()
+    /** Cover refs that failed Comfy/fetch this process — do not hammer ComfyUI. */
+    private val failedRefs = ConcurrentHashMap.newKeySet<String>()
 
     /**
      * Update the generation plan. [upcomingCovers] should be next tracks first
@@ -99,9 +107,8 @@ class AlbumArtOutpaintRepository(
                         workerMutex.withLock {
                             workerJob = null
                         }
-                        // Targets may have changed after the last pick; restart if needed.
-                        val plan = targets.get()
-                        if (plan.current != null || plan.upcoming.isNotEmpty()) {
+                        // Restart only when setTargets raced us and left real uncached work.
+                        if (hasUncachedWork(targets.get())) {
                             kickWorker()
                         }
                     }
@@ -116,13 +123,37 @@ class AlbumArtOutpaintRepository(
         while (true) {
             val plan = targets.get()
             val nextRef = pickUncachedTarget(plan) ?: break
-            runCatching {
-                val source = fetchCoverBytes(nextRef) ?: return@runCatching
-                if (cache.cachedFile(source) != null) return@runCatching
-                cache.getOrEnqueue(source) { bytes -> comfy.outpaint(base, bytes) }
+            val generated = runCatching {
+                val source = fetchCoverBytes(nextRef)
+                if (source == null) {
+                    failedRefs.add(nextRef)
+                    return@runCatching false
+                }
+                if (cache.cachedFile(source) != null) {
+                    warmRefs.add(nextRef)
+                    return@runCatching true
+                }
+                val file = cache.getOrEnqueue(source) { bytes ->
+                    // Black/uniform frames: local solid pad (instant). Else Flux fill.
+                    AlbumArtLocalOutpaint.solidPadIfUniformEdges(bytes)
+                        ?: comfy.outpaint(base, bytes)
+                }
+                if (file != null) {
+                    warmRefs.add(nextRef)
+                    true
+                } else {
+                    failedRefs.add(nextRef)
+                    false
+                }
+            }.getOrDefault(false)
+            if (!generated && !warmRefs.contains(nextRef)) {
+                failedRefs.add(nextRef)
             }
         }
     }
+
+    private suspend fun hasUncachedWork(plan: OutpaintTargets): Boolean =
+        pickUncachedTarget(plan) != null
 
     private suspend fun pickUncachedTarget(plan: OutpaintTargets): String? {
         for (ref in plan.upcoming) {
@@ -133,8 +164,14 @@ class AlbumArtOutpaintRepository(
     }
 
     private suspend fun isCoverCached(coverRef: String): Boolean {
-        val source = fetchCoverBytes(coverRef) ?: return true // unresolvable → skip
-        return cache.cachedFile(source) != null
+        if (warmRefs.contains(coverRef) || failedRefs.contains(coverRef)) return true
+        val source = fetchCoverBytes(coverRef) ?: run {
+            failedRefs.add(coverRef)
+            return true // unresolvable → skip
+        }
+        val hit = cache.cachedFile(source) != null
+        if (hit) warmRefs.add(coverRef)
+        return hit
     }
 
     private suspend fun fetchCoverBytes(coverRef: String): ByteArray? = withContext(Dispatchers.IO) {

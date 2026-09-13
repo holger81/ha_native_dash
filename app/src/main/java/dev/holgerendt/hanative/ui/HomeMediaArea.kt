@@ -152,7 +152,8 @@ internal fun resolveHomeMediaSession(
     val apple = states[appleTvEntityId]
     val appleState = apple?.state
     val appleTitle = apple?.mediaTitle()
-    val tvActive = appleState == "playing" || (appleState == "paused" && !appleTitle.isNullOrBlank())
+    // Only actively playing TV takes the home card; paused TV yields to music / idle.
+    val tvActive = appleState == "playing"
 
     val musicCandidates = players.filter { player ->
         player.entityId != appleTvEntityId &&
@@ -187,16 +188,10 @@ internal fun resolveHomeMediaSession(
         ?: musicHits.firstOrNull { it.paused && it.player.entityId == browseSelectedId }
         ?: musicHits.firstOrNull { it.paused }
 
-    val preferMusic = when {
-        bestMusic?.playing == true -> true
-        appleState == "playing" && bestMusic?.playing != true -> false
-        bestMusic != null -> true
-        tvActive -> false
-        else -> false
-    }
-
+    // Household: music and Apple TV are mutually exclusive on the home card.
+    // Playing TV wins; paused TV does not.
     return when {
-        preferMusic && bestMusic != null -> {
+        !tvActive && bestMusic != null -> {
             val player = bestMusic.player
             val st = bestMusic.state
             val useQueue = queue != null && browseSelectedId == player.entityId

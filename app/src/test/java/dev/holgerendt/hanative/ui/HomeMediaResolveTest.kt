@@ -10,6 +10,37 @@ import org.junit.Test
 
 class HomeMediaResolveTest {
     @Test
+    fun prefersPlayingTvOverPlayingMusic() {
+        val office = MusicAssistantPlayer(entityId = "media_player.office", name = "Office")
+        val snap = resolveHomeMediaSession(
+            players = listOf(office),
+            states = mapOf(
+                "media_player.office" to EntityState(
+                    entityId = "media_player.office",
+                    state = "playing",
+                    attributes = mapOf(
+                        "mass_player_type" to JsonPrimitive("player"),
+                        "media_title" to JsonPrimitive("Song"),
+                    ),
+                ),
+                APPLE_TV_ENTITY to EntityState(
+                    entityId = APPLE_TV_ENTITY,
+                    state = "playing",
+                    attributes = mapOf(
+                        "media_title" to JsonPrimitive("NCIS"),
+                        "app_name" to JsonPrimitive("Paramount+"),
+                    ),
+                ),
+            ),
+            browseSelectedId = "media_player.office",
+            queue = null,
+        )
+        assertEquals(HomeMediaKind.Tv, snap.kind)
+        assertEquals("NCIS", snap.title)
+        assertEquals(APPLE_TV_ENTITY, snap.entityId)
+    }
+
+    @Test
     fun prefersPlayingMusicOverPausedTv() {
         val snap = resolveHomeMedia(
             musicState = "playing",
@@ -25,6 +56,60 @@ class HomeMediaResolveTest {
             appleState = "paused",
             appleTitle = "Show",
             appleApp = "TV",
+            appleArt = null,
+            appleDuration = null,
+            applePosition = null,
+            applePositionUpdatedAtMs = null,
+            appleVolume = null,
+        )
+        assertEquals(HomeMediaKind.Music, snap.kind)
+        assertTrue(snap.playing)
+        assertEquals("Song", snap.title)
+        assertEquals("media_player.office", snap.entityId)
+    }
+
+    @Test
+    fun pausedTvAloneIsIdle() {
+        val snap = resolveHomeMedia(
+            musicState = "idle",
+            musicTitle = null,
+            musicArtist = null,
+            musicArt = null,
+            musicRoom = null,
+            musicEntityId = null,
+            musicDuration = null,
+            musicPosition = null,
+            musicPositionUpdatedAtMs = null,
+            musicVolume = null,
+            appleState = "paused",
+            appleTitle = "Show",
+            appleApp = "TV",
+            appleArt = "/tv",
+            appleDuration = 3600.0,
+            applePosition = 100.0,
+            applePositionUpdatedAtMs = null,
+            appleVolume = 0.5f,
+        )
+        assertEquals(HomeMediaKind.Idle, snap.kind)
+        assertFalse(snap.playing)
+    }
+
+    @Test
+    fun prefersPlayingMusicOverIdleTv() {
+        val snap = resolveHomeMedia(
+            musicState = "playing",
+            musicTitle = "Song",
+            musicArtist = "Artist",
+            musicArt = "/art",
+            musicRoom = "Office",
+            musicEntityId = "media_player.office",
+            musicDuration = 100.0,
+            musicPosition = 10.0,
+            musicPositionUpdatedAtMs = null,
+            musicVolume = 0.4f,
+            appleState = "standby",
+            appleTitle = null,
+            appleApp = null,
             appleArt = null,
             appleDuration = null,
             applePosition = null,

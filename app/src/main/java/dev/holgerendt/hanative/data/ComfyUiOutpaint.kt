@@ -219,15 +219,16 @@ class ComfyUiOutpaintClient(
                 "Copy the edge colors, lighting, and textures outward: blue water " +
                 "stays blue water, sky stays sky, photo grain stays photo grain, " +
                 "illustration lines keep going. " +
-                "Only if an edge is already a flat uniform color or studio backdrop " +
-                "should the pad stay that same flat color. " +
+                "If the cover already has a black matte, black frame, or any flat " +
+                "uniform border color, fill the pad with that same flat color only — " +
+                "do not invent scene content past a matte. " +
                 "Never fill with generic beige, cream, gray, white, or paper unless " +
                 "that is literally the cover's edge color. " +
                 "No new people, objects, text, logos, frames, or borders. " +
                 "Keep the original cover pixels unchanged."
 
         /** Bump when prompt/workflow quality changes so stale disk fills regenerate. */
-        const val OUTPAINT_CACHE_VERSION = "flux-fill-v2"
+        const val OUTPAINT_CACHE_VERSION = "flux-fill-v3"
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .addInterceptor(NetworkGuard.interceptor)
