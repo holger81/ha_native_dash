@@ -319,33 +319,47 @@ class ScreenCapture {
         done: (Bitmap?) -> Unit,
     ) {
         val dest = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val fallback = {
-            dest.recycle()
-            done(drawFallback(view, width, height))
+        val finishSoftware = {
+            if (!dest.isRecycled) dest.recycle()
+            val soft = drawFallback(view, width, height)
+            if (soft == null) {
+                lastError.compareAndSet(null, "Could not draw window contents")
+            } else {
+                lastError.set(null)
+            }
+            done(soft)
         }
         val onCopied: (Int) -> Unit = { result ->
             if (result == PixelCopy.SUCCESS && !cancelled.get()) {
+                lastError.set(null)
                 done(dest)
             } else {
                 lastError.compareAndSet(null, "PixelCopy failed ($result)")
-                fallback()
+                finishSoftware()
             }
         }
-        try {
-            val window = windowOf(view)
-            val surface = surfaceOf(view)
-            when {
-                window != null -> PixelCopy.request(window, dest, onCopied, mainHandler)
-                surface != null -> PixelCopy.request(surface, dest, onCopied, mainHandler)
-                else -> {
-                    lastError.compareAndSet(null, "Window surface is not ready")
-                    fallback()
-                }
+        // Prefer a live Surface. PixelCopy.request(Window) throws
+        // "Window doesn't have a backing surface!" on UniFi (API 28) when the
+        // Window wrapper is present but mSurface is gone — never call it blind.
+        val surface = surfaceOf(view)
+        if (surface != null) {
+            try {
+                PixelCopy.request(surface, dest, onCopied, mainHandler)
+                return
+            } catch (e: Exception) {
+                lastError.compareAndSet(null, e.message ?: "PixelCopy failed")
             }
-        } catch (e: Exception) {
-            lastError.compareAndSet(null, e.message ?: "PixelCopy failed")
-            fallback()
         }
+        val window = windowOf(view)
+        if (window != null && surfaceOf(window.decorView) != null) {
+            try {
+                PixelCopy.request(window, dest, onCopied, mainHandler)
+                return
+            } catch (e: Exception) {
+                lastError.compareAndSet(null, e.message ?: "PixelCopy failed")
+            }
+        }
+        finishSoftware()
     }
 
     private fun overlayMedia(
@@ -487,12 +501,16 @@ class ScreenCapture {
         }
 
         private fun collectRootViews(activity: Activity): List<View> {
-            val fromWm = windowManagerViews()
+            // Decor first — WM global lists often include overlay windows without a
+            // backing surface, which made PixelCopy throw on UniFi.
+            val ordered = LinkedHashSet<View>()
+            activity.window?.decorView
+                ?.takeIf { it.isShown && it.width > 0 && it.height > 0 }
+                ?.let { ordered += it }
+            windowManagerViews()
                 .filter { it.isShown && it.width > 0 && it.height > 0 }
-                .distinct()
-            if (fromWm.isNotEmpty()) return fromWm
-            val view = activity.window?.decorView ?: return emptyList()
-            return if (view.width > 0 && view.height > 0) listOf(view) else emptyList()
+                .forEach { ordered += it }
+            return ordered.toList()
         }
 
         /** Topmost interactive window (dialogs/sheets first). */
@@ -512,7 +530,11 @@ class ScreenCapture {
 
         private fun drawFallback(view: View, width: Int, height: Int): Bitmap? = runCatching {
             val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            view.draw(Canvas(bitmap))
+            val canvas = Canvas(bitmap)
+            // Compose / HW layers can leave a transparent buffer; seed a page color
+            // so a failed draw is obvious, then paint the view tree.
+            canvas.drawColor(Color.WHITE)
+            view.draw(canvas)
             bitmap
         }.getOrNull()
 

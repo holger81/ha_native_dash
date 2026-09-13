@@ -149,8 +149,14 @@ fun AlbumOutpaintHero(
                     viewModel = viewModel,
                     modifier = Modifier
                         .size(196.dp)
-                        .shadow(10.dp, RoundedCornerShape(20.dp), clip = false)
-                        .clip(RoundedCornerShape(20.dp)),
+                        .shadow(
+                            elevation = 28.dp,
+                            shape = RoundedCornerShape(22.dp),
+                            clip = false,
+                            ambientColor = Color.Black.copy(alpha = 0.28f),
+                            spotColor = Color.Black.copy(alpha = 0.55f),
+                        )
+                        .clip(RoundedCornerShape(22.dp)),
                     spinnerSize = 28.dp,
                     fallbackIconSize = 64.dp,
                 )
@@ -169,7 +175,9 @@ private fun HoveringOutpaintStage(
 ) {
     val context = LocalContext.current
     val loader = rememberHaImageLoader(viewModel.client)
-    val coverShape = RoundedCornerShape(18.dp)
+    // Match typical cover corner radius; keep in sync with the float scale below so
+    // rounded clips fully hide the square cover baked into the Flux pad.
+    val coverShape = RoundedCornerShape(22.dp)
     val cacheKey = "outpaint-${outpaintFile.name}-$fileStamp"
     BoxWithConstraints(
         modifier = Modifier
@@ -200,46 +208,55 @@ private fun HoveringOutpaintStage(
         )
         val coverW = maxWidth * layout.coverWidthFrac
         val coverH = maxHeight * layout.coverHeightFrac
-        // Offset soft shadow toward bottom-right so the cover reads as a lifted card.
+        // Grow ~6% so the rounded cover fully covers the square pad corners underneath,
+        // and nudge up so the float reads clearly above the atmosphere.
+        val grow = 0.06f
+        val floatUp = coverH * 0.012f
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .offset(
-                    x = maxWidth * layout.coverLeftFrac,
-                    y = maxHeight * layout.coverTopFrac,
+                    x = maxWidth * layout.coverLeftFrac - coverW * (grow / 2f),
+                    y = maxHeight * layout.coverTopFrac - coverH * (grow / 2f) - floatUp,
                 )
-                .size(coverW, coverH),
+                .size(coverW * (1f + grow), coverH * (1f + grow)),
         ) {
+            // Deep contact shadow cast onto the pad (separate layer so clip stays crisp).
             Box(
                 modifier = Modifier
                     .matchParentSize()
-                    .offset(x = 7.dp, y = 9.dp)
+                    .offset(x = 10.dp, y = 14.dp)
                     .shadow(
-                        elevation = 22.dp,
+                        elevation = 36.dp,
                         shape = coverShape,
                         clip = false,
-                        ambientColor = Color.Black.copy(alpha = 0.28f),
-                        spotColor = Color.Black.copy(alpha = 0.55f),
+                        ambientColor = Color.Black.copy(alpha = 0.38f),
+                        spotColor = Color.Black.copy(alpha = 0.62f),
                     )
                     .background(Color.Transparent, coverShape),
             )
-            MusicCover(
-                path = coverPath,
-                viewModel = viewModel,
+            // Near shadow + clipped art: clip before border so pixels hug the radius.
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .shadow(
-                        elevation = 10.dp,
+                        elevation = 18.dp,
                         shape = coverShape,
                         clip = false,
-                        ambientColor = Color.Black.copy(alpha = 0.12f),
-                        spotColor = Color.Black.copy(alpha = 0.35f),
+                        ambientColor = Color.Black.copy(alpha = 0.18f),
+                        spotColor = Color.Black.copy(alpha = 0.42f),
                     )
-                    .border(1.5.dp, Color.White.copy(alpha = 0.55f), coverShape)
-                    .clip(coverShape),
-                spinnerSize = 22.dp,
-                fallbackIconSize = 40.dp,
-            )
+                    .clip(coverShape)
+                    .border(1.25.dp, Color.White.copy(alpha = 0.5f), coverShape),
+            ) {
+                MusicCover(
+                    path = coverPath,
+                    viewModel = viewModel,
+                    modifier = Modifier.fillMaxSize(),
+                    spinnerSize = 22.dp,
+                    fallbackIconSize = 40.dp,
+                )
+            }
         }
     }
 }

@@ -472,7 +472,11 @@ class HaViewModel(
         val server = ManagementServer(
             pinProvider = { credentials.managementPin },
             savedUrlProvider = { credentials.baseUrl },
-            screenshotProvider = { capture.captureJpeg() },
+            screenshotProvider = {
+                // Asleep UI is a full-screen black scrim; wake so live view is useful.
+                if (_ui.value.screenAsleep) wakeScreen()
+                capture.captureJpeg()
+            },
             // Blocks the NanoHTTPD worker (thread-per-request) because the admin page renders the
             // success/failure of this exact attempt; the 20s cap bounds it.
             onSubmit = { url, token ->
