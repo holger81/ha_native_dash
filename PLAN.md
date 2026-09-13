@@ -746,12 +746,10 @@ confirm sizing on the real panel.
 
 **Intent — edge-faithful ComfyUI outpainting.** The finished media-card
 atmosphere comes from Flux fill on the LAN. Instruct Comfy to continue whatever
-is already at the cover edges: if an edge is a solid color / flat field,
-extending that same flat color is correct; if an edge is a photograph or
-illustration, continue that scene with matching light and texture. Soft
-enlarge, stretch, and desaturated blur remain **interim UI fallbacks only**
-while a job is pending, the URL is blank, or ComfyUI fails — not the design
-target for pictorial covers.
+is already at the cover edges (water, sky, texture). Flat color is only correct
+when the edge itself is already a uniform field — never a default beige/cream
+pad. Soft enlarge remains an interim UI fallback only. Cache version
+`flux-fill-v2` forces regeneration after prompt/workflow quality changes.
 
 - [x] Keep the original cover sharp and unchanged. Extend its atmosphere behind
   the cover within the media card, with low saturation/contrast and a gentle

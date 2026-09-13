@@ -118,9 +118,36 @@ class ComfyUiOutpaintClientTest {
         val clip = prepared["23"]!!.jsonObject["inputs"]!!.jsonObject
         assertEquals("cover_xyz.png", load["image"]!!.jsonPrimitive.content)
         assertEquals(ComfyUiOutpaintClient.OUTPAINT_PROMPT, clip["text"]!!.jsonPrimitive.content)
-        assertTrue(clip["text"]!!.jsonPrimitive.content.contains("solid color"))
-        assertTrue(clip["text"]!!.jsonPrimitive.content.contains("continue that scene"))
+        assertTrue(clip["text"]!!.jsonPrimitive.content.contains("Never fill with generic beige"))
+        assertTrue(clip["text"]!!.jsonPrimitive.content.contains("continuing"))
         assertNull(prepared["_meta"])
+    }
+
+    @Test
+    fun prepareWorkflowSetsSamplerSeed() {
+        val template = """
+            {
+              "3": {
+                "class_type": "KSampler",
+                "inputs": { "seed": 0, "steps": 20, "cfg": 1.0 }
+              },
+              "17": {
+                "class_type": "LoadImage",
+                "inputs": { "image": "PLACEHOLDER.png" }
+              },
+              "23": {
+                "class_type": "CLIPTextEncode",
+                "inputs": { "text": "PLACEHOLDER", "clip": ["34", 0] }
+              }
+            }
+        """.trimIndent()
+        val prepared = ComfyUiOutpaintClient.prepareWorkflow(
+            Json.parseToJsonElement(template).jsonObject,
+            imageName = "cover.png",
+            seed = 42L,
+        )
+        val sampler = prepared["3"]!!.jsonObject["inputs"]!!.jsonObject
+        assertEquals(42L, sampler["seed"]!!.jsonPrimitive.content.toLong())
     }
 
     @Test

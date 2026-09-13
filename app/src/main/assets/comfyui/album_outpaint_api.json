@@ -6,7 +6,7 @@
   "3": {
     "inputs": {
       "seed": 0,
-      "steps": 20,
+      "steps": 28,
       "cfg": 1.0,
       "sampler_name": "euler",
       "scheduler": "normal",
@@ -98,7 +98,7 @@
       "top": 128,
       "right": 256,
       "bottom": 128,
-      "feathering": 40,
+      "feathering": 24,
       "image": ["17", 0]
     },
     "class_type": "ImagePadForOutpaint"

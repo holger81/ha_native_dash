@@ -209,18 +209,25 @@ class ComfyUiOutpaintClient(
 
         /**
          * Positive CLIP text for Flux fill outpaint.
-         * Solid cover borders may correctly extend as the same flat color;
-         * pictorial edges must continue the scene, not stretch or invent chrome.
+         * Prefer continuing whatever is visible at the cover edges. Flat color is
+         * only correct when the edge itself is already a uniform field — not a
+         * default beige/gray pad.
          */
         const val OUTPAINT_PROMPT =
-            "Outpaint only the padded borders around this album cover. " +
-                "Match whatever already sits at each edge of the original square: " +
-                "if that edge is a solid color, flat field, or uniform studio backdrop, " +
-                "fill the padded area with that same flat color and nothing else; " +
-                "if that edge shows a photograph, illustration, landscape, or textured scene, " +
-                "seamlessly continue that scene with matching lighting, palette, and texture. " +
-                "Do not invent new subjects, people, text, logos, watermarks, frames, or borders. " +
-                "Do not stretch or blur the original cover. Keep the original cover pixels unchanged."
+            "Expand the album cover into the empty padded border by continuing " +
+                "exactly what is already visible at each edge of the square. " +
+                "Copy the edge colors, lighting, and textures outward: blue water " +
+                "stays blue water, sky stays sky, photo grain stays photo grain, " +
+                "illustration lines keep going. " +
+                "Only if an edge is already a flat uniform color or studio backdrop " +
+                "should the pad stay that same flat color. " +
+                "Never fill with generic beige, cream, gray, white, or paper unless " +
+                "that is literally the cover's edge color. " +
+                "No new people, objects, text, logos, frames, or borders. " +
+                "Keep the original cover pixels unchanged."
+
+        /** Bump when prompt/workflow quality changes so stale disk fills regenerate. */
+        const val OUTPAINT_CACHE_VERSION = "flux-fill-v2"
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .addInterceptor(NetworkGuard.interceptor)
@@ -230,11 +237,12 @@ class ComfyUiOutpaintClient(
             .callTimeout(120, TimeUnit.SECONDS)
             .build()
 
-        /** Rewrite LoadImage filename and positive CLIP prompt for the queued graph. */
+        /** Rewrite LoadImage filename, positive CLIP prompt, and a fresh seed. */
         internal fun prepareWorkflow(
             workflow: JsonObject,
             imageName: String,
             positivePrompt: String = OUTPAINT_PROMPT,
+            seed: Long = kotlin.random.Random.nextLong(0, Int.MAX_VALUE.toLong()),
         ): JsonObject {
             val mutable = workflow.toMutableMap()
             mutable.remove("_meta")
@@ -261,6 +269,12 @@ class ComfyUiOutpaintClient(
                             )
                             wrotePrompt = true
                         }
+                    }
+                    "KSampler" -> {
+                        inputs["seed"] = JsonPrimitive(seed)
+                        mutable[key] = JsonObject(
+                            node.toMutableMap().apply { put("inputs", JsonObject(inputs)) },
+                        )
                     }
                 }
             }

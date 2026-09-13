@@ -8,12 +8,14 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Disk cache for ComfyUI outpainted album art.
- * Keyed by SHA-256 of the source cover bytes; single-flight per hash.
+ * Keyed by [ComfyUiOutpaintClient.OUTPAINT_CACHE_VERSION] + SHA-256 of source
+ * cover bytes; single-flight per hash.
  */
 class AlbumArtOutpaintCache(
     private val directory: File,
     private val maxFiles: Int = MAX_FILES,
     private val maxBytes: Long = MAX_BYTES,
+    private val cacheVersion: String = ComfyUiOutpaintClient.OUTPAINT_CACHE_VERSION,
 ) {
     private val dirMutex = Mutex()
     private val inFlight = ConcurrentHashMap<String, Mutex>()
@@ -23,7 +25,7 @@ class AlbumArtOutpaintCache(
     }
 
     fun cachedFile(sourceBytes: ByteArray): File? {
-        val hash = sha256Hex(sourceBytes)
+        val hash = cacheKey(sourceBytes)
         val file = fileFor(hash)
         return file.takeIf { it.isFile && it.length() > 0L }
     }
@@ -36,7 +38,7 @@ class AlbumArtOutpaintCache(
         sourceBytes: ByteArray,
         generate: suspend (ByteArray) -> ByteArray?,
     ): File? {
-        val hash = sha256Hex(sourceBytes)
+        val hash = cacheKey(sourceBytes)
         cachedFileForHash(hash)?.let { return it }
 
         val flight = inFlight.getOrPut(hash) { Mutex() }
@@ -69,6 +71,9 @@ class AlbumArtOutpaintCache(
     }
 
     private fun fileFor(hash: String): File = File(directory, "$hash.jpg")
+
+    private fun cacheKey(sourceBytes: ByteArray): String =
+        sha256Hex(cacheVersion.toByteArray(Charsets.UTF_8) + sourceBytes)
 
     private fun enforceLimitsLocked() {
         val files = directory.listFiles { f -> f.isFile && f.name.endsWith(".jpg") }
