@@ -6,27 +6,27 @@ import org.junit.Test
 
 class AlbumArtOutpaintPriorityTest {
     @Test
-    fun prefersFirstUncachedUpcoming() {
+    fun prefersCurrentBeforeUpcoming() {
         val next = nextOutpaintTarget(
             upcoming = listOf("a", "b"),
             current = "now",
-            isCached = { it == "a" },
-        )
-        assertEquals("b", next)
-    }
-
-    @Test
-    fun backfillsCurrentWhenUpcomingCached() {
-        val next = nextOutpaintTarget(
-            upcoming = listOf("a", "b"),
-            current = "now",
-            isCached = { it == "a" || it == "b" },
+            isCached = { false },
         )
         assertEquals("now", next)
     }
 
     @Test
-    fun skipsUpcomingWhenAllWarmAndCurrentWarm() {
+    fun prefersFirstUncachedUpcomingAfterCurrentWarm() {
+        val next = nextOutpaintTarget(
+            upcoming = listOf("a", "b"),
+            current = "now",
+            isCached = { it == "now" || it == "a" },
+        )
+        assertEquals("b", next)
+    }
+
+    @Test
+    fun skipsWhenAllWarm() {
         val next = nextOutpaintTarget(
             upcoming = listOf("a", "b"),
             current = "now",
@@ -36,10 +36,10 @@ class AlbumArtOutpaintPriorityTest {
     }
 
     @Test
-    fun usesUpcomingBeforeCurrentEvenIfCurrentUncached() {
+    fun upcomingWhenNoCurrent() {
         val next = nextOutpaintTarget(
             upcoming = listOf("next1"),
-            current = "now",
+            current = null,
             isCached = { false },
         )
         assertEquals("next1", next)

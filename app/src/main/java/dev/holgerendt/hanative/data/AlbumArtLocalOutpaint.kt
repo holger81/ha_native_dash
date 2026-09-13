@@ -222,6 +222,78 @@ object AlbumArtLocalOutpaint {
         return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
     }
 
+    /**
+     * True when the Flux (or other) padded result fills the margin with a near-flat
+     * color that does not match the source cover's edge colors — classic beige fail.
+     */
+    fun isLazyFlatPad(
+        paddedBytes: ByteArray,
+        sourceBytes: ByteArray,
+        padLeft: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_LEFT,
+        padTop: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_TOP,
+        padRight: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_RIGHT,
+        padBottom: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_BOTTOM,
+    ): Boolean {
+        val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
+        val padded = BitmapFactory.decodeByteArray(paddedBytes, 0, paddedBytes.size, opts) ?: return false
+        val source = BitmapFactory.decodeByteArray(sourceBytes, 0, sourceBytes.size, opts) ?: run {
+            padded.recycle()
+            return false
+        }
+        return try {
+            val outW = padded.width
+            val outH = padded.height
+            val srcW = outW - padLeft - padRight
+            val srcH = outH - padTop - padBottom
+            if (srcW <= 0 || srcH <= 0) return false
+            val padPixels = IntArray(outW * outH)
+            padded.getPixels(padPixels, 0, outW, 0, 0, outW, outH)
+            val srcPixels = IntArray(source.width * source.height)
+            source.getPixels(srcPixels, 0, source.width, 0, 0, source.width, source.height)
+            val expected = analyzeSideMeans(source.width, source.height, srcPixels)
+            val leftMean = meanRect(padPixels, outW, 0, padLeft, 0, outH)
+            val rightMean = meanRect(padPixels, outW, outW - padRight, outW, 0, outH)
+            val topMean = meanRect(padPixels, outW, padLeft, outW - padRight, 0, padTop)
+            val bottomMean = meanRect(padPixels, outW, padLeft, outW - padRight, outH - padBottom, outH)
+            val padStd = maxOf(
+                colorDistance(leftMean, rightMean),
+                colorDistance(topMean, bottomMean),
+                colorDistance(leftMean, topMean),
+            )
+            // Flat invented pad (all margins nearly the same color).
+            if (padStd > 28.0) return false
+            val padColor = leftMean
+            val match = minOf(
+                colorDistance(padColor, expected.left),
+                colorDistance(padColor, expected.top),
+                colorDistance(padColor, expected.right),
+                colorDistance(padColor, expected.bottom),
+            )
+            match > 45.0
+        } finally {
+            padded.recycle()
+            source.recycle()
+        }
+    }
+
+    fun hasUniformEdges(sourceBytes: ByteArray): Boolean {
+        if (sourceBytes.isEmpty()) return false
+        val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
+        val src = BitmapFactory.decodeByteArray(sourceBytes, 0, sourceBytes.size, opts) ?: return false
+        return try {
+            analyzeUniformEdgeFill(src) != null
+        } finally {
+            src.recycle()
+        }
+    }
+
+    private fun colorDistance(a: Int, b: Int): Double {
+        val dr = red(a) - red(b)
+        val dg = green(a) - green(b)
+        val db = blue(a) - blue(b)
+        return sqrt((dr * dr + dg * dg + db * db).toDouble())
+    }
+
     private fun red(c: Int): Int = (c ushr 16) and 0xFF
     private fun green(c: Int): Int = (c ushr 8) and 0xFF
     private fun blue(c: Int): Int = c and 0xFF

@@ -17,17 +17,17 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Resolves cover art, checks the on-disk outpaint cache, and queues **real**
- * ComfyUI Flux fill outpainting (generative scene extension), not soft blur.
+ * Resolves cover art, checks the on-disk outpaint cache, and generates pads:
+ * 1. Uniform / black-frame covers → instant local solid pad (no Comfy)
+ * 2. Pictorial covers → ComfyUI Flux fill in the background; reject lazy beige
+ *    and fall back to local edge-mean pads
  *
- * Generation priority (one ComfyUI job at a time):
- * 1. Upcoming covers (playlist +1 … +5)
- * 2. Current cover backfill — only after upcoming are cached or absent
+ * Priority: now-playing cover first, then upcoming (+1 … +5).
  *
  * Never throws for network/Comfy failures — returns null so UI keeps the interim
- * soft local treatment until a real outpaint is cached.
+ * soft local treatment until a pad is cached.
  *
- * Each cover ref is attempted at most once per process after a failed Comfy job,
+ * Each cover ref is attempted at most once per process after a hard failure,
  * and warm refs are remembered so flaky re-downloads cannot re-queue the same art.
  */
 class AlbumArtOutpaintRepository(
@@ -48,6 +48,8 @@ class AlbumArtOutpaintRepository(
     private val warmRefs = ConcurrentHashMap.newKeySet<String>()
     /** Cover refs that failed Comfy/fetch this process — do not hammer ComfyUI. */
     private val failedRefs = ConcurrentHashMap.newKeySet<String>()
+    /** Pictorial covers that already received a Flux upgrade attempt this process. */
+    private val fluxAttemptedRefs = ConcurrentHashMap.newKeySet<String>()
 
     /**
      * Update the generation plan. [upcomingCovers] should be next tracks first
@@ -118,8 +120,8 @@ class AlbumArtOutpaintRepository(
     }
 
     private suspend fun drainQueue() {
-        // Feature gated on Comfy URL (outpaint enabled), but generation is local edge pad.
-        if (comfyUiUrl().isBlank()) return
+        val base = comfyUiUrl().trim().trimEnd('/')
+        if (base.isBlank()) return
         while (true) {
             val plan = targets.get()
             val nextRef = pickUncachedTarget(plan) ?: break
@@ -129,14 +131,7 @@ class AlbumArtOutpaintRepository(
                     failedRefs.add(nextRef)
                     return@runCatching false
                 }
-                if (cache.cachedFile(source) != null) {
-                    warmRefs.add(nextRef)
-                    return@runCatching true
-                }
-                val file = cache.getOrEnqueue(source) { bytes ->
-                    // Local edge pad only — Flux often invents beige and thrashes Comfy.
-                    AlbumArtLocalOutpaint.padFromEdges(bytes)
-                }
+                val file = warmCover(base, nextRef, source)
                 if (file != null) {
                     warmRefs.add(nextRef)
                     true
@@ -151,27 +146,55 @@ class AlbumArtOutpaintRepository(
         }
     }
 
+    /**
+     * Instant local edge pad for the UI, then optional Comfy Flux upgrade for
+     * pictorial covers (skipped for black/studio mattes). Lazy beige fills are rejected.
+     */
+    private suspend fun warmCover(comfyBase: String, coverRef: String, source: ByteArray): File? {
+        val local = cache.getOrEnqueue(source) { bytes ->
+            AlbumArtLocalOutpaint.padFromEdges(bytes)
+        } ?: return null
+        if (AlbumArtLocalOutpaint.hasUniformEdges(source)) {
+            fluxAttemptedRefs.add(coverRef)
+            return local
+        }
+        if (!fluxAttemptedRefs.add(coverRef)) return local
+        val flux = runCatching { comfy.outpaint(comfyBase, source) }.getOrNull()
+            ?.takeIf { it.isNotEmpty() }
+            ?: return local
+        if (AlbumArtLocalOutpaint.isLazyFlatPad(flux, source)) return local
+        return cache.replace(source, flux) ?: local
+    }
+
     private suspend fun hasUncachedWork(plan: OutpaintTargets): Boolean =
         pickUncachedTarget(plan) != null
 
     private suspend fun pickUncachedTarget(plan: OutpaintTargets): String? {
+        // Now-playing first so the home card warms before queue prefetch.
+        val current = plan.current
+        if (current != null && !isCoverFullyWarm(current)) return current
         for (ref in plan.upcoming) {
-            if (!isCoverCached(ref)) return ref
+            if (!isCoverFullyWarm(ref)) return ref
         }
-        val current = plan.current ?: return null
-        return if (!isCoverCached(current)) current else null
+        return null
     }
 
-    private suspend fun isCoverCached(coverRef: String): Boolean {
+    private suspend fun isCoverFullyWarm(coverRef: String): Boolean {
         if (warmRefs.contains(coverRef) || failedRefs.contains(coverRef)) return true
         val source = fetchCoverBytes(coverRef) ?: run {
             failedRefs.add(coverRef)
-            return true // unresolvable → skip
+            return true
         }
-        val hit = cache.cachedFile(source) != null
-        if (hit) warmRefs.add(coverRef)
-        return hit
+        val hit = cache.cachedFile(source) ?: return false
+        // Local pad present: still need one Flux attempt for pictorial covers.
+        if (AlbumArtLocalOutpaint.hasUniformEdges(source) || fluxAttemptedRefs.contains(coverRef)) {
+            warmRefs.add(coverRef)
+            return true
+        }
+        return false
     }
+
+    private suspend fun isCoverCached(coverRef: String): Boolean = isCoverFullyWarm(coverRef)
 
     private suspend fun fetchCoverBytes(coverRef: String): ByteArray? = withContext(Dispatchers.IO) {
         if (coverRef.startsWith("data:image")) {
@@ -246,17 +269,17 @@ class AlbumArtOutpaintRepository(
 }
 
 /**
- * Pick the next cover to generate: first uncached upcoming, else uncached current.
- * When upcoming entries are already cached, [current] is chosen (backfill).
+ * Pick the next cover to generate: now-playing first, then first uncached upcoming.
  */
 fun nextOutpaintTarget(
     upcoming: List<String>,
     current: String?,
     isCached: (String) -> Boolean,
 ): String? {
+    val cur = current?.takeIf { it.isNotBlank() }
+    if (cur != null && !isCached(cur)) return cur
     for (ref in upcoming) {
         if (!isCached(ref)) return ref
     }
-    val cur = current?.takeIf { it.isNotBlank() } ?: return null
-    return if (!isCached(cur)) cur else null
+    return null
 }

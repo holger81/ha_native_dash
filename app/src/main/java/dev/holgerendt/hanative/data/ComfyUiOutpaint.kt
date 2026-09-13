@@ -228,7 +228,7 @@ class ComfyUiOutpaintClient(
                 "Keep the original cover pixels unchanged."
 
         /** Bump when pad strategy / prompt / workflow quality changes. */
-        const val OUTPAINT_CACHE_VERSION = "local-edge-v1"
+        const val OUTPAINT_CACHE_VERSION = "hybrid-edge-v1"
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .addInterceptor(NetworkGuard.interceptor)

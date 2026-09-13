@@ -46,22 +46,40 @@ class AlbumArtOutpaintCache(
             flight.withLock {
                 cachedFileForHash(hash)?.let { return@withLock it }
                 val generated = generate(sourceBytes) ?: return@withLock null
-                if (generated.isEmpty()) return@withLock null
-                dirMutex.withLock {
-                    directory.mkdirs()
-                    val target = fileFor(hash)
-                    val tmp = File(directory, "$hash.tmp")
-                    tmp.writeBytes(generated)
-                    if (!tmp.renameTo(target)) {
-                        target.writeBytes(generated)
-                        tmp.delete()
-                    }
-                    enforceLimitsLocked()
-                    target.takeIf { it.isFile && it.length() > 0L }
-                }
+                writeBytesLocked(hash, generated)
             }
         } finally {
             inFlight.remove(hash, flight)
+        }
+    }
+
+    /** Overwrite an existing cache entry (e.g. Flux upgrade after a local pad). */
+    suspend fun replace(sourceBytes: ByteArray, generated: ByteArray): File? {
+        if (generated.isEmpty()) return null
+        val hash = cacheKey(sourceBytes)
+        val flight = inFlight.getOrPut(hash) { Mutex() }
+        return try {
+            flight.withLock {
+                writeBytesLocked(hash, generated)
+            }
+        } finally {
+            inFlight.remove(hash, flight)
+        }
+    }
+
+    private suspend fun writeBytesLocked(hash: String, generated: ByteArray): File? {
+        if (generated.isEmpty()) return null
+        return dirMutex.withLock {
+            directory.mkdirs()
+            val target = fileFor(hash)
+            val tmp = File(directory, "$hash.tmp")
+            tmp.writeBytes(generated)
+            if (!tmp.renameTo(target)) {
+                target.writeBytes(generated)
+                tmp.delete()
+            }
+            enforceLimitsLocked()
+            target.takeIf { it.isFile && it.length() > 0L }
         }
     }
 
