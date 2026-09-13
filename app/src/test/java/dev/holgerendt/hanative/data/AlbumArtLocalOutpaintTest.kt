@@ -137,6 +137,50 @@ class AlbumArtLocalOutpaintTest {
     }
 
     @Test
+    fun hardPictureFrameSeamIsRejected() {
+        val padL = 20
+        val padT = 8
+        val padR = 20
+        val padB = 8
+        val coverW = 40
+        val coverH = 40
+        val outW = coverW + padL + padR
+        val outH = coverH + padT + padB
+        // Grainy charcoal cover vs flat black pads — mean colors are both "dark"
+        // but the boundary reads as a hard box (Daya / Difference failure mode).
+        val pixels = IntArray(outW * outH) { idx ->
+            val x = idx % outW
+            val y = idx / outW
+            val inCover = x in padL until (outW - padR) && y in padT until (outH - padB)
+            if (inCover) {
+                val n = (x * 17 + y * 13) % 28
+                argb(28 + n, 28 + n, 30 + n)
+            } else {
+                argb(4, 4, 4)
+            }
+        }
+        val d = AlbumArtLocalOutpaint.padSeamDistance(outW, outH, pixels, padL, padT, padR, padB)
+        assertTrue("expected visible seam, was $d", d > AlbumArtLocalOutpaint.MAX_PAD_SEAM)
+    }
+
+    @Test
+    fun seamlessContinuationPassesSeamCheck() {
+        val padL = 20
+        val padT = 8
+        val padR = 20
+        val padB = 8
+        val coverW = 40
+        val coverH = 40
+        val outW = coverW + padL + padR
+        val outH = coverH + padT + padB
+        // Same mid-tone everywhere — no seam.
+        val tone = argb(90, 110, 130)
+        val pixels = IntArray(outW * outH) { tone }
+        val d = AlbumArtLocalOutpaint.padSeamDistance(outW, outH, pixels, padL, padT, padR, padB)
+        assertTrue("expected seamless, was $d", d < AlbumArtLocalOutpaint.MAX_PAD_SEAM)
+    }
+
+    @Test
     fun texturedColorDriftIsNotRejectedAsCream() {
         // Mean color can drift on a good Flux fill; solid-cream check must fail.
         val padL = 20
@@ -185,12 +229,15 @@ class AlbumArtLocalOutpaintTest {
             AlbumArtLocalOutpaint.padMismatchDistance(padSides, coverSides) >
                 AlbumArtLocalOutpaint.MAX_PAD_MISMATCH,
         )
-        // Simulate shouldRejectFluxPad's AND: color mismatch alone is not enough.
-        val wouldReject = true && // color mismatch
-            AlbumArtLocalOutpaint.looksLikeLocalSolidPadPixels(outW, outH, paddedPixels, padL, padT, padR, padB)
-        assertTrue("textured Flux must be kept", !wouldReject)
+        // Color mismatch alone is enough to reject (no solid-pad AND required).
+        assertTrue(
+            "cream-colored Flux must be rejected",
+            AlbumArtLocalOutpaint.padMismatchDistance(padSides, coverSides) >
+                AlbumArtLocalOutpaint.MAX_PAD_MISMATCH,
+        )
         // silence unused
         coverPixels.size
+        AlbumArtLocalOutpaint.looksLikeLocalSolidPadPixels(outW, outH, paddedPixels, padL, padT, padR, padB)
     }
 
     @Test

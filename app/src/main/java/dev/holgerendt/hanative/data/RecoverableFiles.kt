@@ -19,6 +19,8 @@ internal object RecoverableFiles {
     val DIR_NAME: String get() = PanelConfig.RECOVERY_DIR
     const val CREDENTIALS_NAME = "credentials.json"
     const val TLS_NAME = "management.p12"
+    /** Album Flux/local pads — survives uninstall like credentials. */
+    const val OUTPAINT_CACHE_SUBDIR = "outpaint_cache"
 
     private val relativePath: String
         get() = "${Environment.DIRECTORY_DOCUMENTS}/$DIR_NAME"
@@ -26,6 +28,47 @@ internal object RecoverableFiles {
     @Suppress("DEPRECATION")
     fun publicDir(): File =
         File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), DIR_NAME)
+
+    /**
+     * Prefer Documents so outpaint JPEGs survive reinstall. Falls back to
+     * [Context.getFilesDir] when public storage is unavailable.
+     */
+    fun outpaintCacheDir(context: Context): File {
+        val public = File(publicDir(), OUTPAINT_CACHE_SUBDIR)
+        val private = File(context.applicationContext.filesDir, OUTPAINT_CACHE_SUBDIR)
+        val publicOk = runCatching {
+            if (!public.exists()) public.mkdirs()
+            public.isDirectory && (public.canWrite() || public.list() != null)
+        }.getOrDefault(false)
+        if (publicOk) {
+            migrateOutpaintCache(from = private, to = public)
+            return public
+        }
+        runCatching { private.mkdirs() }
+        return private
+    }
+
+    private fun migrateOutpaintCache(from: File, to: File) {
+        if (!from.isDirectory || from.absolutePath == to.absolutePath) return
+        val sources = from.listFiles()?.filter { it.isFile } ?: return
+        if (sources.isEmpty()) return
+        runCatching { to.mkdirs() }
+        for (src in sources) {
+            val dest = File(to, src.name)
+            if (dest.isFile && dest.length() > 0L) continue
+            runCatching {
+                src.copyTo(dest, overwrite = false)
+            }
+        }
+        // Drop emptied private copies once public has the bytes.
+        for (src in sources) {
+            val dest = File(to, src.name)
+            if (dest.isFile && dest.length() == src.length()) {
+                runCatching { src.delete() }
+            }
+        }
+        runCatching { if (from.list().isNullOrEmpty()) from.delete() }
+    }
 
     fun write(context: Context, name: String, mime: String, bytes: ByteArray) {
         val viaFile = runCatching {

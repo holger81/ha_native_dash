@@ -267,9 +267,8 @@ object AlbumArtLocalOutpaint {
     }
 
     /**
-     * Reject invented mats (cream / brown / gray) whose margin colors do not
-     * match the cover edges. With a single Flux attempt we keep the local pad
-     * instead of burning retries; textured-but-wrong fills still count as bad.
+     * Reject invented mats (cream / brown / gray) and hard "picture frame" seams.
+     * With a single Flux attempt we keep the local pad instead of burning retries.
      */
     fun shouldRejectFluxPad(
         paddedBytes: ByteArray,
@@ -279,7 +278,8 @@ object AlbumArtLocalOutpaint {
         padRight: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_RIGHT,
         padBottom: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_BOTTOM,
     ): Boolean =
-        isPadColorMismatch(paddedBytes, sourceBytes, padLeft, padTop, padRight, padBottom)
+        isPadColorMismatch(paddedBytes, sourceBytes, padLeft, padTop, padRight, padBottom) ||
+            isPadSeamMismatch(paddedBytes, padLeft, padTop, padRight, padBottom)
 
     /**
      * Worst-side color distance between each pad margin and the matching cover edge.
@@ -291,6 +291,74 @@ object AlbumArtLocalOutpaint {
         colorDistance(padSides.right, coverSides.right),
         colorDistance(padSides.bottom, coverSides.bottom),
     )
+
+    /**
+     * True when the padded JPEG has a hard rectangle at the cover boundary —
+     * Flux left a visible box even when mean margin colors are "close enough"
+     * (e.g. charcoal grain vs flat black).
+     */
+    fun isPadSeamMismatch(
+        paddedBytes: ByteArray,
+        padLeft: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_LEFT,
+        padTop: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_TOP,
+        padRight: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_RIGHT,
+        padBottom: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_BOTTOM,
+    ): Boolean {
+        val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
+        val padded = BitmapFactory.decodeByteArray(paddedBytes, 0, paddedBytes.size, opts) ?: return false
+        return try {
+            val outW = padded.width
+            val outH = padded.height
+            if (outW - padLeft - padRight <= 0 || outH - padTop - padBottom <= 0) return false
+            val pixels = IntArray(outW * outH)
+            padded.getPixels(pixels, 0, outW, 0, 0, outW, outH)
+            padSeamDistance(outW, outH, pixels, padLeft, padTop, padRight, padBottom) > MAX_PAD_SEAM
+        } finally {
+            padded.recycle()
+        }
+    }
+
+    /**
+     * Worst-side distance between a thin strip just inside the cover box and the
+     * matching strip just outside in the pad. Visible for tests.
+     */
+    fun padSeamDistance(
+        outW: Int,
+        outH: Int,
+        pixels: IntArray,
+        padLeft: Int,
+        padTop: Int,
+        padRight: Int,
+        padBottom: Int,
+    ): Double {
+        val coverW = outW - padLeft - padRight
+        val coverH = outH - padTop - padBottom
+        if (coverW <= 0 || coverH <= 0 || pixels.size < outW * outH) return 0.0
+        val band = minOf(8, padLeft, padTop, padRight, padBottom, coverW / 8, coverH / 8)
+            .coerceAtLeast(2)
+        val y0 = padTop
+        val y1 = outH - padBottom
+        val x0 = padLeft
+        val x1 = outW - padRight
+        return maxOf(
+            colorDistance(
+                meanRectRaw(pixels, outW, x0, x0 + band, y0, y1),
+                meanRectRaw(pixels, outW, x0 - band, x0, y0, y1),
+            ),
+            colorDistance(
+                meanRectRaw(pixels, outW, x1 - band, x1, y0, y1),
+                meanRectRaw(pixels, outW, x1, x1 + band, y0, y1),
+            ),
+            colorDistance(
+                meanRectRaw(pixels, outW, x0, x1, y0, y0 + band),
+                meanRectRaw(pixels, outW, x0, x1, y0 - band, y0),
+            ),
+            colorDistance(
+                meanRectRaw(pixels, outW, x0, x1, y1 - band, y1),
+                meanRectRaw(pixels, outW, x0, x1, y1, y1 + band),
+            ),
+        )
+    }
 
     /** Per-side rim means without black snapping (for Flux quality checks). */
     fun analyzeSideMeansRaw(width: Int, height: Int, pixels: IntArray): SideMeans {
@@ -481,6 +549,12 @@ object AlbumArtLocalOutpaint {
 
     /** Above this distance from every cover edge, a generated pad is invented. */
     const val MAX_PAD_MISMATCH = 45.0
+
+    /**
+     * Above this inside/outside boundary distance, Flux left a hard picture-frame
+     * seam (common on dark covers where mean colors still look "black").
+     */
+    const val MAX_PAD_SEAM = 38.0
 
     /** Per-region RGB std-dev at or below this → solid local edge pad, not Flux. */
     const val LOCAL_PAD_MAX_STD = 12.0

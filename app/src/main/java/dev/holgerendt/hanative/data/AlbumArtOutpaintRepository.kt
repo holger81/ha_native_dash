@@ -36,7 +36,7 @@ class AlbumArtOutpaintRepository(
     private val comfyUiUrl: () -> String,
     private val scope: CoroutineScope,
     private val cache: AlbumArtOutpaintCache = AlbumArtOutpaintCache(
-        File(context.applicationContext.filesDir, AlbumArtOutpaintCache.DIR_NAME),
+        RecoverableFiles.outpaintCacheDir(context),
     ),
     private val comfy: ComfyUiOutpaintClient = ComfyUiOutpaintClient(context.applicationContext.assets),
     private val imageHttp: OkHttpClient = imageFetchClient(),
@@ -80,7 +80,14 @@ class AlbumArtOutpaintRepository(
     suspend fun peekFluxComplete(coverRef: String?): Boolean {
         if (coverRef.isNullOrBlank() || comfyUiUrl().isBlank()) return false
         val source = fetchCoverBytes(coverRef) ?: return false
-        return cache.isFluxComplete(source)
+        if (!cache.isFluxComplete(source)) return false
+        val file = cache.cachedFile(source) ?: return false
+        val bytes = withContext(Dispatchers.IO) {
+            runCatching { file.readBytes() }.getOrNull()
+        } ?: return false
+        // Invented / seamed Flux must not unlock the hover hero.
+        return bytes.isNotEmpty() &&
+            !AlbumArtLocalOutpaint.shouldRejectFluxPad(bytes, source)
     }
 
     /**
@@ -164,10 +171,20 @@ class AlbumArtOutpaintRepository(
     private suspend fun warmCover(comfyBase: String, coverRef: String, source: ByteArray): File? {
         val existing = cache.cachedFile(source)
         if (existing != null && isFluxPadSettled(source, existing)) {
-            fluxAttemptedRefs.add(coverRef)
-            return existing
+            val settledBytes = withContext(Dispatchers.IO) {
+                runCatching { existing.readBytes() }.getOrNull()
+            }
+            // Old / invented Flux pads used to stick forever via the .flux sidecar.
+            if (settledBytes != null &&
+                settledBytes.isNotEmpty() &&
+                !AlbumArtLocalOutpaint.shouldRejectFluxPad(settledBytes, source)
+            ) {
+                fluxAttemptedRefs.add(coverRef)
+                return existing
+            }
+            cache.invalidate(source)
         }
-        val local = existing ?: cache.getOrEnqueue(source) { bytes ->
+        val local = cache.cachedFile(source) ?: cache.getOrEnqueue(source) { bytes ->
             AlbumArtLocalOutpaint.padFromEdges(bytes)
         } ?: return null
         if (AlbumArtLocalOutpaint.hasUniformEdges(source)) {
@@ -175,8 +192,8 @@ class AlbumArtOutpaintRepository(
             return local
         }
         if (!fluxAttemptedRefs.add(coverRef)) return local
-        // One Flux pass: keep only edge-faithful fills. Color-mismatched invents
-        // (including textured brown mats) fall back to the local pad.
+        // One Flux pass: keep only edge-faithful fills. Color / seam mismatches
+        // (cream invents, hard picture-frame boxes) fall back to the local pad.
         val flux = runCatching { comfy.outpaint(comfyBase, source) }.getOrNull()
             ?.takeIf { it.isNotEmpty() }
         if (flux != null && !AlbumArtLocalOutpaint.shouldRejectFluxPad(flux, source)) {
@@ -219,9 +236,19 @@ class AlbumArtOutpaintRepository(
             return true
         }
         if (isFluxPadSettled(source, cached)) {
-            warmRefs.add(coverRef)
-            fluxAttemptedRefs.add(coverRef)
-            return true
+            val bytes = withContext(Dispatchers.IO) {
+                runCatching { cached.readBytes() }.getOrNull()
+            }
+            if (bytes != null &&
+                bytes.isNotEmpty() &&
+                !AlbumArtLocalOutpaint.shouldRejectFluxPad(bytes, source)
+            ) {
+                warmRefs.add(coverRef)
+                fluxAttemptedRefs.add(coverRef)
+                return true
+            }
+            // Bad Flux still on disk — leave uncached so warmCover can demote it.
+            return false
         }
         // Solid local pad still waiting for a Flux upgrade this process.
         if (fluxAttemptedRefs.contains(coverRef)) {

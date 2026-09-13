@@ -10,6 +10,9 @@ import java.util.concurrent.ConcurrentHashMap
  * Disk cache for ComfyUI outpainted album art.
  * Keyed by [ComfyUiOutpaintClient.OUTPAINT_CACHE_VERSION] + SHA-256 of source
  * cover bytes; single-flight per hash.
+ *
+ * Default directory is Documents/[recovery]/outpaint_cache so pads survive
+ * uninstall (see [RecoverableFiles.outpaintCacheDir]).
  */
 class AlbumArtOutpaintCache(
     private val directory: File,
@@ -75,6 +78,22 @@ class AlbumArtOutpaintCache(
             flight.withLock {
                 writeBytesLocked(hash, generated)?.also {
                     fluxMarkerFor(hash).createNewFile()
+                }
+            }
+        } finally {
+            inFlight.remove(hash, flight)
+        }
+    }
+
+    /** Drop a bad Flux (or local) pad so the next warm can regenerate. */
+    suspend fun invalidate(sourceBytes: ByteArray) {
+        val hash = cacheKey(sourceBytes)
+        val flight = inFlight.getOrPut(hash) { Mutex() }
+        try {
+            flight.withLock {
+                dirMutex.withLock {
+                    fileFor(hash).delete()
+                    fluxMarkerFor(hash).delete()
                 }
             }
         } finally {

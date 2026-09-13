@@ -45,7 +45,7 @@ The management page is **HTTPS only** on port **8765** (no HTTP listener). The p
 
 The management page stays available while the app is running. Open the menu later to see the current URL and PIN if you need to change the token. After you enter the PIN, the same page shows a live screenshot of the wall panel.
 
-On-panel typing is still there as a fallback. URL, token, and a user-set PIN are stored in app SharedPreferences (so Android 10+ **Keep app data** on uninstall works) and also copied to `Documents/HA Native/` (greatroom) or `Documents/HA Native Entrance/` (entrance) so they can be restored even if you do not keep app data. The token is never written to git, logs, or crash reports.
+On-panel typing is still there as a fallback. URL, token, and a user-set PIN are stored in app SharedPreferences (so Android 10+ **Keep app data** on uninstall works) and also copied to `Documents/HA Native/` (greatroom) or `Documents/HA Native Entrance/` (entrance) so they can be restored even if you do not keep app data. Album outpaint pads live under the same Documents folder (`outpaint_cache/`) so Flux results also survive reinstall. The token is never written to git, logs, or crash reports.
 
 On Android 11+, grant **All files access** after a reinstall if you skipped Keep app data, so the app can read that Documents folder. On Android 10 and older, allow storage access when prompted.
 
