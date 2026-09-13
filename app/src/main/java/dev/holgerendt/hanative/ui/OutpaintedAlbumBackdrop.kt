@@ -49,16 +49,17 @@ import kotlinx.coroutines.withContext
 /**
  * Atmosphere / hero art behind Phase 6 music UI.
  *
- * Soft enlarge fills the card until Flux lands; then the Flux pad itself fills
- * the full card background (same role), while [AlbumOutpaintHero] keeps the
- * sharp cover hovering on the aligned fill.
+ * Soft enlarge fills the card until a pad is cached; then that pad (local or
+ * Flux) fills the full card background. [AlbumOutpaintHero] still waits for
+ * Flux before the hovering cover stage. Compact backyard strips use the same
+ * atmosphere when music art is available.
  */
 @Composable
 fun OutpaintedAlbumBackdrop(
     coverPath: String?,
     viewModel: HaViewModel,
     modifier: Modifier = Modifier,
-    /** False for idle Listen and compact camera-priority strips. */
+    /** False when there is no music art to extend (e.g. idle / TV without poster). */
     extendedBackdrop: Boolean = true,
     content: @Composable BoxScope.() -> Unit,
 ) {
@@ -277,8 +278,9 @@ private fun BoxScope.SoftAtmosphereLayer(
     val loader = rememberHaImageLoader(viewModel.client)
     val ui by viewModel.ui.collectAsState()
     var coverUrl by remember(coverPath, viewModel.client.currentBaseUrl) { mutableStateOf<String?>(null) }
-    var fluxFile by remember(coverPath) { mutableStateOf<File?>(null) }
-    var fluxStamp by remember(coverPath) { mutableStateOf(0L) }
+    var padFile by remember(coverPath) { mutableStateOf<File?>(null) }
+    var padStamp by remember(coverPath) { mutableStateOf(0L) }
+    var fluxComplete by remember(coverPath) { mutableStateOf(false) }
 
     LaunchedEffect(coverPath, viewModel.client.currentBaseUrl) {
         coverUrl = runCatching { viewModel.client.resolveMusicCoverUrl(coverPath, size = 512) }.getOrNull()
@@ -286,53 +288,53 @@ private fun BoxScope.SoftAtmosphereLayer(
         viewModel.scheduleAlbumArtOutpaintPrefetch(currentCoverOverride = coverPath)
     }
     LaunchedEffect(coverPath, ui.comfyUiUrl) {
-        fluxFile = null
-        fluxStamp = 0L
+        padFile = null
+        padStamp = 0L
+        fluxComplete = false
         if (ui.comfyUiUrl.isBlank()) return@LaunchedEffect
         var lastStamp = 0L
         while (true) {
+            val hit = runCatching {
+                viewModel.albumArtOutpaint.peekOutpaintedFile(coverPath)
+            }.getOrNull()
             val fluxDone = runCatching {
                 viewModel.albumArtOutpaint.peekFluxComplete(coverPath)
             }.getOrDefault(false)
-            if (fluxDone) {
-                val hit = runCatching {
-                    viewModel.albumArtOutpaint.peekOutpaintedFile(coverPath)
-                }.getOrNull()
-                if (hit != null) {
-                    val stamp = hit.length() xor hit.lastModified()
-                    if (stamp != lastStamp) {
-                        lastStamp = stamp
-                        fluxFile = hit
-                        fluxStamp = stamp
-                    }
+            fluxComplete = fluxDone
+            if (hit != null) {
+                val stamp = hit.length() xor hit.lastModified()
+                if (stamp != lastStamp) {
+                    lastStamp = stamp
+                    padFile = hit
+                    padStamp = stamp
                 }
             } else {
-                fluxFile = null
-                fluxStamp = 0L
+                padFile = null
+                padStamp = 0L
                 lastStamp = 0L
             }
-            delay(if (fluxFile != null) 30_000L else 2_000L)
+            delay(if (padFile != null) 30_000L else 2_000L)
         }
     }
 
-    val outpaint = fluxFile
+    val outpaint = padFile
     if (outpaint != null) {
-        // Flux pad fills the whole card — same role as the interim soft enlarge.
+        // Any cached pad (local or Flux) fills the card — soft enlarge is interim only.
         AsyncImage(
             model = ImageRequest.Builder(context)
                 .data(outpaint)
-                .memoryCacheKey("outpaint-bg-${outpaint.name}-$fluxStamp")
-                .diskCacheKey("outpaint-bg-${outpaint.name}-$fluxStamp")
+                .memoryCacheKey("outpaint-bg-${outpaint.name}-$padStamp")
+                .diskCacheKey("outpaint-bg-${outpaint.name}-$padStamp")
                 .crossfade(false)
                 .build(),
             contentDescription = null,
             imageLoader = loader,
             contentScale = ContentScale.Crop,
-            colorFilter = desaturateFilter(0.55f),
+            colorFilter = desaturateFilter(if (fluxComplete) 0.7f else 0.55f),
             modifier = Modifier
                 .matchParentSize()
-                .graphicsLayer { alpha = 0.42f }
-                .then(softBlurFallback())
+                .graphicsLayer { alpha = if (fluxComplete) 0.55f else 0.4f }
+                .then(if (fluxComplete) Modifier else softBlurFallback())
                 .fadeSoftAtmosphere(),
         )
         return

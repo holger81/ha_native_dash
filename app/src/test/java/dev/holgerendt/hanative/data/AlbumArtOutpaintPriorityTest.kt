@@ -1,5 +1,7 @@
 package dev.holgerendt.hanative.data
 
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -83,5 +85,41 @@ class AlbumArtOutpaintPriorityTest {
             upcomingCovers = listOf("now", "1", "2"),
         )
         assertEquals(listOf("1", "2"), plan.upcoming)
+    }
+
+    @Test
+    fun blankArtRowsDoNotShrinkUpcomingCoverQuota() {
+        fun item(name: String, image: String?) = buildJsonObject {
+            put("name", name)
+            if (image != null) {
+                put(
+                    "media_item",
+                    buildJsonObject {
+                        put("name", name)
+                        put("image", buildJsonObject { put("url", image) })
+                    },
+                )
+            }
+        }
+        val dest = linkedSetOf<String>()
+        collectUpcomingCoverUrls(
+            rows = listOf(
+                item("no-art", null),
+                item("a", "https://cdn.example/a.jpg"),
+                item("also-blank", null),
+                item("b", "https://cdn.example/b.jpg"),
+                item("c", "https://cdn.example/c.jpg"),
+            ),
+            dest = dest,
+            limit = 3,
+        )
+        assertEquals(
+            listOf(
+                "https://cdn.example/a.jpg",
+                "https://cdn.example/b.jpg",
+                "https://cdn.example/c.jpg",
+            ),
+            dest.toList(),
+        )
     }
 }

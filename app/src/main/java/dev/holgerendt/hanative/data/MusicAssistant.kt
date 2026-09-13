@@ -278,6 +278,23 @@ internal fun parseQueueItem(element: JsonElement?): MusicAssistantQueueItem? {
 }
 
 /**
+ * Append cover URLs from queue [rows] into [dest] until [limit] unique URLs.
+ * Rows without art are skipped so blank covers do not shrink the prefetch window.
+ */
+internal fun collectUpcomingCoverUrls(
+    rows: Iterable<JsonElement?>,
+    dest: MutableSet<String>,
+    limit: Int,
+) {
+    if (limit <= 0) return
+    for (element in rows) {
+        if (dest.size >= limit) return
+        val url = parseQueueItem(element)?.imageUrl?.takeIf { it.isNotBlank() } ?: continue
+        dest.add(url)
+    }
+}
+
+/**
  * Cover for the now-playing UI. Prefer Music Assistant queue art so the large
  * cover matches the "Now" row; HA [entity_picture] often lags a track or two on skip.
  */

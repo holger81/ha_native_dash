@@ -192,7 +192,8 @@ class AlbumArtLocalOutpaintTest {
         val outW = coverW + padL + padR
         val outH = coverH + padT + padB
         val cover = argb(40, 84, 115)
-        val cream = argb(170, 157, 128)
+        // Mid drift (~60 RGB) — above soft threshold, below extreme invent.
+        val drifted = argb(90, 100, 95)
         val coverPixels = IntArray(coverW * coverH) { cover }
         val paddedPixels = IntArray(outW * outH) { idx ->
             val x = idx % outW
@@ -201,43 +202,30 @@ class AlbumArtLocalOutpaintTest {
             if (inCover) {
                 cover
             } else {
-                // Textured cream-ish pad — not a flat matte.
                 argb(
-                    (cream ushr 16 and 0xFF) + ((x * 13 + y * 7) % 40) - 20,
-                    (cream ushr 8 and 0xFF) + ((x * 3 + y * 11) % 40) - 20,
-                    (cream and 0xFF) + ((x * 5 + y * 17) % 40) - 20,
-                ).let {
-                    val r = ((it ushr 16) and 0xFF).coerceIn(0, 255)
-                    val g = ((it ushr 8) and 0xFF).coerceIn(0, 255)
-                    val b = (it and 0xFF).coerceIn(0, 255)
-                    argb(r, g, b)
-                }
+                    ((drifted ushr 16 and 0xFF) + ((x * 13 + y * 7) % 40) - 20).coerceIn(0, 255),
+                    ((drifted ushr 8 and 0xFF) + ((x * 3 + y * 11) % 40) - 20).coerceIn(0, 255),
+                    ((drifted and 0xFF) + ((x * 5 + y * 17) % 40) - 20).coerceIn(0, 255),
+                )
             }
         }
         assertTrue(
             "textured pad should not look local-solid",
             !AlbumArtLocalOutpaint.looksLikeLocalSolidPadPixels(outW, outH, paddedPixels, padL, padT, padR, padB),
         )
-        // Color distance alone would reject; combined guard must not.
         val padSides = AlbumArtLocalOutpaint.SideMeans(
-            left = cream, top = cream, right = cream, bottom = cream,
+            left = drifted, top = drifted, right = drifted, bottom = drifted,
         )
         val coverSides = AlbumArtLocalOutpaint.SideMeans(
             left = cover, top = cover, right = cover, bottom = cover,
         )
+        val d = AlbumArtLocalOutpaint.padMismatchDistance(padSides, coverSides)
+        assertTrue("expected mid drift, was $d", d > AlbumArtLocalOutpaint.MAX_PAD_MISMATCH)
         assertTrue(
-            AlbumArtLocalOutpaint.padMismatchDistance(padSides, coverSides) >
-                AlbumArtLocalOutpaint.MAX_PAD_MISMATCH,
+            "mid color drift must stay below extreme invent threshold, was $d",
+            d <= AlbumArtLocalOutpaint.MAX_PAD_MISMATCH_EXTREME,
         )
-        // Color mismatch alone is enough to reject (no solid-pad AND required).
-        assertTrue(
-            "cream-colored Flux must be rejected",
-            AlbumArtLocalOutpaint.padMismatchDistance(padSides, coverSides) >
-                AlbumArtLocalOutpaint.MAX_PAD_MISMATCH,
-        )
-        // silence unused
         coverPixels.size
-        AlbumArtLocalOutpaint.looksLikeLocalSolidPadPixels(outW, outH, paddedPixels, padL, padT, padR, padB)
     }
 
     @Test

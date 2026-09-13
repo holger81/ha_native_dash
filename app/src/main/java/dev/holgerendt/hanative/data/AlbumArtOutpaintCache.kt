@@ -33,6 +33,40 @@ class AlbumArtOutpaintCache(
         return file.takeIf { it.isFile && it.length() > 0L }
     }
 
+    /**
+     * Remember which cover ref produced [sourceBytes] so a later lookup with the
+     * same ref can find the pad even if a re-fetch briefly fails.
+     */
+    fun bindCoverRef(coverRef: String, sourceBytes: ByteArray) {
+        val trimmed = coverRef.trim()
+        if (trimmed.isEmpty()) return
+        val hash = cacheKey(sourceBytes)
+        if (cachedFileForHash(hash) == null) return
+        runCatching {
+            directory.mkdirs()
+            refFileFor(trimmed).writeText(hash)
+        }
+    }
+
+    /** Lookup by cover ref alias written in [bindCoverRef]. */
+    fun cachedFileForCoverRef(coverRef: String): File? {
+        val trimmed = coverRef.trim()
+        if (trimmed.isEmpty()) return null
+        val hash = runCatching {
+            refFileFor(trimmed).takeIf { it.isFile }?.readText()?.trim()
+        }.getOrNull()?.takeIf { it.isNotEmpty() } ?: return null
+        return cachedFileForHash(hash)
+    }
+
+    fun isFluxCompleteForCoverRef(coverRef: String): Boolean {
+        val trimmed = coverRef.trim()
+        if (trimmed.isEmpty()) return false
+        val hash = runCatching {
+            refFileFor(trimmed).takeIf { it.isFile }?.readText()?.trim()
+        }.getOrNull()?.takeIf { it.isNotEmpty() } ?: return false
+        return fluxMarkerFor(hash).isFile && cachedFileForHash(hash) != null
+    }
+
     /** True after a successful Flux upgrade was written for this source. */
     fun isFluxComplete(sourceBytes: ByteArray): Boolean =
         fluxMarkerFor(cacheKey(sourceBytes)).isFile
@@ -141,8 +175,12 @@ class AlbumArtOutpaintCache(
             val hash = oldest.name.removeSuffix(".jpg")
             oldest.delete()
             File(directory, "$hash.flux").delete()
+            // Orphan .ref aliases are harmless; leave them (small).
         }
     }
+
+    private fun refFileFor(coverRef: String): File =
+        File(directory, "${sha256Hex(coverRef.toByteArray(Charsets.UTF_8))}.ref")
 
     companion object {
         const val MAX_FILES = 100

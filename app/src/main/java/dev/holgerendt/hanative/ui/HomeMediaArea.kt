@@ -215,11 +215,22 @@ internal fun resolveHomeMediaSession(
             val artist = (if (useQueue) queue?.current?.artists else null)
                 ?: st?.mediaArtist()
                 ?: ""
-            val art = if (useQueue) {
-                resolveNowPlayingCover(queue?.current, st?.entityPicture)
-            } else {
-                st?.entityPicture
-            }
+            val art = resolveNowPlayingCover(
+                // Prefer MASS queue art whenever it belongs to this player so the
+                // card looks up the same URL the outpaint prefetch warmed.
+                queueItem = queue?.current?.takeIf { useQueue },
+                entityPicture = st?.entityPicture,
+            )
+            // Prefer Mass elapsed: HA/Sonos often reports media_position=0 with a
+            // refreshed timestamp, which made the home bar climb ~3s then reset.
+            val position = resolveHomeMediaPosition(
+                haPosition = st?.mediaPositionSec(),
+                haUpdatedAtMs = st?.mediaPositionUpdatedAtMs(),
+                playerElapsed = player.elapsedSec,
+                playerElapsedUpdatedAtMs = player.elapsedUpdatedAtMs,
+                queueElapsed = if (useQueue) queue?.elapsedSec else null,
+                queueElapsedUpdatedAtMs = if (useQueue) queue?.elapsedUpdatedAtMs else null,
+            )
             HomeMediaSnapshot(
                 kind = HomeMediaKind.Music,
                 playing = bestMusic.playing,
@@ -231,9 +242,8 @@ internal fun resolveHomeMediaSession(
                 entityId = player.entityId,
                 durationSec = (if (useQueue) queue?.current?.durationSec?.toDouble() else null)
                     ?: st?.mediaDurationSec(),
-                positionSec = st?.mediaPositionSec() ?: (if (useQueue) queue?.elapsedSec else null),
-                positionUpdatedAtMs = st?.mediaPositionUpdatedAtMs()
-                    ?: (if (useQueue) queue?.elapsedUpdatedAtMs else null),
+                positionSec = position?.positionSec,
+                positionUpdatedAtMs = position?.updatedAtMs,
                 volume = st?.volumeLevel(),
             )
         }
@@ -280,6 +290,43 @@ internal fun resolveHomeMediaSession(
             positionUpdatedAtMs = null,
             volume = null,
         )
+    }
+}
+
+/**
+ * Home-card playback anchor. Mass elapsed wins over HA when HA reports 0 with a
+ * refreshed `media_position_updated_at` (classic Sonos/MA freeze/reset).
+ */
+internal data class HomeMediaPosition(
+    val positionSec: Double,
+    val updatedAtMs: Long?,
+)
+
+internal fun resolveHomeMediaPosition(
+    haPosition: Double?,
+    haUpdatedAtMs: Long?,
+    playerElapsed: Double?,
+    playerElapsedUpdatedAtMs: Long?,
+    queueElapsed: Double?,
+    queueElapsedUpdatedAtMs: Long?,
+    nowMs: Long = System.currentTimeMillis(),
+): HomeMediaPosition? {
+    val mass = when {
+        playerElapsed != null && playerElapsedUpdatedAtMs != null ->
+            HomeMediaPosition(playerElapsed, playerElapsedUpdatedAtMs)
+        queueElapsed != null && queueElapsedUpdatedAtMs != null ->
+            HomeMediaPosition(queueElapsed, queueElapsedUpdatedAtMs)
+        playerElapsed != null -> HomeMediaPosition(playerElapsed, nowMs)
+        queueElapsed != null -> HomeMediaPosition(queueElapsed, nowMs)
+        else -> null
+    }
+    val haUsable = haPosition != null && haPosition > 0.5 && haUpdatedAtMs != null
+    return when {
+        mass != null && (mass.positionSec > 0.2 || !haUsable) -> mass
+        haUsable -> HomeMediaPosition(haPosition!!, haUpdatedAtMs)
+        mass != null -> mass
+        haPosition != null -> HomeMediaPosition(haPosition, haUpdatedAtMs ?: nowMs)
+        else -> null
     }
 }
 
@@ -554,68 +601,77 @@ private fun CompactMediaStrip(
             HomeMediaKind.Idle -> Unit
         }
     }
-    Row(
+    val musicArt = snapshot.art.takeIf { snapshot.kind == HomeMediaKind.Music }
+    OutpaintedAlbumBackdrop(
+        coverPath = musicArt,
+        viewModel = viewModel,
         modifier = modifier
             .fillMaxWidth()
             .height(88.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(CardLight)
-            .clickable(onClick = onOpen)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+            .background(CardLight),
+        extendedBackdrop = musicArt != null,
     ) {
-        if (snapshot.kind == HomeMediaKind.Tv && snapshot.art.isNullOrBlank()) {
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0x14000000)),
-                contentAlignment = Alignment.Center,
-            ) {
-                MdiIcon("mdi:television-classic", tint = TextMuted, size = 28.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onOpen)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (snapshot.kind == HomeMediaKind.Tv && snapshot.art.isNullOrBlank()) {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0x14000000)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MdiIcon("mdi:television-classic", tint = TextMuted, size = 28.dp)
+                }
+            } else {
+                MusicCover(
+                    path = snapshot.art,
+                    viewModel = viewModel,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(RoundedCornerShape(12.dp)),
+                    spinnerSize = 16.dp,
+                    fallbackIconSize = 22.dp,
+                )
             }
-        } else {
-            MusicCover(
-                path = snapshot.art,
-                viewModel = viewModel,
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(RoundedCornerShape(12.dp)),
-                spinnerSize = 16.dp,
-                fallbackIconSize = 22.dp,
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    snapshot.title,
+                    color = TextDark,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    listOfNotNull(
+                        snapshot.room.takeIf { it.isNotBlank() },
+                        if (snapshot.paused) "Paused" else null,
+                    ).joinToString(" · "),
+                    color = TextMuted,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            MediaIconButton(
+                if (snapshot.playing) "mdi:pause" else "mdi:play",
+                label = if (snapshot.playing) "Pause" else "Play",
+                size = 48.dp,
+                iconSize = 24.dp,
+                filled = true,
+                onClick = {
+                    entityId?.let { viewModel.homeMediaCommand(it, "media_play_pause") }
+                },
             )
         }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                snapshot.title,
-                color = TextDark,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                listOfNotNull(
-                    snapshot.room.takeIf { it.isNotBlank() },
-                    if (snapshot.paused) "Paused" else null,
-                ).joinToString(" · "),
-                color = TextMuted,
-                fontSize = 13.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        MediaIconButton(
-            if (snapshot.playing) "mdi:pause" else "mdi:play",
-            label = if (snapshot.playing) "Pause" else "Play",
-            size = 48.dp,
-            iconSize = 24.dp,
-            filled = true,
-            onClick = {
-                entityId?.let { viewModel.homeMediaCommand(it, "media_play_pause") }
-            },
-        )
     }
 }
 
@@ -715,20 +771,19 @@ private fun MediaProgressRow(
     positionUpdatedAtMs: Long?,
     playing: Boolean,
 ) {
-    var tick by remember { mutableStateOf(0) }
+    var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(playing, positionSec, positionUpdatedAtMs) {
         while (playing) {
-            delay(1000)
-            tick++
+            nowMs = System.currentTimeMillis()
+            delay(250)
         }
+        nowMs = System.currentTimeMillis()
     }
-    @Suppress("UNUSED_VARIABLE")
-    val unused = tick
     val duration = durationSec?.takeIf { it > 0 }
     if (duration == null || positionSec == null) return
 
     val live = if (playing && positionUpdatedAtMs != null) {
-        positionSec + (System.currentTimeMillis() - positionUpdatedAtMs) / 1000.0
+        positionSec + (nowMs - positionUpdatedAtMs).coerceAtLeast(0L) / 1000.0
     } else {
         positionSec
     }.coerceIn(0.0, duration)
@@ -749,7 +804,7 @@ private fun MediaProgressRow(
                     .background(ActiveYellow),
             )
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(formatClock(live), color = TextMuted, fontSize = 12.sp)
             Text(formatClock(duration), color = TextMuted, fontSize = 12.sp)
         }

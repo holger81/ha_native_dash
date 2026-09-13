@@ -7,6 +7,7 @@ import dev.holgerendt.hanative.data.MusicAssistantQueueItem
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -429,5 +430,58 @@ class HomeMediaResolveTest {
                 ),
             ),
         )
+    }
+
+    @Test
+    fun prefersMassElapsedOverZeroHaPosition() {
+        val now = 1_700_000_000_000L
+        val anchor = resolveHomeMediaPosition(
+            haPosition = 0.0,
+            haUpdatedAtMs = now,
+            playerElapsed = 42.0,
+            playerElapsedUpdatedAtMs = now - 1_000L,
+            queueElapsed = null,
+            queueElapsedUpdatedAtMs = null,
+            nowMs = now,
+        )
+        assertNotNull(anchor)
+        assertEquals(42.0, anchor!!.positionSec, 0.01)
+        assertEquals(now - 1_000L, anchor.updatedAtMs)
+    }
+
+    @Test
+    fun sessionUsesQueueElapsedWhenHaReportsZero() {
+        val kitchen = MusicAssistantPlayer(
+            entityId = "media_player.kitchen",
+            name = "Kitchen",
+            massPlaybackState = "playing",
+        )
+        val snap = resolveHomeMediaSession(
+            players = listOf(kitchen),
+            states = mapOf(
+                "media_player.kitchen" to EntityState(
+                    entityId = "media_player.kitchen",
+                    state = "playing",
+                    attributes = mapOf(
+                        "mass_player_type" to JsonPrimitive("player"),
+                        "media_title" to JsonPrimitive("Song"),
+                        "media_duration" to JsonPrimitive(200.0),
+                        "media_position" to JsonPrimitive(0.0),
+                        "media_position_updated_at" to JsonPrimitive("2024-01-01T00:00:00Z"),
+                    ),
+                ),
+                APPLE_TV_ENTITY to EntityState(APPLE_TV_ENTITY, "off"),
+            ),
+            browseSelectedId = "media_player.kitchen",
+            queue = MusicAssistantQueue(
+                queueId = "kitchen",
+                elapsedSec = 55.0,
+                elapsedUpdatedAtMs = 2_000L,
+                current = MusicAssistantQueueItem(name = "Song", durationSec = 200),
+            ),
+        )
+        assertEquals(HomeMediaKind.Music, snap.kind)
+        assertEquals(55.0, snap.positionSec!!, 0.01)
+        assertEquals(2_000L, snap.positionUpdatedAtMs)
     }
 }

@@ -267,8 +267,10 @@ object AlbumArtLocalOutpaint {
     }
 
     /**
-     * Reject invented mats (cream / brown / gray) and hard "picture frame" seams.
-     * With a single Flux attempt we keep the local pad instead of burning retries.
+     * Reject invented mats and hard picture-frame seams.
+     *
+     * Mild margin color drift is common on good Flux (vignette / grain). Only
+     * reject on a visible seam, a flat invent, or an extreme color invent.
      */
     fun shouldRejectFluxPad(
         paddedBytes: ByteArray,
@@ -277,9 +279,14 @@ object AlbumArtLocalOutpaint {
         padTop: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_TOP,
         padRight: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_RIGHT,
         padBottom: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_BOTTOM,
-    ): Boolean =
-        isPadColorMismatch(paddedBytes, sourceBytes, padLeft, padTop, padRight, padBottom) ||
-            isPadSeamMismatch(paddedBytes, padLeft, padTop, padRight, padBottom)
+    ): Boolean {
+        if (isPadSeamMismatch(paddedBytes, padLeft, padTop, padRight, padBottom)) return true
+        val distance = padMismatchDistance(paddedBytes, sourceBytes, padLeft, padTop, padRight, padBottom)
+            ?: return false
+        if (distance <= MAX_PAD_MISMATCH) return false
+        if (distance > MAX_PAD_MISMATCH_EXTREME) return true
+        return looksLikeLocalSolidPad(paddedBytes, padLeft, padTop, padRight, padBottom)
+    }
 
     /**
      * Worst-side color distance between each pad margin and the matching cover edge.
@@ -291,6 +298,43 @@ object AlbumArtLocalOutpaint {
         colorDistance(padSides.right, coverSides.right),
         colorDistance(padSides.bottom, coverSides.bottom),
     )
+
+    /** Decode-and-measure variant of [padMismatchDistance]; null if bitmaps fail. */
+    fun padMismatchDistance(
+        paddedBytes: ByteArray,
+        sourceBytes: ByteArray,
+        padLeft: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_LEFT,
+        padTop: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_TOP,
+        padRight: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_RIGHT,
+        padBottom: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_BOTTOM,
+    ): Double? {
+        val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
+        val padded = BitmapFactory.decodeByteArray(paddedBytes, 0, paddedBytes.size, opts) ?: return null
+        val source = BitmapFactory.decodeByteArray(sourceBytes, 0, sourceBytes.size, opts) ?: run {
+            padded.recycle()
+            return null
+        }
+        return try {
+            val outW = padded.width
+            val outH = padded.height
+            if (outW - padLeft - padRight <= 0 || outH - padTop - padBottom <= 0) return null
+            val padPixels = IntArray(outW * outH)
+            padded.getPixels(padPixels, 0, outW, 0, 0, outW, outH)
+            val srcPixels = IntArray(source.width * source.height)
+            source.getPixels(srcPixels, 0, source.width, 0, 0, source.width, source.height)
+            val padSides = SideMeans(
+                left = meanRectRaw(padPixels, outW, 0, padLeft, 0, outH),
+                top = meanRectRaw(padPixels, outW, padLeft, outW - padRight, 0, padTop),
+                right = meanRectRaw(padPixels, outW, outW - padRight, outW, 0, outH),
+                bottom = meanRectRaw(padPixels, outW, padLeft, outW - padRight, outH - padBottom, outH),
+            )
+            val coverSides = analyzeSideMeansRaw(source.width, source.height, srcPixels)
+            padMismatchDistance(padSides, coverSides)
+        } finally {
+            padded.recycle()
+            source.recycle()
+        }
+    }
 
     /**
      * True when the padded JPEG has a hard rectangle at the cover boundary —
@@ -549,6 +593,12 @@ object AlbumArtLocalOutpaint {
 
     /** Above this distance from every cover edge, a generated pad is invented. */
     const val MAX_PAD_MISMATCH = 45.0
+
+    /**
+     * Beyond this, reject even textured fills (cream/gray invents). Between
+     * [MAX_PAD_MISMATCH] and this, only flat invents / seams are rejected.
+     */
+    const val MAX_PAD_MISMATCH_EXTREME = 85.0
 
     /**
      * Above this inside/outside boundary distance, Flux left a hard picture-frame

@@ -678,35 +678,46 @@ class HaClient {
 
     /**
      * Cover URLs for the next [limit] queue items after [currentIndex]
-     * (playlist positions +1 … +limit). Used to prefetch outpaint for the
-     * active playlist only (capped by [AlbumArtOutpaintRepository.MAX_PLAYLIST_OUTPAINT]).
+     * (playlist positions +1 …). Blank-art rows are skipped without shrinking
+     * the window — we scan further until we have [limit] covers or hit [maxScan].
      */
     suspend fun musicAssistantUpcomingCoverUrls(
         queueId: String,
         currentIndex: Int?,
         limit: Int = AlbumArtOutpaintRepository.MAX_PLAYLIST_OUTPAINT,
     ): List<String> = withContext(Dispatchers.IO) {
-        val offset = ((currentIndex ?: 0) + 1).coerceAtLeast(0)
+        val startOffset = ((currentIndex ?: 0) + 1).coerceAtLeast(0)
         val capped = limit.coerceIn(1, AlbumArtOutpaintRepository.MAX_PLAYLIST_OUTPAINT)
-        val result = runCatching {
-            massCommand(
-                "player_queues/items",
-                buildJsonObject {
-                    put("queue_id", queueId)
-                    put("limit", capped)
-                    put("offset", offset)
-                },
-            )
-        }.getOrNull() ?: return@withContext emptyList()
-        val rows = when (result) {
-            is JsonArray -> result
-            is JsonObject -> result["items"] as? JsonArray
-                ?: result["result"] as? JsonArray
-            else -> null
-        } ?: return@withContext emptyList()
-        rows.mapNotNull { element ->
-            parseQueueItem(element)?.imageUrl?.takeIf { it.isNotBlank() }
-        }.take(capped)
+        val maxScan = (capped * 3).coerceAtMost(40)
+        val urls = linkedSetOf<String>()
+        var pageOffset = startOffset
+        while (urls.size < capped && pageOffset < startOffset + maxScan) {
+            val batchSize = minOf(capped * 2, startOffset + maxScan - pageOffset).coerceAtLeast(1)
+            val result = runCatching {
+                massCommand(
+                    "player_queues/items",
+                    buildJsonObject {
+                        put("queue_id", queueId)
+                        put("limit", batchSize)
+                        put("offset", pageOffset)
+                    },
+                )
+            }.getOrNull() ?: break
+            val rows = when (result) {
+                is JsonArray -> result
+                is JsonObject -> result["items"] as? JsonArray
+                    ?: result["result"] as? JsonArray
+                else -> null
+            } ?: break
+            if (rows.isEmpty()) break
+            val before = urls.size
+            collectUpcomingCoverUrls(rows, urls, capped)
+            pageOffset += rows.size
+            if (rows.size < batchSize) break
+            // No new covers in this page — keep scanning via pageOffset advance.
+            if (urls.size == before && rows.isEmpty()) break
+        }
+        urls.toList()
     }
 
     suspend fun mediaPlayerCommand(entityId: String, service: String, data: Map<String, JsonElement> = emptyMap()) {
