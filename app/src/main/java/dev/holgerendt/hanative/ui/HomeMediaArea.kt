@@ -454,78 +454,71 @@ private fun FullTvCard(
     modifier: Modifier = Modifier,
 ) {
     val entityId = snapshot.entityId ?: APPLE_TV_ENTITY
-    OutpaintedAlbumBackdrop(
-        coverPath = snapshot.art,
-        viewModel = viewModel,
+    // TV posters are not album art — never outpaint / soft-extend them.
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(24.dp))
-            .background(CardLight),
-        extendedBackdrop = true,
+            .background(CardLight)
+            .clickable { viewModel.openMoreInfo(TV_ENTITY) }
+            .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { viewModel.openMoreInfo(TV_ENTITY) }
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            if (snapshot.paused) {
-                Text("Paused", color = TextDark, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-            }
-            if (!snapshot.art.isNullOrBlank()) {
-                MusicCover(
-                    path = snapshot.art,
-                    viewModel = viewModel,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(16f / 9f)
-                        .clip(RoundedCornerShape(16.dp)),
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(16f / 9f)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Color(0x14000000)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    MdiIcon("mdi:television-classic", tint = TextMuted, size = 56.dp)
-                }
-            }
-            Text(
-                snapshot.title,
-                color = TextDark,
-                fontSize = 28.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
+        if (snapshot.paused) {
+            Text("Paused", color = TextDark, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        }
+        if (!snapshot.art.isNullOrBlank()) {
+            MusicCover(
+                path = snapshot.art,
+                viewModel = viewModel,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(16.dp)),
             )
-            if (snapshot.subtitle.isNotBlank()) {
-                Text(snapshot.subtitle, color = TextMuted, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-            Text(snapshot.room, color = TextMuted, fontSize = 14.sp)
-            MediaProgressRow(
-                positionSec = snapshot.positionSec,
-                durationSec = snapshot.durationSec,
-                positionUpdatedAtMs = snapshot.positionUpdatedAtMs,
-                playing = snapshot.playing,
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0x14000000)),
+                contentAlignment = Alignment.Center,
             ) {
-                MediaIconButton(
-                    if (snapshot.playing) "mdi:pause" else "mdi:play",
-                    label = if (snapshot.playing) "Pause" else "Play",
-                    filled = true,
-                    size = 60.dp,
-                    iconSize = 32.dp,
-                    onClick = { viewModel.homeMediaCommand(entityId, "media_play_pause") },
-                )
+                MdiIcon("mdi:television-classic", tint = TextMuted, size = 56.dp)
             }
+        }
+        Text(
+            snapshot.title,
+            color = TextDark,
+            fontSize = 28.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (snapshot.subtitle.isNotBlank()) {
+            Text(snapshot.subtitle, color = TextMuted, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        Text(snapshot.room, color = TextMuted, fontSize = 14.sp)
+        MediaProgressRow(
+            positionSec = snapshot.positionSec,
+            durationSec = snapshot.durationSec,
+            positionUpdatedAtMs = snapshot.positionUpdatedAtMs,
+            playing = snapshot.playing,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MediaIconButton(
+                if (snapshot.playing) "mdi:pause" else "mdi:play",
+                label = if (snapshot.playing) "Pause" else "Play",
+                filled = true,
+                size = 60.dp,
+                iconSize = 32.dp,
+                onClick = { viewModel.homeMediaCommand(entityId, "media_play_pause") },
+            )
         }
     }
 }

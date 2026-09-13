@@ -227,8 +227,8 @@ class ComfyUiOutpaintClient(
                 "No new people, objects, text, logos, frames, or borders. " +
                 "Keep the original cover pixels unchanged."
 
-        /** Bump when prompt/workflow quality changes so stale disk fills regenerate. */
-        const val OUTPAINT_CACHE_VERSION = "flux-fill-v3"
+        /** Bump when pad strategy / prompt / workflow quality changes. */
+        const val OUTPAINT_CACHE_VERSION = "local-edge-v1"
 
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .addInterceptor(NetworkGuard.interceptor)

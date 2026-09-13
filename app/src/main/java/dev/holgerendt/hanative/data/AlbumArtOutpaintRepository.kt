@@ -118,8 +118,8 @@ class AlbumArtOutpaintRepository(
     }
 
     private suspend fun drainQueue() {
-        val base = comfyUiUrl().trim().trimEnd('/')
-        if (base.isBlank()) return
+        // Feature gated on Comfy URL (outpaint enabled), but generation is local edge pad.
+        if (comfyUiUrl().isBlank()) return
         while (true) {
             val plan = targets.get()
             val nextRef = pickUncachedTarget(plan) ?: break
@@ -134,9 +134,8 @@ class AlbumArtOutpaintRepository(
                     return@runCatching true
                 }
                 val file = cache.getOrEnqueue(source) { bytes ->
-                    // Black/uniform frames: local solid pad (instant). Else Flux fill.
-                    AlbumArtLocalOutpaint.solidPadIfUniformEdges(bytes)
-                        ?: comfy.outpaint(base, bytes)
+                    // Local edge pad only — Flux often invents beige and thrashes Comfy.
+                    AlbumArtLocalOutpaint.padFromEdges(bytes)
                 }
                 if (file != null) {
                     warmRefs.add(nextRef)
