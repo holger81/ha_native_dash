@@ -90,4 +90,17 @@ class AlbumArtOutpaintCacheTest {
         assertTrue(cache.isFluxComplete(source))
         assertTrue(cache.cachedFile(source)!!.readBytes().contentEquals(byteArrayOf(7, 7)))
     }
+
+    @Test
+    fun stableMassKeyFindsPadWithoutSameBytes() = runBlocking {
+        val cache = AlbumArtOutpaintCache(tmp.newFolder("outpaint"))
+        val source = byteArrayOf(1, 2, 3, 4)
+        val ref = "mass-imageproxy://cover-uuid-1"
+        cache.replace(source, byteArrayOf(9, 9, 9))
+        cache.bindCoverRef(ref, source)
+        // Different JPEG bytes for the "same" cover id must still resolve.
+        assertNotNull(cache.cachedFileForCoverRef(ref))
+        assertTrue(cache.isFluxCompleteForCoverRef(ref))
+        assertNotNull(cache.cachedFileForCoverRef("mass-imageproxy://cover-uuid-1?size=512"))
+    }
 }

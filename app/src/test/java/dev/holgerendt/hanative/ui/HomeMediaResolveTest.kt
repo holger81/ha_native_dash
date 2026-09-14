@@ -44,6 +44,69 @@ class HomeMediaResolveTest {
     }
 
     @Test
+    fun forceKindTvBeatsPlayingMusic() {
+        val office = MusicAssistantPlayer(entityId = "media_player.office", name = "Office")
+        val snap = resolveHomeMediaSession(
+            players = listOf(office),
+            states = mapOf(
+                "media_player.office" to EntityState(
+                    entityId = "media_player.office",
+                    state = "playing",
+                    attributes = mapOf(
+                        "mass_player_type" to JsonPrimitive("player"),
+                        "media_title" to JsonPrimitive("Song"),
+                    ),
+                ),
+                APPLE_TV_ENTITY to EntityState(
+                    entityId = APPLE_TV_ENTITY,
+                    state = "paused",
+                    attributes = mapOf(
+                        "media_title" to JsonPrimitive("Show"),
+                        "app_name" to JsonPrimitive("TV"),
+                    ),
+                ),
+            ),
+            browseSelectedId = "media_player.office",
+            queue = null,
+            forceKind = HomeMediaKind.Tv,
+        )
+        assertEquals(HomeMediaKind.Tv, snap.kind)
+        assertTrue(snap.paused)
+        assertEquals(APPLE_TV_ENTITY, snap.entityId)
+    }
+
+    @Test
+    fun forceKindMusicBeatsPlayingTv() {
+        val office = MusicAssistantPlayer(entityId = "media_player.office", name = "Office")
+        val snap = resolveHomeMediaSession(
+            players = listOf(office),
+            states = mapOf(
+                "media_player.office" to EntityState(
+                    entityId = "media_player.office",
+                    state = "playing",
+                    attributes = mapOf(
+                        "mass_player_type" to JsonPrimitive("player"),
+                        "media_title" to JsonPrimitive("Song"),
+                    ),
+                ),
+                APPLE_TV_ENTITY to EntityState(
+                    entityId = APPLE_TV_ENTITY,
+                    state = "playing",
+                    attributes = mapOf(
+                        "media_title" to JsonPrimitive("Show"),
+                        "app_name" to JsonPrimitive("TV"),
+                    ),
+                ),
+            ),
+            browseSelectedId = "media_player.office",
+            queue = null,
+            forceKind = HomeMediaKind.Music,
+        )
+        assertEquals(HomeMediaKind.Music, snap.kind)
+        assertEquals("Song", snap.title)
+    }
+
+    @Test
     fun prefersPlayingMusicOverPausedTv() {
         val snap = resolveHomeMedia(
             musicState = "playing",
@@ -72,7 +135,7 @@ class HomeMediaResolveTest {
     }
 
     @Test
-    fun pausedTvAloneIsIdle() {
+    fun pausedTvAloneShowsTvCard() {
         val snap = resolveHomeMedia(
             musicState = "idle",
             musicTitle = null,
@@ -93,8 +156,10 @@ class HomeMediaResolveTest {
             applePositionUpdatedAtMs = null,
             appleVolume = 0.5f,
         )
-        assertEquals(HomeMediaKind.Idle, snap.kind)
+        assertEquals(HomeMediaKind.Tv, snap.kind)
         assertFalse(snap.playing)
+        assertTrue(snap.paused)
+        assertEquals(APPLE_TV_ENTITY, snap.entityId)
     }
 
     @Test

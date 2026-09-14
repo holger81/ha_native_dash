@@ -263,6 +263,8 @@ class HaViewModel(
     private val _activePersonCameras = MutableStateFlow<List<WidgetNode>>(emptyList())
     val activePersonCameras: StateFlow<List<WidgetNode>> = _activePersonCameras
     internal val homeMediaVisibility = HomeMediaVisibility(viewModelScope)
+    private val _homeMediaFocus = MutableStateFlow(HomeMediaFocus.Auto)
+    val homeMediaFocus: StateFlow<HomeMediaFocus> = _homeMediaFocus
     private val _debugPersonCamerasEnabled = MutableStateFlow(false)
     val debugPersonCamerasEnabled: StateFlow<Boolean> = _debugPersonCamerasEnabled
     private var personCameraCooldownJob: Job? = null
@@ -1077,6 +1079,35 @@ class HaViewModel(
         }
     }
 
+    fun setHomeMediaFocus(focus: HomeMediaFocus) {
+        _homeMediaFocus.value = focus
+    }
+
+    /**
+     * Resolve the surface to show. Explicit focus sticks while valid; otherwise Auto
+     * (cameras when active, else music/TV/idle from [resolveHomeMediaSession]).
+     */
+    fun effectiveHomeMediaFocus(
+        camerasActive: Boolean,
+        appleTvPlayingOrPaused: Boolean,
+    ): HomeMediaFocus {
+        val requested = _homeMediaFocus.value
+        val valid = when (requested) {
+            HomeMediaFocus.Auto -> true
+            HomeMediaFocus.Cameras -> camerasActive
+            HomeMediaFocus.Music -> true
+            HomeMediaFocus.Tv -> appleTvPlayingOrPaused
+        }
+        if (!valid) {
+            if (requested != HomeMediaFocus.Auto) _homeMediaFocus.value = HomeMediaFocus.Auto
+            return if (camerasActive) HomeMediaFocus.Cameras else HomeMediaFocus.Auto
+        }
+        return when (requested) {
+            HomeMediaFocus.Auto -> if (camerasActive) HomeMediaFocus.Cameras else HomeMediaFocus.Auto
+            else -> requested
+        }
+    }
+
     /**
      * Lightweight home-screen music/TV freshness for Phase 6 media card.
      * Ref-counted so compact + full instances (or recompositions) don't stack jobs.
@@ -1126,8 +1157,8 @@ class HaViewModel(
         val musicId = wall.selectedEntityId
         val selectedPlayer = wall.players.firstOrNull { it.entityId == musicId }
         val entityArt = musicId?.let { client.state(it)?.entityPicture }
-        val current = currentCoverOverride
-            ?: resolveNowPlayingCover(queue?.current, entityArt)
+        // Prefer MASS queue art so the cache key matches upcoming prefetch URLs.
+        val current = resolveNowPlayingCover(queue?.current, currentCoverOverride ?: entityArt)
         viewModelScope.launch(Dispatchers.IO) {
             val upcoming = linkedSetOf<String>()
             queue?.next?.imageUrl?.takeIf { it.isNotBlank() }?.let { upcoming.add(it) }

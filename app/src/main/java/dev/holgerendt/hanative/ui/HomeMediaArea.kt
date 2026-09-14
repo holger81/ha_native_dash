@@ -65,7 +65,15 @@ import kotlin.math.roundToInt
 internal const val TV_ENTITY = "media_player.living_room"
 internal const val APPLE_TV_ENTITY = "media_player.living_room_appletv"
 
-internal enum class HomeMediaKind { Music, Tv, Idle }
+enum class HomeMediaKind { Music, Tv, Idle }
+
+/** Manual override for the greatroom right-column media surface. */
+enum class HomeMediaFocus {
+    Auto,
+    Cameras,
+    Music,
+    Tv,
+}
 
 internal data class HomeMediaSnapshot(
     val kind: HomeMediaKind,
@@ -75,6 +83,8 @@ internal data class HomeMediaSnapshot(
     val subtitle: String,
     val room: String,
     val art: String?,
+    /** Extra cover refs to try for outpaint cache lookup (MASS vs HA entity picture). */
+    val artAlternates: List<String> = emptyList(),
     /** Entity that transport/volume must target (same as displayed session). */
     val entityId: String?,
     val durationSec: Double?,
@@ -97,6 +107,8 @@ fun HomeMediaArea(
     viewModel: HaViewModel,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    /** Switcher override: prefer Music or TV when that session exists. */
+    forceKind: HomeMediaKind? = null,
 ) {
     DisposableEffect(viewModel) {
         viewModel.startHomeMediaWatch()
@@ -108,13 +120,14 @@ fun HomeMediaArea(
     }
     val states by viewModel.entitiesFlow(playerIds).collectAsState()
 
-    val snapshot = remember(wall, states) {
+    val snapshot = remember(wall, states, forceKind) {
         resolveHomeMediaSession(
             players = wall.players,
             states = states,
             browseSelectedId = wall.selectedEntityId,
             queue = wall.queue,
             appleTvEntityId = APPLE_TV_ENTITY,
+            forceKind = forceKind,
         )
     }
 
@@ -141,8 +154,10 @@ fun HomeMediaArea(
 }
 
 /**
- * Pick the home media session: active MASS music (not Apple TV) vs Apple TV,
- * with playing beating paused. Browse [browseSelectedId] is only a tie-break when idle.
+ * Pick the home media session: MASS music vs Apple TV.
+ *
+ * Default priority: playing TV → playing music → paused TV → paused music → idle.
+ * [forceKind] overrides when that session is available (Music/TV switcher).
  */
 internal fun resolveHomeMediaSession(
     players: List<MusicAssistantPlayer>,
@@ -150,12 +165,16 @@ internal fun resolveHomeMediaSession(
     browseSelectedId: String?,
     queue: MusicAssistantQueue?,
     appleTvEntityId: String = APPLE_TV_ENTITY,
+    forceKind: HomeMediaKind? = null,
 ): HomeMediaSnapshot {
     val apple = states[appleTvEntityId]
-    val appleState = apple?.state
+    val appleState = apple?.state?.lowercase()
     val appleTitle = apple?.mediaTitle()
-    // Only actively playing TV takes the home card; paused TV yields to music / idle.
-    val tvActive = appleState == "playing"
+    val tvPlaying = appleState == "playing"
+    // Keep paused TV on the card so Play still works after Pause.
+    val tvPaused = appleState == "paused" &&
+        (!appleTitle.isNullOrBlank() || !apple?.entityPicture.isNullOrBlank())
+    val tvSession = tvPlaying || tvPaused
 
     val musicCandidates = players.filter { player ->
         player.entityId != appleTvEntityId &&
@@ -193,103 +212,119 @@ internal fun resolveHomeMediaSession(
         MusicHit(player, st, playing, paused)
     }
 
-    val bestMusic = run {
+    val bestPlayingMusic = run {
         val playing = musicHits.filter { it.playing }.map { it.player }
         val leaderId = preferGroupLeader(playing)?.entityId
         musicHits.firstOrNull { it.playing && it.player.entityId == leaderId }
             ?: musicHits.firstOrNull { it.playing }
-            ?: musicHits.firstOrNull { it.paused && it.player.entityId == browseSelectedId }
-            ?: musicHits.firstOrNull { it.paused }
+    }
+    val bestPausedMusic = musicHits.firstOrNull { it.paused && it.player.entityId == browseSelectedId }
+        ?: musicHits.firstOrNull { it.paused }
+    val bestMusic = bestPlayingMusic ?: bestPausedMusic
+
+    fun musicSnapshot(hit: MusicHit): HomeMediaSnapshot {
+        val player = hit.player
+        val st = hit.state
+        val useQueue = queue != null && browseSelectedId == player.entityId
+        val title = (if (useQueue) queue?.current?.name else null)
+            ?: st?.mediaTitle()
+            ?: "Music"
+        val artist = (if (useQueue) queue?.current?.artists else null)
+            ?: st?.mediaArtist()
+            ?: ""
+        val queueArt = queue?.current?.imageUrl?.takeIf { it.isNotBlank() }
+        val entityArt = st?.entityPicture?.takeIf { it.isNotBlank() }
+        val art = resolveNowPlayingCover(
+            queueItem = queue?.current?.takeIf { useQueue },
+            entityPicture = entityArt,
+        )
+        val position = resolveHomeMediaPosition(
+            haPosition = st?.mediaPositionSec(),
+            haUpdatedAtMs = st?.mediaPositionUpdatedAtMs(),
+            playerElapsed = player.elapsedSec,
+            playerElapsedUpdatedAtMs = player.elapsedUpdatedAtMs,
+            queueElapsed = if (useQueue) queue?.elapsedSec else null,
+            queueElapsedUpdatedAtMs = if (useQueue) queue?.elapsedUpdatedAtMs else null,
+        )
+        return HomeMediaSnapshot(
+            kind = HomeMediaKind.Music,
+            playing = hit.playing,
+            paused = hit.paused,
+            title = title,
+            subtitle = artist,
+            room = formatPlayerRoom(player, players),
+            art = art,
+            artAlternates = listOfNotNull(queueArt, entityArt).filter { it != art },
+            entityId = player.entityId,
+            durationSec = (if (useQueue) queue?.current?.durationSec?.toDouble() else null)
+                ?: st?.mediaDurationSec(),
+            positionSec = position?.positionSec,
+            positionUpdatedAtMs = position?.updatedAtMs,
+            volume = st?.volumeLevel(),
+        )
     }
 
-    // Household: music and Apple TV are mutually exclusive on the home card.
-    // Playing TV wins; paused TV does not.
-    return when {
-        !tvActive && bestMusic != null -> {
-            val player = bestMusic.player
-            val st = bestMusic.state
-            val useQueue = queue != null && browseSelectedId == player.entityId
-            val title = (if (useQueue) queue?.current?.name else null)
-                ?: st?.mediaTitle()
-                ?: "Music"
-            val artist = (if (useQueue) queue?.current?.artists else null)
-                ?: st?.mediaArtist()
-                ?: ""
-            val art = resolveNowPlayingCover(
-                // Prefer MASS queue art whenever it belongs to this player so the
-                // card looks up the same URL the outpaint prefetch warmed.
-                queueItem = queue?.current?.takeIf { useQueue },
-                entityPicture = st?.entityPicture,
-            )
-            // Prefer Mass elapsed: HA/Sonos often reports media_position=0 with a
-            // refreshed timestamp, which made the home bar climb ~3s then reset.
-            val position = resolveHomeMediaPosition(
-                haPosition = st?.mediaPositionSec(),
-                haUpdatedAtMs = st?.mediaPositionUpdatedAtMs(),
-                playerElapsed = player.elapsedSec,
-                playerElapsedUpdatedAtMs = player.elapsedUpdatedAtMs,
-                queueElapsed = if (useQueue) queue?.elapsedSec else null,
-                queueElapsedUpdatedAtMs = if (useQueue) queue?.elapsedUpdatedAtMs else null,
-            )
-            HomeMediaSnapshot(
-                kind = HomeMediaKind.Music,
-                playing = bestMusic.playing,
-                paused = bestMusic.paused,
-                title = title,
-                subtitle = artist,
-                room = formatPlayerRoom(player, players),
-                art = art,
-                entityId = player.entityId,
-                durationSec = (if (useQueue) queue?.current?.durationSec?.toDouble() else null)
-                    ?: st?.mediaDurationSec(),
-                positionSec = position?.positionSec,
-                positionUpdatedAtMs = position?.updatedAtMs,
-                volume = st?.volumeLevel(),
-            )
-        }
-        tvActive -> {
-            val season = apple?.attrString("media_season")
-            val episode = apple?.attrString("media_episode")
-            val seasonEpisode = listOfNotNull(
-                season?.takeIf { it.isNotBlank() }?.let { "S$it" },
-                episode?.takeIf { it.isNotBlank() }?.let { "E$it" },
-            ).joinToString("").ifBlank { null }
-            val series = apple?.attrString("media_series_title")?.takeIf { it.isNotBlank() }
-            val app = apple?.attrString("app_name")?.takeIf { it.isNotBlank() }
-            HomeMediaSnapshot(
-                kind = HomeMediaKind.Tv,
-                playing = appleState == "playing",
-                paused = appleState == "paused",
-                title = appleTitle?.takeIf { it.isNotBlank() } ?: "Apple TV",
-                subtitle = listOfNotNull(app, series, seasonEpisode).joinToString(" · "),
-                room = "Living Room",
-                art = apple?.entityPicture,
-                entityId = appleTvEntityId,
-                durationSec = apple?.mediaDurationSec(),
-                positionSec = apple?.mediaPositionSec(),
-                positionUpdatedAtMs = apple?.mediaPositionUpdatedAtMs(),
-                volume = apple?.volumeLevel(),
-                appName = app,
-                seriesName = series,
-                seasonEpisode = seasonEpisode,
-                supportsPrevious = false,
-                supportsNext = false,
-            )
-        }
-        else -> HomeMediaSnapshot(
-            kind = HomeMediaKind.Idle,
-            playing = false,
-            paused = false,
-            title = "Listen",
-            subtitle = "",
-            room = "",
-            art = null,
-            entityId = browseSelectedId,
-            durationSec = null,
-            positionSec = null,
-            positionUpdatedAtMs = null,
-            volume = null,
+    fun tvSnapshot(): HomeMediaSnapshot {
+        val season = apple?.attrString("media_season")
+        val episode = apple?.attrString("media_episode")
+        val seasonEpisode = listOfNotNull(
+            season?.takeIf { it.isNotBlank() }?.let { "S$it" },
+            episode?.takeIf { it.isNotBlank() }?.let { "E$it" },
+        ).joinToString("").ifBlank { null }
+        val series = apple?.attrString("media_series_title")?.takeIf { it.isNotBlank() }
+        val app = apple?.attrString("app_name")?.takeIf { it.isNotBlank() }
+        return HomeMediaSnapshot(
+            kind = HomeMediaKind.Tv,
+            playing = tvPlaying,
+            paused = tvPaused && !tvPlaying,
+            title = appleTitle?.takeIf { it.isNotBlank() } ?: "Apple TV",
+            subtitle = listOfNotNull(app, series, seasonEpisode).joinToString(" · "),
+            room = "Living Room",
+            art = apple?.entityPicture,
+            entityId = appleTvEntityId,
+            durationSec = apple?.mediaDurationSec(),
+            positionSec = apple?.mediaPositionSec(),
+            positionUpdatedAtMs = apple?.mediaPositionUpdatedAtMs(),
+            volume = apple?.volumeLevel(),
+            appName = app,
+            seriesName = series,
+            seasonEpisode = seasonEpisode,
+            supportsPrevious = false,
+            supportsNext = false,
         )
+    }
+
+    fun idleSnapshot() = HomeMediaSnapshot(
+        kind = HomeMediaKind.Idle,
+        playing = false,
+        paused = false,
+        title = "Listen",
+        subtitle = "",
+        room = "",
+        art = null,
+        entityId = browseSelectedId,
+        durationSec = null,
+        positionSec = null,
+        positionUpdatedAtMs = null,
+        volume = null,
+    )
+
+    when (forceKind) {
+        HomeMediaKind.Tv -> if (tvSession) return tvSnapshot()
+        HomeMediaKind.Music -> {
+            bestMusic?.let { return musicSnapshot(it) }
+            return idleSnapshot()
+        }
+        HomeMediaKind.Idle -> return idleSnapshot()
+        null -> Unit
+    }
+
+    return when {
+        tvPlaying -> tvSnapshot()
+        bestPlayingMusic != null -> musicSnapshot(bestPlayingMusic)
+        tvSession -> tvSnapshot()
+        bestPausedMusic != null -> musicSnapshot(bestPausedMusic)
+        else -> idleSnapshot()
     }
 }
 
@@ -417,6 +452,7 @@ private fun FullMusicCard(
 
     OutpaintedAlbumBackdrop(
         coverPath = snapshot.art,
+        coverAlternates = snapshot.artAlternates,
         viewModel = viewModel,
         modifier = modifier
             .fillMaxWidth()
@@ -437,6 +473,7 @@ private fun FullMusicCard(
             }
             AlbumOutpaintHero(
                 coverPath = snapshot.art,
+                coverAlternates = snapshot.artAlternates,
                 viewModel = viewModel,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -604,6 +641,7 @@ private fun CompactMediaStrip(
     val musicArt = snapshot.art.takeIf { snapshot.kind == HomeMediaKind.Music }
     OutpaintedAlbumBackdrop(
         coverPath = musicArt,
+        coverAlternates = snapshot.artAlternates,
         viewModel = viewModel,
         modifier = modifier
             .fillMaxWidth()

@@ -122,4 +122,20 @@ class AlbumArtOutpaintPriorityTest {
             dest.toList(),
         )
     }
+
+    @Test
+    fun stableOutpaintKeyIgnoresSizeQueryOnMassProxy() {
+        assertEquals(
+            "mass:abc-123",
+            stableOutpaintCoverKey("mass-imageproxy://abc-123"),
+        )
+        assertEquals(
+            "mass:abc-123",
+            stableOutpaintCoverKey("mass-imageproxy://abc-123?size=512"),
+        )
+        assertEquals(
+            stableOutpaintCoverKey("/api/image_proxy/foo?token=1"),
+            stableOutpaintCoverKey("/api/image_proxy/foo?token=2"),
+        )
+    }
 }

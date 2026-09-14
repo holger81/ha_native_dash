@@ -273,6 +273,19 @@ private fun HomeScreen(viewModel: HaViewModel) {
     val activePersonCameras by viewModel.activePersonCameras.collectAsState()
     var showHistoryOverlay by remember { mutableStateOf(false) }
     val camerasActive = activePersonCameras.isNotEmpty()
+    val appleTvState by viewModel.entityFlow(APPLE_TV_ENTITY).collectAsState()
+    val appleTvSession = when (appleTvState?.state?.lowercase()) {
+        "playing", "paused" -> true
+        else -> false
+    }
+    val homeMediaFocus by viewModel.homeMediaFocus.collectAsState()
+    val effectiveFocus = remember(homeMediaFocus, camerasActive, appleTvSession) {
+        viewModel.effectiveHomeMediaFocus(
+            camerasActive = camerasActive,
+            appleTvPlayingOrPaused = appleTvSession,
+        )
+    }
+    val showCamerasLayout = effectiveFocus == HomeMediaFocus.Cameras
     LaunchedEffect(camerasActive) {
         if (!camerasActive) showHistoryOverlay = false
     }
@@ -336,7 +349,13 @@ private fun HomeScreen(viewModel: HaViewModel) {
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                if (camerasActive) {
+                HomeMediaFocusSwitcher(
+                    focus = homeMediaFocus,
+                    camerasEnabled = camerasActive,
+                    tvEnabled = appleTvSession,
+                    onSelect = viewModel::setHomeMediaFocus,
+                )
+                if (showCamerasLayout) {
                     val cameraCount = activePersonCameras.size
                     Text(
                         "Backyard activity · $cameraCount",
@@ -392,6 +411,11 @@ private fun HomeScreen(viewModel: HaViewModel) {
                     HomeMediaArea(
                         viewModel = viewModel,
                         compact = false,
+                        forceKind = when (effectiveFocus) {
+                            HomeMediaFocus.Music -> HomeMediaKind.Music
+                            HomeMediaFocus.Tv -> HomeMediaKind.Tv
+                            else -> null
+                        },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     home.timeline?.let {
@@ -474,6 +498,81 @@ private val DockItems = listOf(
     DockItem("#music", "mdi:music-note"),
     DockItem("#settings", "mdi:tune-variant"),
 )
+
+@Composable
+private fun HomeMediaFocusSwitcher(
+    focus: HomeMediaFocus,
+    camerasEnabled: Boolean,
+    tvEnabled: Boolean,
+    onSelect: (HomeMediaFocus) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0x14000000))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        HomeMediaFocusChip(
+            label = "Auto",
+            selected = focus == HomeMediaFocus.Auto,
+            enabled = true,
+            onClick = { onSelect(HomeMediaFocus.Auto) },
+            modifier = Modifier.weight(1f),
+        )
+        HomeMediaFocusChip(
+            label = "Cameras",
+            selected = focus == HomeMediaFocus.Cameras,
+            enabled = camerasEnabled,
+            onClick = { onSelect(HomeMediaFocus.Cameras) },
+            modifier = Modifier.weight(1f),
+        )
+        HomeMediaFocusChip(
+            label = "Music",
+            selected = focus == HomeMediaFocus.Music,
+            enabled = true,
+            onClick = { onSelect(HomeMediaFocus.Music) },
+            modifier = Modifier.weight(1f),
+        )
+        HomeMediaFocusChip(
+            label = "TV",
+            selected = focus == HomeMediaFocus.Tv,
+            enabled = tvEnabled,
+            onClick = { onSelect(HomeMediaFocus.Tv) },
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun HomeMediaFocusChip(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val bg = when {
+        selected -> ActiveYellow
+        else -> Color.Transparent
+    }
+    val fg = when {
+        !enabled -> TextMuted.copy(alpha = 0.45f)
+        selected -> Color.Black
+        else -> TextDark
+    }
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(bg)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, color = fg, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
 
 @Composable
 private fun BottomDock(viewModel: HaViewModel, modifier: Modifier = Modifier) {

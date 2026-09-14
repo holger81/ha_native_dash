@@ -61,11 +61,17 @@ fun OutpaintedAlbumBackdrop(
     modifier: Modifier = Modifier,
     /** False when there is no music art to extend (e.g. idle / TV without poster). */
     extendedBackdrop: Boolean = true,
+    /** Extra cover refs (e.g. MASS queue art) to try when looking up a cached pad. */
+    coverAlternates: List<String> = emptyList(),
     content: @Composable BoxScope.() -> Unit,
 ) {
     Box(modifier = modifier) {
         if (extendedBackdrop && !coverPath.isNullOrBlank()) {
-            SoftAtmosphereLayer(coverPath = coverPath, viewModel = viewModel)
+            SoftAtmosphereLayer(
+                coverPath = coverPath,
+                coverAlternates = coverAlternates,
+                viewModel = viewModel,
+            )
         }
         content()
     }
@@ -80,27 +86,34 @@ fun AlbumOutpaintHero(
     coverPath: String?,
     viewModel: HaViewModel,
     modifier: Modifier = Modifier,
+    coverAlternates: List<String> = emptyList(),
 ) {
     val ui by viewModel.ui.collectAsState()
-    var outpaintFile by remember(coverPath) { mutableStateOf<File?>(null) }
-    var layout by remember(coverPath) { mutableStateOf<OutpaintCoverLayout?>(null) }
-    var fileStamp by remember(coverPath) { mutableStateOf(0L) }
-    var fluxComplete by remember(coverPath) { mutableStateOf(false) }
+    val coverRefs = remember(coverPath, coverAlternates) {
+        (listOfNotNull(coverPath) + coverAlternates)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+    }
+    var outpaintFile by remember(coverRefs) { mutableStateOf<File?>(null) }
+    var layout by remember(coverRefs) { mutableStateOf<OutpaintCoverLayout?>(null) }
+    var fileStamp by remember(coverRefs) { mutableStateOf(0L) }
+    var fluxComplete by remember(coverRefs) { mutableStateOf(false) }
 
-    LaunchedEffect(coverPath, ui.comfyUiUrl) {
+    LaunchedEffect(coverRefs, ui.comfyUiUrl) {
         outpaintFile = null
         layout = null
         fileStamp = 0L
         fluxComplete = false
-        if (coverPath.isNullOrBlank() || ui.comfyUiUrl.isBlank()) return@LaunchedEffect
-        viewModel.scheduleAlbumArtOutpaintPrefetch(currentCoverOverride = coverPath)
+        if (coverRefs.isEmpty() || ui.comfyUiUrl.isBlank()) return@LaunchedEffect
+        viewModel.scheduleAlbumArtOutpaintPrefetch(currentCoverOverride = coverRefs.first())
         var lastStamp = 0L
         while (true) {
             val hit = runCatching {
-                viewModel.albumArtOutpaint.peekOutpaintedFile(coverPath)
+                viewModel.albumArtOutpaint.peekOutpaintedFile(coverRefs)
             }.getOrNull()
             val fluxDone = runCatching {
-                viewModel.albumArtOutpaint.peekFluxComplete(coverPath)
+                viewModel.albumArtOutpaint.peekFluxComplete(coverRefs)
             }.getOrDefault(false)
             fluxComplete = fluxDone
             if (hit != null) {
@@ -120,7 +133,6 @@ fun AlbumOutpaintHero(
                     }
                 }
             }
-            // Keep watching until Flux lands — local pads must not freeze the hero.
             delay(if (fluxDone) 30_000L else 2_000L)
         }
     }
@@ -272,33 +284,41 @@ private fun HoveringOutpaintStage(
 @Composable
 private fun BoxScope.SoftAtmosphereLayer(
     coverPath: String,
+    coverAlternates: List<String>,
     viewModel: HaViewModel,
 ) {
     val context = LocalContext.current
     val loader = rememberHaImageLoader(viewModel.client)
     val ui by viewModel.ui.collectAsState()
+    val wall by viewModel.musicWall.collectAsState()
+    val coverRefs = remember(coverPath, coverAlternates, wall.queue?.current?.imageUrl) {
+        (listOf(coverPath) + coverAlternates + listOfNotNull(wall.queue?.current?.imageUrl))
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+    }
     var coverUrl by remember(coverPath, viewModel.client.currentBaseUrl) { mutableStateOf<String?>(null) }
-    var padFile by remember(coverPath) { mutableStateOf<File?>(null) }
-    var padStamp by remember(coverPath) { mutableStateOf(0L) }
-    var fluxComplete by remember(coverPath) { mutableStateOf(false) }
+    var padFile by remember(coverRefs) { mutableStateOf<File?>(null) }
+    var padStamp by remember(coverRefs) { mutableStateOf(0L) }
+    var fluxComplete by remember(coverRefs) { mutableStateOf(false) }
 
     LaunchedEffect(coverPath, viewModel.client.currentBaseUrl) {
         coverUrl = runCatching { viewModel.client.resolveMusicCoverUrl(coverPath, size = 512) }.getOrNull()
             ?: resolveHaImageUrl(coverPath, viewModel.client.currentBaseUrl)
         viewModel.scheduleAlbumArtOutpaintPrefetch(currentCoverOverride = coverPath)
     }
-    LaunchedEffect(coverPath, ui.comfyUiUrl) {
+    LaunchedEffect(coverRefs, ui.comfyUiUrl) {
         padFile = null
         padStamp = 0L
         fluxComplete = false
-        if (ui.comfyUiUrl.isBlank()) return@LaunchedEffect
+        if (ui.comfyUiUrl.isBlank() || coverRefs.isEmpty()) return@LaunchedEffect
         var lastStamp = 0L
         while (true) {
             val hit = runCatching {
-                viewModel.albumArtOutpaint.peekOutpaintedFile(coverPath)
+                viewModel.albumArtOutpaint.peekOutpaintedFile(coverRefs)
             }.getOrNull()
             val fluxDone = runCatching {
-                viewModel.albumArtOutpaint.peekFluxComplete(coverPath)
+                viewModel.albumArtOutpaint.peekFluxComplete(coverRefs)
             }.getOrDefault(false)
             fluxComplete = fluxDone
             if (hit != null) {

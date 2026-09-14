@@ -75,27 +75,56 @@ class AlbumArtOutpaintRepository(
         kickWorker()
     }
 
-    /** Cache-only lookup — never starts ComfyUI. */
-    suspend fun peekOutpaintedFile(coverRef: String?): File? {
-        if (coverRef.isNullOrBlank() || comfyUiUrl().isBlank()) return null
-        val source = fetchCoverBytes(coverRef)
-        if (source != null) {
-            cache.cachedFile(source)?.also { cache.bindCoverRef(coverRef, source) }?.let { return it }
+    /** Cache-only lookup — never starts ComfyUI. Tries each cover ref until one hits. */
+    suspend fun peekOutpaintedFile(coverRef: String?): File? =
+        peekOutpaintedFile(listOf(coverRef))
+
+    /**
+     * Look up a cached pad by any of [coverRefs] (MASS URL and HA entity_picture
+     * often differ for the same track — prefetch may have warmed one while the
+     * card peeks the other).
+     */
+    suspend fun peekOutpaintedFile(coverRefs: Collection<String?>): File? {
+        if (comfyUiUrl().isBlank()) return null
+        val refs = coverRefs.mapNotNull { it?.trim()?.takeIf(String::isNotEmpty) }.distinct()
+        if (refs.isEmpty()) return null
+        // Stable MASS/HA ids — no network, instant reuse of an already-warmed pad.
+        for (ref in refs) {
+            cache.cachedFileForCoverRef(ref)?.let { return it }
         }
-        return cache.cachedFileForCoverRef(coverRef)
+        for (ref in refs) {
+            val source = fetchCoverBytes(ref) ?: continue
+            val hit = cache.cachedFile(source) ?: continue
+            cache.bindCoverRef(ref, source)
+            for (other in refs) {
+                if (other == ref) continue
+                val otherSource = fetchCoverBytes(other) ?: continue
+                if (cache.cachedFile(otherSource)?.absolutePath == hit.absolutePath) {
+                    cache.bindCoverRef(other, otherSource)
+                }
+            }
+            return hit
+        }
+        return null
     }
 
     /** True when the cached pad was written by Flux (`.flux` sidecar), not a local edge pad. */
-    suspend fun peekFluxComplete(coverRef: String?): Boolean {
-        if (coverRef.isNullOrBlank() || comfyUiUrl().isBlank()) return false
-        val source = fetchCoverBytes(coverRef)
-        if (source != null && cache.isFluxComplete(source) && cache.cachedFile(source) != null) {
-            cache.bindCoverRef(coverRef, source)
-            return true
+    suspend fun peekFluxComplete(coverRef: String?): Boolean =
+        peekFluxComplete(listOf(coverRef))
+
+    suspend fun peekFluxComplete(coverRefs: Collection<String?>): Boolean {
+        if (comfyUiUrl().isBlank()) return false
+        val refs = coverRefs.mapNotNull { it?.trim()?.takeIf(String::isNotEmpty) }.distinct()
+        if (refs.isEmpty()) return false
+        if (refs.any { cache.isFluxCompleteForCoverRef(it) }) return true
+        for (ref in refs) {
+            val source = fetchCoverBytes(ref) ?: continue
+            if (cache.isFluxComplete(source) && cache.cachedFile(source) != null) {
+                cache.bindCoverRef(ref, source)
+                return true
+            }
         }
-        // Trust the sidecar for display. Quality is enforced at write/warm time;
-        // re-rejecting here hid good cached pads behind soft enlarge.
-        return cache.isFluxCompleteForCoverRef(coverRef)
+        return false
     }
 
     /**
@@ -178,6 +207,14 @@ class AlbumArtOutpaintRepository(
      * upgrade attempt (otherwise the instant pad would freeze forever).
      */
     private suspend fun warmCover(comfyBase: String, coverRef: String, source: ByteArray): File? {
+        // Same MASS proxy id / HA path — reuse without caring that JPEG bytes drifted.
+        cache.cachedFileForCoverRef(coverRef)?.let { stableHit ->
+            if (cache.isFluxCompleteForCoverRef(coverRef)) {
+                fluxAttemptedRefs.add(coverRef)
+                cache.bindCoverRef(coverRef, source)
+                return stableHit
+            }
+        }
         val existing = cache.cachedFile(source)
         if (existing != null && isFluxPadSettled(source, existing)) {
             val settledBytes = withContext(Dispatchers.IO) {
@@ -189,24 +226,37 @@ class AlbumArtOutpaintRepository(
                 !AlbumArtLocalOutpaint.shouldRejectFluxPad(settledBytes, source)
             ) {
                 fluxAttemptedRefs.add(coverRef)
+                cache.bindCoverRef(coverRef, source)
                 return existing
             }
             cache.invalidate(source)
         }
-        val local = cache.cachedFile(source) ?: cache.getOrEnqueue(source) { bytes ->
-            AlbumArtLocalOutpaint.padFromEdges(bytes)
-        } ?: return null
+        // Prefer an already-warmed local pad under the stable id over regenerating.
+        val stableLocal = cache.cachedFileForCoverRef(coverRef)
+        val local = cache.cachedFile(source)
+            ?: stableLocal
+            ?: cache.getOrEnqueue(source) { bytes ->
+                AlbumArtLocalOutpaint.padFromEdges(bytes)
+            }
+            ?: return null
+        cache.bindCoverRef(coverRef, source)
         if (AlbumArtLocalOutpaint.hasUniformEdges(source)) {
             fluxAttemptedRefs.add(coverRef)
             return local
         }
         if (!fluxAttemptedRefs.add(coverRef)) return local
+        // If stable id already has Flux we returned above. Only run Comfy when missing.
+        if (cache.isFluxCompleteForCoverRef(coverRef)) {
+            return cache.cachedFileForCoverRef(coverRef) ?: local
+        }
         // One Flux pass. Mild color drift is OK; seams / flat invents / extreme
         // cream mats fall back to the local pad.
         val flux = runCatching { comfy.outpaint(comfyBase, source) }.getOrNull()
             ?.takeIf { it.isNotEmpty() }
         if (flux != null && !AlbumArtLocalOutpaint.shouldRejectFluxPad(flux, source)) {
-            return cache.replace(source, flux) ?: local
+            return cache.replace(source, flux)?.also {
+                cache.bindCoverRef(coverRef, source)
+            } ?: local
         }
         return local
     }
@@ -234,30 +284,35 @@ class AlbumArtOutpaintRepository(
 
     private suspend fun isCoverFullyWarm(coverRef: String): Boolean {
         if (warmRefs.contains(coverRef) || failedRefs.contains(coverRef)) return true
-        val source = fetchCoverBytes(coverRef) ?: run {
-            failedRefs.add(coverRef)
-            return true
-        }
-        val cached = cache.cachedFile(source) ?: return false
-        if (AlbumArtLocalOutpaint.hasUniformEdges(source)) {
+        // Flux already on disk for this MASS/HA id — do not re-queue Comfy.
+        if (cache.isFluxCompleteForCoverRef(coverRef) &&
+            cache.cachedFileForCoverRef(coverRef) != null
+        ) {
             warmRefs.add(coverRef)
             fluxAttemptedRefs.add(coverRef)
             return true
         }
-        if (isFluxPadSettled(source, cached)) {
-            val bytes = withContext(Dispatchers.IO) {
-                runCatching { cached.readBytes() }.getOrNull()
-            }
-            if (bytes != null &&
-                bytes.isNotEmpty() &&
-                !AlbumArtLocalOutpaint.shouldRejectFluxPad(bytes, source)
-            ) {
+        val source = fetchCoverBytes(coverRef) ?: run {
+            // Still warm if a stable alias exists (offline / flaky fetch).
+            if (cache.cachedFileForCoverRef(coverRef) != null) {
                 warmRefs.add(coverRef)
-                fluxAttemptedRefs.add(coverRef)
                 return true
             }
-            // Bad Flux still on disk — leave uncached so warmCover can demote it.
-            return false
+            failedRefs.add(coverRef)
+            return true
+        }
+        val cached = cache.cachedFile(source) ?: cache.cachedFileForCoverRef(coverRef) ?: return false
+        if (AlbumArtLocalOutpaint.hasUniformEdges(source)) {
+            warmRefs.add(coverRef)
+            fluxAttemptedRefs.add(coverRef)
+            cache.bindCoverRef(coverRef, source)
+            return true
+        }
+        if (isFluxPadSettled(source, cached) || cache.isFluxCompleteForCoverRef(coverRef)) {
+            warmRefs.add(coverRef)
+            fluxAttemptedRefs.add(coverRef)
+            cache.bindCoverRef(coverRef, source)
+            return true
         }
         // Solid local pad still waiting for a Flux upgrade this process.
         if (fluxAttemptedRefs.contains(coverRef)) {

@@ -473,6 +473,34 @@ private fun massCoverRefFromPath(path: String): String? {
     return null
 }
 
+/**
+ * Stable identity for outpaint cache aliases. MASS proxy ids and HA image paths
+ * stay the same across size/query churn; using them avoids re-running Comfy when
+ * the re-fetched JPEG bytes differ slightly.
+ */
+fun stableOutpaintCoverKey(coverRef: String?): String? {
+    val trimmed = coverRef?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    if (trimmed.startsWith(MASS_IMAGEPROXY_SCHEME)) {
+        val rest = trimmed.removePrefix(MASS_IMAGEPROXY_SCHEME)
+        if (rest.startsWith("legacy?")) {
+            val q = rest.removePrefix("legacy?").substringBefore("&size=").substringBefore("?size=")
+            return "mass-legacy:$q".takeIf { q.isNotBlank() }
+        }
+        val id = rest.substringBefore('?').takeIf { it.isNotBlank() } ?: return null
+        return "mass:$id"
+    }
+    if (trimmed.startsWith("data:image")) return null
+    val noQuery = trimmed.substringBefore('?')
+    return when {
+        noQuery.startsWith("/api/") ||
+            noQuery.contains("image_proxy") ||
+            noQuery.contains("media_player_proxy") ||
+            noQuery.contains("imageproxy") -> "ha:$noQuery"
+        noQuery.startsWith("http://") || noQuery.startsWith("https://") -> "url:$noQuery"
+        else -> null
+    }
+}
+
 private val APOSTROPHE_REGEX = Regex("['’]")
 private val NON_ALPHANUMERIC_REGEX = Regex("[^a-z0-9]+")
 
@@ -484,9 +512,10 @@ fun normalizeMusicPlayerName(name: String): String =
 /**
  * Pick which Music Assistant player the wall / home card should drive.
  *
- * Prefers an exact saved id when it is still a MASS player. If the saved id is a
- * leftover Sonos (or other) entity with the same room name — e.g. `media_player.office`
- * friendly-named "Dining Room" vs `media_player.dining_room` — remap by display name.
+ * Active playback wins over a saved idle selection so the home queue, cover art,
+ * and outpaint cache key match what you actually hear. While browsing the music
+ * popup, refreshes pause so an explicit destination pick stays sticky.
+ * Remaps leftover Sonos ids to MASS players by display name when needed.
  * When several are active, prefer the group leader over sync members.
  */
 fun resolveMusicWallSelection(
@@ -497,14 +526,16 @@ fun resolveMusicWallSelection(
 ): String? {
     if (players.isEmpty()) return null
     val preferred = preferredEntityId?.trim()?.takeIf { it.isNotBlank() }
+
+    val playing = players.filter { playerState(it.entityId)?.lowercase() == "playing" }
+    preferGroupLeader(playing)?.entityId?.let { return it }
+
     if (preferred != null && players.any { it.entityId == preferred }) {
         return preferred
     }
     matchPlayerByDisplayName(players, preferredDisplayName)?.let { return it.entityId }
 
-    val playing = players.filter { playerState(it.entityId) == "playing" }
-    preferGroupLeader(playing)?.entityId?.let { return it }
-    val paused = players.filter { playerState(it.entityId) == "paused" }
+    val paused = players.filter { playerState(it.entityId)?.lowercase() == "paused" }
     preferGroupLeader(paused)?.entityId?.let { return it }
     return players.firstOrNull()?.entityId
 }

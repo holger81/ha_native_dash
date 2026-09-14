@@ -61,6 +61,21 @@ class MusicWallSelectionTest {
     }
 
     @Test
+    fun prefersActivePlaybackOverIdleSavedSelection() {
+        val states = mapOf(
+            dining.entityId to "playing",
+            arc.entityId to "playing",
+            kitchen.entityId to "idle",
+        )
+        val id = resolveMusicWallSelection(
+            players = listOf(dining, arc, kitchen),
+            preferredEntityId = "media_player.kitchen_2",
+            playerState = { states[it] },
+        )
+        assertEquals("media_player.dining_room", id)
+    }
+
+    @Test
     fun emptyPlayersYieldNull() {
         assertNull(
             resolveMusicWallSelection(

@@ -35,7 +35,7 @@ class AlbumArtOutpaintCache(
 
     /**
      * Remember which cover ref produced [sourceBytes] so a later lookup with the
-     * same ref can find the pad even if a re-fetch briefly fails.
+     * same ref (or stable MASS/HA id) can find the pad without re-fetching.
      */
     fun bindCoverRef(coverRef: String, sourceBytes: ByteArray) {
         val trimmed = coverRef.trim()
@@ -45,6 +45,9 @@ class AlbumArtOutpaintCache(
         runCatching {
             directory.mkdirs()
             refFileFor(trimmed).writeText(hash)
+            stableOutpaintCoverKey(trimmed)?.let { stable ->
+                stableFileFor(stable).writeText(hash)
+            }
         }
     }
 
@@ -52,17 +55,34 @@ class AlbumArtOutpaintCache(
     fun cachedFileForCoverRef(coverRef: String): File? {
         val trimmed = coverRef.trim()
         if (trimmed.isEmpty()) return null
-        val hash = runCatching {
-            refFileFor(trimmed).takeIf { it.isFile }?.readText()?.trim()
-        }.getOrNull()?.takeIf { it.isNotEmpty() } ?: return null
-        return cachedFileForHash(hash)
+        cachedFileForRefHash(refFileFor(trimmed))?.let { return it }
+        return stableOutpaintCoverKey(trimmed)?.let { cachedFileForStableKey(it) }
     }
+
+    fun cachedFileForStableKey(stableKey: String): File? =
+        cachedFileForRefHash(stableFileFor(stableKey))
 
     fun isFluxCompleteForCoverRef(coverRef: String): Boolean {
         val trimmed = coverRef.trim()
         if (trimmed.isEmpty()) return false
+        if (isFluxCompleteForRefFile(refFileFor(trimmed))) return true
+        val stable = stableOutpaintCoverKey(trimmed) ?: return false
+        return isFluxCompleteForStableKey(stable)
+    }
+
+    fun isFluxCompleteForStableKey(stableKey: String): Boolean =
+        isFluxCompleteForRefFile(stableFileFor(stableKey))
+
+    private fun cachedFileForRefHash(aliasFile: File): File? {
         val hash = runCatching {
-            refFileFor(trimmed).takeIf { it.isFile }?.readText()?.trim()
+            aliasFile.takeIf { it.isFile }?.readText()?.trim()
+        }.getOrNull()?.takeIf { it.isNotEmpty() } ?: return null
+        return cachedFileForHash(hash)
+    }
+
+    private fun isFluxCompleteForRefFile(aliasFile: File): Boolean {
+        val hash = runCatching {
+            aliasFile.takeIf { it.isFile }?.readText()?.trim()
         }.getOrNull()?.takeIf { it.isNotEmpty() } ?: return false
         return fluxMarkerFor(hash).isFile && cachedFileForHash(hash) != null
     }
@@ -181,6 +201,9 @@ class AlbumArtOutpaintCache(
 
     private fun refFileFor(coverRef: String): File =
         File(directory, "${sha256Hex(coverRef.toByteArray(Charsets.UTF_8))}.ref")
+
+    private fun stableFileFor(stableKey: String): File =
+        File(directory, "${sha256Hex(stableKey.toByteArray(Charsets.UTF_8))}.sid")
 
     companion object {
         const val MAX_FILES = 100
