@@ -388,77 +388,54 @@ private fun HomeScreen(viewModel: HaViewModel) {
                             onHorizontalDrag = { _, amount -> total += amount },
                         )
                     },
-                verticalArrangement = Arrangement.spacedBy(18.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                if (showCamerasLayout) {
-                    val cameraCount = activePersonCameras.size
-                    Text(
-                        "Backyard activity · $cameraCount",
-                        color = TextDark,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Medium,
-                    )
-                    PersonCameraOverlay(
-                        cameras = activePersonCameras,
-                        viewModel = viewModel,
-                        fitContent = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    HomeMediaArea(
-                        viewModel = viewModel,
-                        compact = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    home.timeline?.let { timeline ->
-                        when {
-                            cameraCount >= 3 -> {
-                                Text(
-                                    "View history",
-                                    color = TextDark,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier
-                                        .clickable { showHistoryOverlay = true }
-                                        .padding(vertical = 4.dp),
-                                )
-                            }
-                            else -> {
-                                VisionTimeline(
-                                    widget = timeline,
-                                    viewModel = viewModel,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    maxEvents = 1,
-                                    showTitle = false,
-                                )
-                                Text(
-                                    "View history",
-                                    color = TextDark,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier
-                                        .clickable { showHistoryOverlay = true }
-                                        .padding(vertical = 4.dp),
-                                )
-                            }
-                        }
-                    }
+                val mediaSurfaceHeight = if (roomsHeightPx > 0) {
+                    with(density) { roomsHeightPx.toDp() }
                 } else {
-                    HomeMediaArea(
-                        viewModel = viewModel,
-                        compact = false,
-                        forceKind = when (displayPage) {
-                            HomeMediaFocus.Music -> HomeMediaKind.Music
-                            HomeMediaFocus.Tv -> HomeMediaKind.Tv
-                            else -> null
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    home.timeline?.let {
-                        VisionTimeline(
-                            widget = it,
+                    480.dp
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(mediaSurfaceHeight),
+                ) {
+                    if (showCamerasLayout) {
+                        val cameraCount = activePersonCameras.size
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Text(
+                                "Backyard activity · $cameraCount",
+                                color = TextDark,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            PersonCameraOverlay(
+                                cameras = activePersonCameras,
+                                viewModel = viewModel,
+                                fitContent = false,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth(),
+                            )
+                            HomeMediaArea(
+                                viewModel = viewModel,
+                                compact = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    } else {
+                        HomeMediaArea(
                             viewModel = viewModel,
-                            modifier = Modifier.fillMaxWidth(),
-                            maxEvents = 3,
+                            compact = false,
+                            forceKind = when (displayPage) {
+                                HomeMediaFocus.Music -> HomeMediaKind.Music
+                                HomeMediaFocus.Tv -> HomeMediaKind.Tv
+                                else -> null
+                            },
+                            modifier = Modifier.fillMaxSize(),
                         )
                     }
                 }
@@ -468,6 +445,43 @@ private fun HomeScreen(viewModel: HaViewModel) {
                         selected = displayPage,
                         held = homeMediaFocus != HomeMediaFocus.Auto,
                     )
+                }
+                home.timeline?.let { timeline ->
+                    if (showCamerasLayout && activePersonCameras.size >= 3) {
+                        Text(
+                            "View history",
+                            color = TextDark,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .clickable { showHistoryOverlay = true }
+                                .padding(vertical = 4.dp),
+                        )
+                    } else if (showCamerasLayout) {
+                        VisionTimeline(
+                            widget = timeline,
+                            viewModel = viewModel,
+                            modifier = Modifier.fillMaxWidth(),
+                            maxEvents = 1,
+                            showTitle = false,
+                        )
+                        Text(
+                            "View history",
+                            color = TextDark,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .clickable { showHistoryOverlay = true }
+                                .padding(vertical = 4.dp),
+                        )
+                    } else {
+                        VisionTimeline(
+                            widget = timeline,
+                            viewModel = viewModel,
+                            modifier = Modifier.fillMaxWidth(),
+                            maxEvents = 3,
+                        )
+                    }
                 }
             }
         }

@@ -473,14 +473,14 @@ private fun FullMusicCard(
         coverAlternates = snapshot.artAlternates,
         viewModel = viewModel,
         modifier = modifier
-            .fillMaxWidth()
+            .fillMaxSize()
             .clip(RoundedCornerShape(24.dp))
             .background(CardLight),
         extendedBackdrop = true,
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxSize()
                 .clickable { viewModel.openPopup("#music") }
                 .padding(18.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -519,6 +519,7 @@ private fun FullMusicCard(
                 positionUpdatedAtMs = snapshot.positionUpdatedAtMs,
                 playing = snapshot.playing,
             )
+            Spacer(Modifier.weight(1f))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly,
@@ -576,7 +577,7 @@ private fun FullTvCard(
     // TV posters are not album art — never outpaint / soft-extend them.
     Column(
         modifier = modifier
-            .fillMaxWidth()
+            .fillMaxSize()
             .clip(RoundedCornerShape(24.dp))
             .background(CardLight)
             .clickable { viewModel.openMoreInfo(TV_ENTITY) }
@@ -585,8 +586,8 @@ private fun FullTvCard(
     ) {
         Box(
             modifier = Modifier
+                .weight(1f)
                 .fillMaxWidth()
-                .aspectRatio(16f / 9f)
                 .clip(RoundedCornerShape(16.dp)),
         ) {
             if (!snapshot.art.isNullOrBlank()) {
@@ -742,7 +743,7 @@ private fun IdleListenCard(
     var launchError by remember { mutableStateOf<String?>(null) }
     Column(
         modifier = modifier
-            .fillMaxWidth()
+            .fillMaxSize()
             .clip(RoundedCornerShape(24.dp))
             .background(CardLight)
             .padding(16.dp),
@@ -773,6 +774,7 @@ private fun IdleListenCard(
         }
         launchError?.let { Text(it, color = Color(0xFFC62828), fontSize = 13.sp) }
         discoveryError?.let { Text(it, color = TextMuted, fontSize = 13.sp) }
+        Spacer(Modifier.weight(1f))
         if (recentlyPlayed.isNotEmpty()) {
             Text("Recently played", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Row(
