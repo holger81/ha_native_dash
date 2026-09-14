@@ -139,12 +139,14 @@ fun HomeMediaArea(
     LaunchedEffect(snapshot.playing) {
         viewModel.homeMediaVisibility.updatePlaying(snapshot.playing)
     }
-    if (!snapshot.playing && !visible) return
-    if (compact && snapshot.kind == HomeMediaKind.Idle) return
+    // After the paused-card grace period, collapse compact strips but keep the
+    // full viewport filled with Listen instead of leaving a blank 400dp hole.
+    val hideSession = !snapshot.playing && !visible
+    if (compact && (hideSession || snapshot.kind == HomeMediaKind.Idle)) return
 
     when {
         compact -> CompactMediaStrip(snapshot, viewModel, modifier)
-        snapshot.kind == HomeMediaKind.Idle -> IdleListenCard(
+        hideSession || snapshot.kind == HomeMediaKind.Idle -> IdleListenCard(
             viewModel = viewModel,
             recentlyPlayed = wall.discovery.recentlyPlayed.take(3),
             destinationName = wall.players.firstOrNull { it.entityId == wall.selectedEntityId }?.name
@@ -571,7 +573,9 @@ private fun FullTvCard(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().height(128.dp).clickable { viewModel.openMoreInfo(TV_ENTITY) },
+            modifier = Modifier.fillMaxWidth().height(128.dp).clickable {
+                viewModel.openMoreInfo(entityId)
+            },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -607,7 +611,7 @@ private fun CompactMediaStrip(
     val onOpen = {
         when (snapshot.kind) {
             HomeMediaKind.Music -> viewModel.openPopup("#music")
-            HomeMediaKind.Tv -> viewModel.openMoreInfo(TV_ENTITY)
+            HomeMediaKind.Tv -> viewModel.openMoreInfo(entityId ?: APPLE_TV_ENTITY)
             HomeMediaKind.Idle -> Unit
         }
     }

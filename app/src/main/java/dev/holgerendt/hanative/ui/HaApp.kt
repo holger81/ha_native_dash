@@ -369,25 +369,7 @@ private fun HomeScreen(viewModel: HaViewModel) {
                 Modifier.weight(1f).onSizeChanged { roomsHeightPx = it.height },
             )
             Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .pointerInput(mediaPages, displayPage) {
-                        if (mediaPages.size <= 1) return@pointerInput
-                        var total = 0f
-                        detectHorizontalDragGestures(
-                            onDragEnd = {
-                                val idx = mediaPages.indexOf(displayPage).coerceAtLeast(0)
-                                val next = when {
-                                    total < -64f && idx < mediaPages.lastIndex -> mediaPages[idx + 1]
-                                    total > 64f && idx > 0 -> mediaPages[idx - 1]
-                                    else -> null
-                                }
-                                if (next != null) viewModel.holdHomeMediaFocus(next)
-                                total = 0f
-                            },
-                            onHorizontalDrag = { _, amount -> total += amount },
-                        )
-                    },
+                modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 // Keep the media and camera pages in one stable viewport.
@@ -395,7 +377,24 @@ private fun HomeScreen(viewModel: HaViewModel) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(mediaSurfaceHeight),
+                        .height(mediaSurfaceHeight)
+                        .pointerInput(mediaPages, displayPage) {
+                            if (mediaPages.size <= 1) return@pointerInput
+                            var total = 0f
+                            detectHorizontalDragGestures(
+                                onDragEnd = {
+                                    val idx = mediaPages.indexOf(displayPage).coerceAtLeast(0)
+                                    val next = when {
+                                        total < -64f && idx < mediaPages.lastIndex -> mediaPages[idx + 1]
+                                        total > 64f && idx > 0 -> mediaPages[idx - 1]
+                                        else -> null
+                                    }
+                                    if (next != null) viewModel.holdHomeMediaFocus(next)
+                                    total = 0f
+                                },
+                                onHorizontalDrag = { _, amount -> total += amount },
+                            )
+                        },
                 ) {
                     if (showCamerasLayout) {
                         val cameraCount = activePersonCameras.size
@@ -443,8 +442,16 @@ private fun HomeScreen(viewModel: HaViewModel) {
                         held = homeMediaFocus != HomeMediaFocus.Auto,
                     )
                 }
+                // Cameras are highest priority in the media viewport, but the house
+                // timeline stays below so activity context is never dropped.
                 home.timeline?.let { timeline ->
-                    if (showCamerasLayout && activePersonCameras.size >= 3) {
+                    VisionTimeline(
+                        widget = timeline,
+                        viewModel = viewModel,
+                        modifier = Modifier.fillMaxWidth(),
+                        maxEvents = 3,
+                    )
+                    if (showCamerasLayout) {
                         Text(
                             "View history",
                             color = TextDark,
@@ -453,30 +460,6 @@ private fun HomeScreen(viewModel: HaViewModel) {
                             modifier = Modifier
                                 .clickable { showHistoryOverlay = true }
                                 .padding(vertical = 4.dp),
-                        )
-                    } else if (showCamerasLayout) {
-                        VisionTimeline(
-                            widget = timeline,
-                            viewModel = viewModel,
-                            modifier = Modifier.fillMaxWidth(),
-                            maxEvents = 1,
-                            showTitle = false,
-                        )
-                        Text(
-                            "View history",
-                            color = TextDark,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier
-                                .clickable { showHistoryOverlay = true }
-                                .padding(vertical = 4.dp),
-                        )
-                    } else {
-                        VisionTimeline(
-                            widget = timeline,
-                            viewModel = viewModel,
-                            modifier = Modifier.fillMaxWidth(),
-                            maxEvents = 3,
                         )
                     }
                 }
