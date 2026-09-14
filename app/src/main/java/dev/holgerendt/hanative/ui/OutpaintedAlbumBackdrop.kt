@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -63,6 +64,7 @@ fun OutpaintedAlbumBackdrop(
     extendedBackdrop: Boolean = true,
     /** Extra cover refs (e.g. MASS queue art) to try when looking up a cached pad. */
     coverAlternates: List<String> = emptyList(),
+    vivid: Boolean = false,
     content: @Composable BoxScope.() -> Unit,
 ) {
     Box(modifier = modifier) {
@@ -71,6 +73,7 @@ fun OutpaintedAlbumBackdrop(
                 coverPath = coverPath,
                 coverAlternates = coverAlternates,
                 viewModel = viewModel,
+                vivid = vivid,
             )
         }
         content()
@@ -87,6 +90,7 @@ fun AlbumOutpaintHero(
     viewModel: HaViewModel,
     modifier: Modifier = Modifier,
     coverAlternates: List<String> = emptyList(),
+    stageHeight: Dp? = null,
 ) {
     val ui by viewModel.ui.collectAsState()
     val coverRefs = remember(coverPath, coverAlternates) {
@@ -149,6 +153,7 @@ fun AlbumOutpaintHero(
                 layout = geo,
                 coverPath = coverPath,
                 viewModel = viewModel,
+                stageHeight = stageHeight,
             )
         } else {
             // Local edge pads look blocky under a floating cover — keep the soft
@@ -156,7 +161,7 @@ fun AlbumOutpaintHero(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(220.dp),
+                    .height(stageHeight ?: 220.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 MusicCover(
@@ -187,6 +192,7 @@ private fun HoveringOutpaintStage(
     layout: OutpaintCoverLayout,
     coverPath: String?,
     viewModel: HaViewModel,
+    stageHeight: Dp? = null,
 ) {
     val context = LocalContext.current
     val loader = rememberHaImageLoader(viewModel.client)
@@ -195,9 +201,13 @@ private fun HoveringOutpaintStage(
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(layout.outAspectRatio)
+            .then(if (stageHeight != null) Modifier.height(stageHeight) else Modifier.aspectRatio(layout.outAspectRatio))
             .clip(RoundedCornerShape(16.dp)),
     ) {
+        val imageWidth = minOf(maxWidth, maxHeight * layout.outAspectRatio)
+        val imageHeight = imageWidth / layout.outAspectRatio
+        val imageLeft = (maxWidth - imageWidth) / 2
+        val imageTop = (maxHeight - imageHeight) / 2
         AsyncImage(
             model = ImageRequest.Builder(context)
                 .data(outpaintFile)
@@ -207,8 +217,8 @@ private fun HoveringOutpaintStage(
                 .build(),
             contentDescription = null,
             imageLoader = loader,
-            // FillBounds avoids Fit letterboxing that showed as a grey strip under the cover.
-            contentScale = ContentScale.FillBounds,
+            // Preserve the complete outpaint and align the floating cover to its baked-in region.
+            contentScale = ContentScale.Fit,
             colorFilter = desaturateFilter(0.9f),
             modifier = Modifier
                 .fillMaxSize()
@@ -219,10 +229,10 @@ private fun HoveringOutpaintStage(
                 .fillMaxSize()
                 .background(CardLight.copy(alpha = 0.08f)),
         )
-        val coverW = maxWidth * layout.coverWidthFrac
-        val coverH = maxHeight * layout.coverHeightFrac
-        val coverLeft = maxWidth * layout.coverLeftFrac
-        val coverTop = maxHeight * layout.coverTopFrac
+        val coverW = imageWidth * layout.coverWidthFrac
+        val coverH = imageHeight * layout.coverHeightFrac
+        val coverLeft = imageLeft + imageWidth * layout.coverLeftFrac
+        val coverTop = imageTop + imageHeight * layout.coverTopFrac
         // Exact pad region: hide the square cover baked into the outpaint so a
         // lifted rounded overlay cannot reveal a mismatched strip underneath.
         Box(
@@ -286,6 +296,7 @@ private fun BoxScope.SoftAtmosphereLayer(
     coverPath: String,
     coverAlternates: List<String>,
     viewModel: HaViewModel,
+    vivid: Boolean,
 ) {
     val context = LocalContext.current
     val loader = rememberHaImageLoader(viewModel.client)
@@ -350,12 +361,12 @@ private fun BoxScope.SoftAtmosphereLayer(
             contentDescription = null,
             imageLoader = loader,
             contentScale = ContentScale.Crop,
-            colorFilter = desaturateFilter(if (fluxComplete) 0.7f else 0.55f),
+            colorFilter = desaturateFilter(if (vivid) 1f else if (fluxComplete) 0.7f else 0.55f),
             modifier = Modifier
                 .matchParentSize()
-                .graphicsLayer { alpha = if (fluxComplete) 0.55f else 0.4f }
+                .graphicsLayer { alpha = if (vivid) 0.85f else if (fluxComplete) 0.55f else 0.4f }
                 .then(if (fluxComplete) Modifier else softBlurFallback())
-                .fadeSoftAtmosphere(),
+                .then(if (vivid) Modifier else Modifier.fadeSoftAtmosphere()),
         )
         return
     }

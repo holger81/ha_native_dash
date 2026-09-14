@@ -390,11 +390,8 @@ private fun HomeScreen(viewModel: HaViewModel) {
                     },
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                val mediaSurfaceHeight = if (roomsHeightPx > 0) {
-                    with(density) { roomsHeightPx.toDp() }
-                } else {
-                    480.dp
-                }
+                // Keep the media and camera pages in one stable viewport.
+                val mediaSurfaceHeight = 400.dp
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()

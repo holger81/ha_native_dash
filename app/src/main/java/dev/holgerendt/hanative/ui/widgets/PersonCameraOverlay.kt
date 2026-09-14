@@ -1,5 +1,6 @@
 package dev.holgerendt.hanative.ui.widgets
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,7 +23,7 @@ import kotlin.math.ceil
 
 internal fun personCameraGridLayout(count: Int): Pair<Int, Int> {
     if (count <= 1) return 1 to 1
-    if (count == 2) return 1 to 2
+    if (count == 2) return 2 to 1
     if (count <= 4) return 2 to 2
     val cols = 3
     return cols to ceil(count / cols.toDouble()).toInt()
@@ -70,8 +71,9 @@ private fun FitContentCameraGrid(
             ) {
                 repeat(cols) {
                     if (index < cameras.size) {
+                        val camera = cameras[index]
                         CameraCard(
-                            widget = cameras[index],
+                            widget = camera,
                             viewModel = viewModel,
                             modifier = Modifier.weight(1f),
                             fitContent = true,
@@ -108,12 +110,16 @@ private fun FillCameraGrid(
             ) {
                 repeat(cols) {
                     if (index < cameras.size) {
+                        val camera = cameras[index]
                         CameraCard(
-                            widget = cameras[index],
+                            widget = camera,
                             viewModel = viewModel,
                             modifier = Modifier
                                 .weight(1f)
-                                .fillMaxHeight(),
+                                .fillMaxHeight()
+                                .clickable(enabled = camera.entity != null) {
+                                    camera.entity?.let(viewModel::openMoreInfo)
+                                },
                             fill = true,
                         )
                         index++

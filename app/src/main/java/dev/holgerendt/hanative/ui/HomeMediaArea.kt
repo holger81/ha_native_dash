@@ -31,12 +31,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -252,7 +254,7 @@ internal fun resolveHomeMediaSession(
             kind = HomeMediaKind.Music,
             playing = hit.playing,
             paused = hit.paused,
-            title = title,
+            title = musicDisplayTitle(title, artist),
             subtitle = artist,
             room = formatPlayerRoom(player, players),
             art = art,
@@ -457,6 +459,14 @@ private fun BoxScope.PausedCoverBadge() {
     )
 }
 
+internal fun musicDisplayTitle(rawTitle: String, artist: String): String {
+    val separator = Regex("\\s+[-–—|:]\\s+").find(rawTitle) ?: return rawTitle
+    val prefix = rawTitle.substring(0, separator.range.first).filterNot { it.isWhitespace() }
+    val knownArtist = artist.filterNot { it.isWhitespace() }
+    if (knownArtist.isBlank() || !prefix.equals(knownArtist, ignoreCase = true)) return rawTitle
+    return rawTitle.substring(separator.range.last + 1).trim().ifBlank { rawTitle }
+}
+
 @Composable
 private fun FullMusicCard(
     snapshot: HomeMediaSnapshot,
@@ -466,104 +476,86 @@ private fun FullMusicCard(
     val overlay = LocalOverlay.current
     val entityId = snapshot.entityId
     var volume by remember(snapshot.volume, entityId) { mutableFloatStateOf(snapshot.volume ?: 0.4f) }
-    LaunchedEffect(snapshot.volume) { snapshot.volume?.let { volume = it } }
-
     OutpaintedAlbumBackdrop(
         coverPath = snapshot.art,
         coverAlternates = snapshot.artAlternates,
         viewModel = viewModel,
-        modifier = modifier
-            .fillMaxSize()
-            .clip(RoundedCornerShape(24.dp))
-            .background(CardLight),
+        modifier = modifier.fillMaxSize().clip(RoundedCornerShape(24.dp)).background(CardLight),
         extendedBackdrop = true,
+        vivid = false,
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .clickable { viewModel.openPopup("#music") }
-                .padding(18.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Box(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Box(
+                Modifier.fillMaxWidth().height(220.dp).clickable { viewModel.openPopup("#music") },
+            ) {
                 AlbumOutpaintHero(
                     coverPath = snapshot.art,
                     coverAlternates = snapshot.artAlternates,
                     viewModel = viewModel,
-                    modifier = Modifier.fillMaxWidth(),
+                    stageHeight = 220.dp,
                 )
                 if (snapshot.paused) PausedCoverBadge()
             }
-            Text(
-                snapshot.title,
-                color = TextDark,
-                fontSize = 30.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (snapshot.subtitle.isNotBlank()) {
-                Text(
-                    snapshot.subtitle,
-                    color = TextMuted,
-                    fontSize = 17.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Text(snapshot.room, color = TextMuted, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            MediaProgressRow(
-                positionSec = snapshot.positionSec,
-                durationSec = snapshot.durationSec,
-                positionUpdatedAtMs = snapshot.positionUpdatedAtMs,
-                playing = snapshot.playing,
-            )
-            Spacer(Modifier.weight(1f))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically,
+            Column(
+                modifier = Modifier.fillMaxWidth().background(CardLight.copy(alpha = 0.96f))
+                    .clickable { viewModel.openPopup("#music") }.padding(horizontal = 16.dp, vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                MediaIconButton(
-                    "mdi:skip-previous",
-                    label = "Previous track",
-                    onClick = { entityId?.let { viewModel.homeMediaCommand(it, "media_previous_track") } },
-                )
-                MediaIconButton(
-                    if (snapshot.playing) "mdi:pause" else "mdi:play",
-                    label = if (snapshot.playing) "Pause" else "Play",
-                    filled = true,
-                    size = 60.dp,
-                    iconSize = 32.dp,
-                    onClick = { entityId?.let { viewModel.homeMediaCommand(it, "media_play_pause") } },
-                )
-                MediaIconButton(
-                    "mdi:skip-next",
-                    label = "Next track",
-                    onClick = { entityId?.let { viewModel.homeMediaCommand(it, "media_next_track") } },
-                )
+                Text(snapshot.title, color = TextDark, fontSize = 24.sp, fontWeight = FontWeight.SemiBold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                if (snapshot.subtitle.isNotBlank()) {
+                    Text(snapshot.subtitle, color = TextMuted, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
+            Column(
+                modifier = Modifier.fillMaxWidth().weight(1f)
+                    .background(CardLight.copy(alpha = 0.96f)).padding(horizontal = 16.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                MdiIcon("mdi:volume-medium", tint = TextMuted, size = 22.dp)
-                Slider(
-                    value = volume,
-                    onValueChange = {
-                        volume = it
-                        entityId?.let { id -> viewModel.homeMediaSetVolume(id, it) }
-                    },
-                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-                    colors = SliderDefaults.colors(
-                        thumbColor = ActiveYellow,
-                        activeTrackColor = ActiveYellow,
-                        inactiveTrackColor = overlay.well,
-                    ),
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    MdiIcon("mdi:speaker", tint = TextMuted, size = 14.dp)
+                    Spacer(Modifier.width(6.dp))
+                    Text(snapshot.room, color = TextMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                MediaProgressRow(snapshot.positionSec, snapshot.durationSec, snapshot.positionUpdatedAtMs, snapshot.playing)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    MediaIconButton("mdi:skip-previous", label = "Previous track",
+                        onClick = { entityId?.let { viewModel.homeMediaCommand(it, "media_previous_track") } })
+                    MediaIconButton(if (snapshot.playing) "mdi:pause" else "mdi:play",
+                        label = if (snapshot.playing) "Pause" else "Play", filled = true, size = 56.dp,
+                        onClick = { entityId?.let { viewModel.homeMediaCommand(it, "media_play_pause") } })
+                    MediaIconButton("mdi:skip-next", label = "Next track",
+                        onClick = { entityId?.let { viewModel.homeMediaCommand(it, "media_next_track") } })
+                    MdiIcon("mdi:volume-medium", tint = TextMuted, size = 20.dp)
+                    Slider(
+                        value = volume,
+                        onValueChange = { volume = it; entityId?.let { id -> viewModel.homeMediaSetVolume(id, it) } },
+                        modifier = Modifier.weight(1f),
+                        colors = SliderDefaults.colors(thumbColor = ActiveYellow, activeTrackColor = ActiveYellow, inactiveTrackColor = overlay.well),
+                    )
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun MediaSummary(snapshot: HomeMediaSnapshot, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(snapshot.title, color = TextDark, fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
+            maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (snapshot.subtitle.isNotBlank()) {
+            Text(snapshot.subtitle, color = TextMuted, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Text(snapshot.room, color = TextMuted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -574,71 +566,33 @@ private fun FullTvCard(
     modifier: Modifier = Modifier,
 ) {
     val entityId = snapshot.entityId ?: APPLE_TV_ENTITY
-    // TV posters are not album art — never outpaint / soft-extend them.
     Column(
-        modifier = modifier
-            .fillMaxSize()
-            .clip(RoundedCornerShape(24.dp))
-            .background(CardLight)
-            .clickable { viewModel.openMoreInfo(TV_ENTITY) }
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        modifier = modifier.fillMaxSize().clip(RoundedCornerShape(24.dp)).background(CardLight).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp)),
-        ) {
-            if (!snapshot.art.isNullOrBlank()) {
-                MusicCover(
-                    path = snapshot.art,
-                    viewModel = viewModel,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color(0x14000000)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    MdiIcon("mdi:television-classic", tint = TextMuted, size = 56.dp)
-                }
-            }
-            if (snapshot.paused) PausedCoverBadge()
-        }
-        Text(
-            snapshot.title,
-            color = TextDark,
-            fontSize = 28.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (snapshot.subtitle.isNotBlank()) {
-            Text(snapshot.subtitle, color = TextMuted, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        }
-        Text(snapshot.room, color = TextMuted, fontSize = 14.sp)
-        MediaProgressRow(
-            positionSec = snapshot.positionSec,
-            durationSec = snapshot.durationSec,
-            positionUpdatedAtMs = snapshot.positionUpdatedAtMs,
-            playing = snapshot.playing,
-        )
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
+            modifier = Modifier.fillMaxWidth().height(128.dp).clickable { viewModel.openMoreInfo(TV_ENTITY) },
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            MediaIconButton(
-                if (snapshot.playing) "mdi:pause" else "mdi:play",
-                label = if (snapshot.playing) "Pause" else "Play",
-                filled = true,
-                size = 60.dp,
-                iconSize = 32.dp,
-                onClick = { viewModel.homeMediaCommand(entityId, "media_play_pause") },
-            )
+            Box(Modifier.width(160.dp).height(100.dp).clip(RoundedCornerShape(14.dp))) {
+                if (!snapshot.art.isNullOrBlank()) {
+                    MusicCover(path = snapshot.art, viewModel = viewModel, modifier = Modifier.fillMaxSize())
+                } else {
+                    Box(Modifier.fillMaxSize().background(Color(0x14000000)), contentAlignment = Alignment.Center) {
+                        MdiIcon("mdi:television-classic", tint = TextMuted, size = 40.dp)
+                    }
+                }
+                if (snapshot.paused) PausedCoverBadge()
+            }
+            MediaSummary(snapshot, Modifier.weight(1f))
+        }
+        Spacer(Modifier.weight(1f))
+        MediaProgressRow(snapshot.positionSec, snapshot.durationSec, snapshot.positionUpdatedAtMs, snapshot.playing)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+            MediaIconButton(if (snapshot.playing) "mdi:pause" else "mdi:play",
+                label = if (snapshot.playing) "Pause" else "Play", filled = true, size = 56.dp,
+                onClick = { viewModel.homeMediaCommand(entityId, "media_play_pause") })
         }
     }
 }
