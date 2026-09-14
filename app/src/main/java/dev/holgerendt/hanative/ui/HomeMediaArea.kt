@@ -4,10 +4,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -67,7 +69,7 @@ internal const val APPLE_TV_ENTITY = "media_player.living_room_appletv"
 
 enum class HomeMediaKind { Music, Tv, Idle }
 
-/** Manual override for the greatroom right-column media surface. */
+/** Manual hold for the greatroom right-column media surface (Auto = follow priority). */
 enum class HomeMediaFocus {
     Auto,
     Cameras,
@@ -440,6 +442,22 @@ internal fun formatPlayerRoom(player: MusicAssistantPlayer, all: List<MusicAssis
 }
 
 @Composable
+private fun BoxScope.PausedCoverBadge() {
+    Text(
+        "Paused",
+        color = Color.White,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier
+            .align(Alignment.BottomStart)
+            .padding(12.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.Black.copy(alpha = 0.55f))
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+    )
+}
+
+@Composable
 private fun FullMusicCard(
     snapshot: HomeMediaSnapshot,
     viewModel: HaViewModel,
@@ -468,15 +486,15 @@ private fun FullMusicCard(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            if (snapshot.paused) {
-                Text("Paused", color = TextDark, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Box(modifier = Modifier.fillMaxWidth()) {
+                AlbumOutpaintHero(
+                    coverPath = snapshot.art,
+                    coverAlternates = snapshot.artAlternates,
+                    viewModel = viewModel,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (snapshot.paused) PausedCoverBadge()
             }
-            AlbumOutpaintHero(
-                coverPath = snapshot.art,
-                coverAlternates = snapshot.artAlternates,
-                viewModel = viewModel,
-                modifier = Modifier.fillMaxWidth(),
-            )
             Text(
                 snapshot.title,
                 color = TextDark,
@@ -565,29 +583,29 @@ private fun FullTvCard(
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        if (snapshot.paused) {
-            Text("Paused", color = TextDark, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-        }
-        if (!snapshot.art.isNullOrBlank()) {
-            MusicCover(
-                path = snapshot.art,
-                viewModel = viewModel,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(16.dp)),
-            )
-        } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0x14000000)),
-                contentAlignment = Alignment.Center,
-            ) {
-                MdiIcon("mdi:television-classic", tint = TextMuted, size = 56.dp)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(16.dp)),
+        ) {
+            if (!snapshot.art.isNullOrBlank()) {
+                MusicCover(
+                    path = snapshot.art,
+                    viewModel = viewModel,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0x14000000)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MdiIcon("mdi:television-classic", tint = TextMuted, size = 56.dp)
+                }
             }
+            if (snapshot.paused) PausedCoverBadge()
         }
         Text(
             snapshot.title,

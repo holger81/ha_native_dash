@@ -265,6 +265,7 @@ class HaViewModel(
     internal val homeMediaVisibility = HomeMediaVisibility(viewModelScope)
     private val _homeMediaFocus = MutableStateFlow(HomeMediaFocus.Auto)
     val homeMediaFocus: StateFlow<HomeMediaFocus> = _homeMediaFocus
+    private var homeMediaHoldJob: Job? = null
     private val _debugPersonCamerasEnabled = MutableStateFlow(false)
     val debugPersonCamerasEnabled: StateFlow<Boolean> = _debugPersonCamerasEnabled
     private var personCameraCooldownJob: Job? = null
@@ -1079,12 +1080,22 @@ class HaViewModel(
         }
     }
 
-    fun setHomeMediaFocus(focus: HomeMediaFocus) {
+    /** Temporarily pin a media surface after a user swipe; clears back to Auto after [holdMs]. */
+    fun holdHomeMediaFocus(focus: HomeMediaFocus, holdMs: Long = HOME_MEDIA_HOLD_MS) {
+        homeMediaHoldJob?.cancel()
+        if (focus == HomeMediaFocus.Auto) {
+            _homeMediaFocus.value = HomeMediaFocus.Auto
+            return
+        }
         _homeMediaFocus.value = focus
+        homeMediaHoldJob = viewModelScope.launch {
+            delay(holdMs)
+            _homeMediaFocus.value = HomeMediaFocus.Auto
+        }
     }
 
     /**
-     * Resolve the surface to show. Explicit focus sticks while valid; otherwise Auto
+     * Resolve the surface to show. Explicit hold sticks while valid; otherwise Auto
      * (cameras when active, else music/TV/idle from [resolveHomeMediaSession]).
      */
     fun effectiveHomeMediaFocus(
@@ -1099,7 +1110,10 @@ class HaViewModel(
             HomeMediaFocus.Tv -> appleTvPlayingOrPaused
         }
         if (!valid) {
-            if (requested != HomeMediaFocus.Auto) _homeMediaFocus.value = HomeMediaFocus.Auto
+            if (requested != HomeMediaFocus.Auto) {
+                homeMediaHoldJob?.cancel()
+                _homeMediaFocus.value = HomeMediaFocus.Auto
+            }
             return if (camerasActive) HomeMediaFocus.Cameras else HomeMediaFocus.Auto
         }
         return when (requested) {
@@ -2600,6 +2614,7 @@ class HaViewModel(
 
     companion object {
         private const val ROOM_POPUP_TIMEOUT_MS = 60_000L
+        private const val HOME_MEDIA_HOLD_MS = 60_000L
         private const val AUTO_BRIGHTNESS_RAMP_MS = 90L
         private const val BRIGHTNESS_DIM_CONFIRM_MS = 45_000L
         private const val BRIGHTNESS_DARK_CONFIRM_MS = 15_000L

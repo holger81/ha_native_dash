@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -279,13 +280,35 @@ private fun HomeScreen(viewModel: HaViewModel) {
         else -> false
     }
     val homeMediaFocus by viewModel.homeMediaFocus.collectAsState()
+    val musicWall by viewModel.musicWall.collectAsState()
+    val musicEntity by viewModel.entityFlow(musicWall.selectedEntityId).collectAsState()
+    val musicPlaying = musicEntity?.state.equals("playing", ignoreCase = true)
     val effectiveFocus = remember(homeMediaFocus, camerasActive, appleTvSession) {
         viewModel.effectiveHomeMediaFocus(
             camerasActive = camerasActive,
             appleTvPlayingOrPaused = appleTvSession,
         )
     }
-    val showCamerasLayout = effectiveFocus == HomeMediaFocus.Cameras
+    val applePlaying = appleTvState?.state.equals("playing", ignoreCase = true)
+    val mediaPages = remember(camerasActive, appleTvSession) {
+        buildList {
+            if (camerasActive) add(HomeMediaFocus.Cameras)
+            add(HomeMediaFocus.Music)
+            if (appleTvSession) add(HomeMediaFocus.Tv)
+        }
+    }
+    val displayPage = when (effectiveFocus) {
+        HomeMediaFocus.Cameras -> HomeMediaFocus.Cameras
+        HomeMediaFocus.Music -> HomeMediaFocus.Music
+        HomeMediaFocus.Tv -> HomeMediaFocus.Tv
+        HomeMediaFocus.Auto -> when {
+            applePlaying -> HomeMediaFocus.Tv
+            musicPlaying -> HomeMediaFocus.Music
+            appleTvSession -> HomeMediaFocus.Tv
+            else -> HomeMediaFocus.Music
+        }
+    }
+    val showCamerasLayout = displayPage == HomeMediaFocus.Cameras
     LaunchedEffect(camerasActive) {
         if (!camerasActive) showHistoryOverlay = false
     }
@@ -346,15 +369,27 @@ private fun HomeScreen(viewModel: HaViewModel) {
                 Modifier.weight(1f).onSizeChanged { roomsHeightPx = it.height },
             )
             Column(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .pointerInput(mediaPages, displayPage) {
+                        if (mediaPages.size <= 1) return@pointerInput
+                        var total = 0f
+                        detectHorizontalDragGestures(
+                            onDragEnd = {
+                                val idx = mediaPages.indexOf(displayPage).coerceAtLeast(0)
+                                val next = when {
+                                    total < -64f && idx < mediaPages.lastIndex -> mediaPages[idx + 1]
+                                    total > 64f && idx > 0 -> mediaPages[idx - 1]
+                                    else -> null
+                                }
+                                if (next != null) viewModel.holdHomeMediaFocus(next)
+                                total = 0f
+                            },
+                            onHorizontalDrag = { _, amount -> total += amount },
+                        )
+                    },
                 verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                HomeMediaFocusSwitcher(
-                    focus = homeMediaFocus,
-                    camerasEnabled = camerasActive,
-                    tvEnabled = appleTvSession,
-                    onSelect = viewModel::setHomeMediaFocus,
-                )
                 if (showCamerasLayout) {
                     val cameraCount = activePersonCameras.size
                     Text(
@@ -411,7 +446,7 @@ private fun HomeScreen(viewModel: HaViewModel) {
                     HomeMediaArea(
                         viewModel = viewModel,
                         compact = false,
-                        forceKind = when (effectiveFocus) {
+                        forceKind = when (displayPage) {
                             HomeMediaFocus.Music -> HomeMediaKind.Music
                             HomeMediaFocus.Tv -> HomeMediaKind.Tv
                             else -> null
@@ -426,6 +461,13 @@ private fun HomeScreen(viewModel: HaViewModel) {
                             maxEvents = 3,
                         )
                     }
+                }
+                if (mediaPages.size > 1) {
+                    HomeMediaPageDots(
+                        pages = mediaPages,
+                        selected = displayPage,
+                        held = homeMediaFocus != HomeMediaFocus.Auto,
+                    )
                 }
             }
         }
@@ -500,77 +542,32 @@ private val DockItems = listOf(
 )
 
 @Composable
-private fun HomeMediaFocusSwitcher(
-    focus: HomeMediaFocus,
-    camerasEnabled: Boolean,
-    tvEnabled: Boolean,
-    onSelect: (HomeMediaFocus) -> Unit,
+private fun HomeMediaPageDots(
+    pages: List<HomeMediaFocus>,
+    selected: HomeMediaFocus,
+    held: Boolean,
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color(0x14000000))
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        HomeMediaFocusChip(
-            label = "Auto",
-            selected = focus == HomeMediaFocus.Auto,
-            enabled = true,
-            onClick = { onSelect(HomeMediaFocus.Auto) },
-            modifier = Modifier.weight(1f),
-        )
-        HomeMediaFocusChip(
-            label = "Cameras",
-            selected = focus == HomeMediaFocus.Cameras,
-            enabled = camerasEnabled,
-            onClick = { onSelect(HomeMediaFocus.Cameras) },
-            modifier = Modifier.weight(1f),
-        )
-        HomeMediaFocusChip(
-            label = "Music",
-            selected = focus == HomeMediaFocus.Music,
-            enabled = true,
-            onClick = { onSelect(HomeMediaFocus.Music) },
-            modifier = Modifier.weight(1f),
-        )
-        HomeMediaFocusChip(
-            label = "TV",
-            selected = focus == HomeMediaFocus.Tv,
-            enabled = tvEnabled,
-            onClick = { onSelect(HomeMediaFocus.Tv) },
-            modifier = Modifier.weight(1f),
-        )
-    }
-}
-
-@Composable
-private fun HomeMediaFocusChip(
-    label: String,
-    selected: Boolean,
-    enabled: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val bg = when {
-        selected -> ActiveYellow
-        else -> Color.Transparent
-    }
-    val fg = when {
-        !enabled -> TextMuted.copy(alpha = 0.45f)
-        selected -> Color.Black
-        else -> TextDark
-    }
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(bg)
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(vertical = 10.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(label, color = fg, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        pages.forEach { page ->
+            val active = page == selected
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 5.dp)
+                    .size(if (active) 9.dp else 7.dp)
+                    .clip(CircleShape)
+                    .background(
+                        when {
+                            active && held -> ActiveYellow
+                            active -> TextDark.copy(alpha = 0.72f)
+                            else -> TextMuted.copy(alpha = 0.35f)
+                        },
+                    ),
+            )
+        }
     }
 }
 
