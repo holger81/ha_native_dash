@@ -48,6 +48,26 @@ class MappableLocationTest {
     }
 
     @Test
+    fun geocodeQueryVariants_dropsVenuePrefixForStreetFallback() {
+        val variants = geocodeQueryVariants(
+            "KidTopia Indoor Play Center\n4620 Auto Mall Pkwy\nFremont",
+        )
+        assertTrue(variants.contains("KidTopia Indoor Play Center, 4620 Auto Mall Pkwy, Fremont"))
+        assertTrue(variants.contains("4620 Auto Mall Pkwy, Fremont"))
+        assertTrue(variants.contains("4620 Auto Mall Parkway, Fremont"))
+        assertTrue(variants.contains("KidTopia Indoor Play Center, Fremont"))
+    }
+
+    @Test
+    fun expandStreetAbbreviations_pkwy() {
+        assertEquals(
+            "4620 Auto Mall Parkway, Fremont",
+            expandStreetAbbreviations("4620 Auto Mall Pkwy, Fremont"),
+        )
+        assertNull(expandStreetAbbreviations("123 Main Street"))
+    }
+
+    @Test
     fun parseNominatimResponse_readsLatLon() {
         val body = """[{"lat":"37.40","lon":"-121.97","display_name":"Test"}]"""
         assertEquals(GeoPoint(37.40, -121.97), LocationGeocoder.parseNominatimResponse(body))

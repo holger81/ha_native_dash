@@ -29,16 +29,24 @@ object LocationGeocoder {
      * Resolve a free-text address to coordinates. Tries the platform [Geocoder]
      * first, then OpenStreetMap Nominatim (wall tablets often lack Play Services
      * geocoding). Returns null when nothing resolves.
+     *
+     * Calendar locations often look like "Venue Name, 123 Main St, City" — Nominatim
+     * frequently returns empty for the full string but succeeds on the street-only
+     * or venue+city fallbacks, so we try several query variants.
      */
     suspend fun geocode(
         context: Context,
         query: String,
         bias: GeoPoint? = null,
     ): GeoPoint? = withContext(Dispatchers.IO) {
-        val trimmed = normalizeLocationQuery(query) ?: return@withContext null
-        parseCoordinates(trimmed)?.let { return@withContext it }
-        platformGeocode(context, trimmed)
-            ?: nominatimGeocode(trimmed, bias)
+        val variants = geocodeQueryVariants(query)
+        if (variants.isEmpty()) return@withContext null
+        parseCoordinates(variants.first())?.let { return@withContext it }
+        for (variant in variants) {
+            platformGeocode(context, variant)?.let { return@withContext it }
+            nominatimGeocode(variant, bias)?.let { return@withContext it }
+        }
+        null
     }
 
     private suspend fun platformGeocode(context: Context, query: String): GeoPoint? {
@@ -140,3 +148,57 @@ fun normalizeLocationQuery(raw: String?): String? {
         .trim()
         .takeIf { it.isNotEmpty() }
 }
+
+/**
+ * Ordered geocode attempts for a calendar location: full text, expanded street
+ * abbreviations, street-number suffix (drop leading venue name), venue + city.
+ */
+fun geocodeQueryVariants(raw: String?): List<String> {
+    val primary = normalizeLocationQuery(raw) ?: return emptyList()
+    val out = linkedSetOf<String>()
+    fun add(q: String?) {
+        val t = q?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        out.add(t)
+        expandStreetAbbreviations(t)?.let { out.add(it) }
+    }
+    add(primary)
+    val parts = primary.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+    if (parts.size >= 2) {
+        val streetIdx = parts.indexOfFirst { part -> part.any(Char::isDigit) }
+        if (streetIdx > 0) {
+            add(parts.drop(streetIdx).joinToString(", "))
+        }
+        // "KidTopia Indoor Play Center, …, Fremont" → "KidTopia Indoor Play Center, Fremont"
+        if (!parts.first().any(Char::isDigit) && parts.last() != parts.first()) {
+            add("${parts.first()}, ${parts.last()}")
+        }
+    }
+    return out.toList()
+}
+
+/** Expand common US street abbreviations Nominatim often misses (Pkwy → Parkway). */
+fun expandStreetAbbreviations(query: String): String? {
+    var s = query
+    var changed = false
+    for ((pattern, replacement) in STREET_ABBREVIATIONS) {
+        val next = pattern.replace(s, replacement)
+        if (next != s) {
+            s = next
+            changed = true
+        }
+    }
+    return s.takeIf { changed }
+}
+
+private val STREET_ABBREVIATIONS = listOf(
+    Regex("""\bPkwy\b""", RegexOption.IGNORE_CASE) to "Parkway",
+    Regex("""\bHwy\b""", RegexOption.IGNORE_CASE) to "Highway",
+    Regex("""\bBlvd\b""", RegexOption.IGNORE_CASE) to "Boulevard",
+    Regex("""\bAve\b""", RegexOption.IGNORE_CASE) to "Avenue",
+    Regex("""\bDr\b""", RegexOption.IGNORE_CASE) to "Drive",
+    Regex("""\bRd\b""", RegexOption.IGNORE_CASE) to "Road",
+    Regex("""\bSt\b""", RegexOption.IGNORE_CASE) to "Street",
+    Regex("""\bLn\b""", RegexOption.IGNORE_CASE) to "Lane",
+    Regex("""\bCt\b""", RegexOption.IGNORE_CASE) to "Court",
+    Regex("""\bCir\b""", RegexOption.IGNORE_CASE) to "Circle",
+)
