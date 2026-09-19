@@ -234,6 +234,10 @@ class CredentialsStore(context: Context) {
         }
         // Absent or empty key from older builds that persisted "" on every save —
         // use the household mediagen so the wall actually requests Flux pads.
+        prefs.edit()
+            .putString(KEY_MEDIAGEN_URL, DEFAULT_MEDIAGEN_URL)
+            .putBoolean(KEY_MEDIAGEN_DISABLED, false)
+            .apply()
         return DEFAULT_MEDIAGEN_URL
     }
 

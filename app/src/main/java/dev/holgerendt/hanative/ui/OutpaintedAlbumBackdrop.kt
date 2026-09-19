@@ -109,8 +109,9 @@ fun AlbumOutpaintHero(
         layout = null
         fileStamp = 0L
         fluxComplete = false
-        if (coverRefs.isEmpty() || ui.mediagenUrl.isBlank()) return@LaunchedEffect
+        if (coverRefs.isEmpty()) return@LaunchedEffect
         viewModel.scheduleAlbumArtOutpaintPrefetch(currentCoverOverride = coverRefs.first())
+        runCatching { viewModel.albumArtOutpaint.ensureLocalPad(coverRefs.first()) }
         var lastStamp = 0L
         while (true) {
             val hit = runCatching {
@@ -320,16 +321,27 @@ private fun BoxScope.SoftAtmosphereLayer(
     LaunchedEffect(coverPath, viewModel.client.currentBaseUrl, ui.mediagenUrl) {
         coverUrl = runCatching { viewModel.client.resolveMusicCoverUrl(coverPath, size = 512) }.getOrNull()
             ?: resolveHaImageUrl(coverPath, viewModel.client.currentBaseUrl)
-        if (ui.mediagenUrl.isNotBlank()) {
-            viewModel.scheduleAlbumArtOutpaintPrefetch(currentCoverOverride = coverPath)
-        }
+        viewModel.scheduleAlbumArtOutpaintPrefetch(currentCoverOverride = coverPath)
     }
     LaunchedEffect(coverRefs, ui.mediagenUrl) {
         padFile = null
         padStamp = 0L
         fluxComplete = false
-        if (coverRefs.isEmpty() || ui.mediagenUrl.isBlank()) return@LaunchedEffect
-        var lastStamp = 0L
+        if (coverRefs.isEmpty()) return@LaunchedEffect
+        // Build a local pad immediately so soft-enlarge is not stuck waiting on the worker.
+        val primary = coverRefs.first()
+        val local = runCatching {
+            viewModel.albumArtOutpaint.ensureLocalPad(primary)
+        }.getOrNull()
+        if (local != null) {
+            padFile = local
+            padStamp = local.length() xor local.lastModified()
+        }
+        // Bind alternates so later peeks hit the same pad.
+        for (ref in coverRefs.drop(1)) {
+            runCatching { viewModel.albumArtOutpaint.ensureLocalPad(ref) }
+        }
+        var lastStamp = padStamp
         while (true) {
             val hit = runCatching {
                 viewModel.albumArtOutpaint.peekOutpaintedFile(coverRefs)
@@ -345,10 +357,6 @@ private fun BoxScope.SoftAtmosphereLayer(
                     padFile = hit
                     padStamp = stamp
                 }
-            } else {
-                padFile = null
-                padStamp = 0L
-                lastStamp = 0L
             }
             delay(if (fluxDone) 30_000L else 2_000L)
         }

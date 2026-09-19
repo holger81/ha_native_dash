@@ -1165,7 +1165,6 @@ class HaViewModel(
      * the **current** Music Assistant playlist (now-playing + next tracks).
      */
     fun scheduleAlbumArtOutpaintPrefetch(currentCoverOverride: String? = null) {
-        if (credentials.mediagenUrl.isBlank()) return
         val wall = _musicWall.value
         val queue = wall.queue
         val musicId = wall.selectedEntityId

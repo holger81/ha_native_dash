@@ -57,9 +57,11 @@ class AlbumArtOutpaintRepository(
      * Update the generation plan from the **active playlist only**.
      * At most [MAX_PLAYLIST_OUTPAINT] covers total: now-playing (if any) plus the
      * next tracks, never more.
+     *
+     * Always warms on-device local pads; mediagen Flux runs only when [mediagenUrl]
+     * is non-blank.
      */
     fun setTargets(currentCover: String?, upcomingCovers: List<String>) {
-        if (mediagenUrl().isBlank()) return
         val plan = playlistOutpaintPlan(currentCover, upcomingCovers)
         val next = OutpaintTargets(current = plan.current, upcoming = plan.upcoming)
         val active = buildSet {
@@ -88,7 +90,6 @@ class AlbumArtOutpaintRepository(
      * card peeks the other).
      */
     suspend fun peekOutpaintedFile(coverRefs: Collection<String?>): File? {
-        if (mediagenUrl().isBlank()) return null
         val refs = coverRefs.mapNotNull { it?.trim()?.takeIf(String::isNotEmpty) }.distinct()
         if (refs.isEmpty()) return null
         // Stable MASS/HA ids — no network, instant reuse of an already-warmed pad.
@@ -131,12 +132,37 @@ class AlbumArtOutpaintRepository(
     }
 
     /**
+     * Instant local edge pad for [coverRef], then queue mediagen Flux in the
+     * background when a URL is configured. Used by the home card so soft-enlarge
+     * is replaced as soon as cover bytes can be fetched.
+     */
+    suspend fun ensureLocalPad(coverRef: String?): File? {
+        if (coverRef.isNullOrBlank()) return null
+        peekOutpaintedFile(coverRef)?.let { return it }
+        val source = fetchCoverBytes(coverRef)
+        if (source == null) {
+            android.util.Log.w(TAG, "ensureLocalPad fetch miss cover=${coverRef.take(96)}")
+            return null
+        }
+        val local = cache.cachedFile(source)
+            ?: cache.cachedFileForCoverRef(coverRef)
+            ?: cache.getOrEnqueue(source) { bytes ->
+                AlbumArtLocalOutpaint.padFromEdges(bytes)
+            }
+            ?: return null
+        cache.bindCoverRef(coverRef, source)
+        setTargets(currentCover = coverRef, upcomingCovers = targets.get().upcoming)
+        return local
+    }
+
+    /**
      * Prefer cache; if missing, register [coverRef] as current backfill and poll
      * while the priority worker runs (upcoming still goes first).
      */
     suspend fun getOutpaintedFile(coverRef: String?): File? {
-        if (coverRef.isNullOrBlank() || mediagenUrl().isBlank()) return null
+        if (coverRef.isNullOrBlank()) return null
         peekOutpaintedFile(coverRef)?.let { return it }
+        ensureLocalPad(coverRef)?.let { return it }
         val existing = targets.get()
         setTargets(currentCover = coverRef, upcomingCovers = existing.upcoming)
         repeat(45) {
@@ -175,22 +201,23 @@ class AlbumArtOutpaintRepository(
     }
 
     private suspend fun drainQueue() {
-        val base = mediagenUrl().trim().trimEnd('/')
-        if (base.isBlank()) return
         while (true) {
+            val base = mediagenUrl().trim().trimEnd('/')
             val plan = targets.get()
             val nextRef = pickUncachedTarget(plan) ?: break
             val generated = runCatching {
                 val source = fetchCoverBytes(nextRef)
                 if (source == null) {
                     // Transient HA/MASS miss — cool down, do not poison failedRefs.
+                    android.util.Log.w(TAG, "fetch miss cover=${nextRef.take(96)}")
                     scheduleRetry(nextRef, FETCH_RETRY_MS)
                     return@runCatching false
                 }
                 val file = warmCover(base, nextRef, source)
                 if (file != null) {
                     cache.bindCoverRef(nextRef, source)
-                    if (cache.isFluxCompleteForCoverRef(nextRef) ||
+                    if (base.isBlank() ||
+                        cache.isFluxCompleteForCoverRef(nextRef) ||
                         AlbumArtLocalOutpaint.hasUniformEdges(source) ||
                         fluxAttemptedRefs.contains(nextRef)
                     ) {
@@ -254,6 +281,11 @@ class AlbumArtOutpaintRepository(
             ?: return null
         cache.bindCoverRef(coverRef, source)
         if (AlbumArtLocalOutpaint.hasUniformEdges(source)) {
+            fluxAttemptedRefs.add(coverRef)
+            return local
+        }
+        if (mediagenBase.isBlank()) {
+            // No generative URL — local pad is the final atmosphere.
             fluxAttemptedRefs.add(coverRef)
             return local
         }
@@ -354,6 +386,13 @@ class AlbumArtOutpaintRepository(
             cache.bindCoverRef(coverRef, source)
             return true
         }
+        // No mediagen URL: local pad is the finished state.
+        if (mediagenUrl().isBlank()) {
+            warmRefs.add(coverRef)
+            fluxAttemptedRefs.add(coverRef)
+            cache.bindCoverRef(coverRef, source)
+            return true
+        }
         if (isFluxPadSettled(source, cached) || cache.isFluxCompleteForCoverRef(coverRef)) {
             warmRefs.add(coverRef)
             fluxAttemptedRefs.add(coverRef)
@@ -387,7 +426,7 @@ class AlbumArtOutpaintRepository(
             if (comma < 0) return@withContext null
             return@withContext runCatching {
                 android.util.Base64.decode(coverRef.substring(comma + 1), android.util.Base64.DEFAULT)
-            }.getOrNull()
+            }.getOrNull()?.takeIf { it.isNotEmpty() }
         }
         val url = haClient.resolveMusicCoverUrl(coverRef, size = 512)
             ?: resolveRelative(coverRef)
@@ -397,21 +436,23 @@ class AlbumArtOutpaintRepository(
             if (comma < 0) return@withContext null
             return@withContext runCatching {
                 android.util.Base64.decode(url.substring(comma + 1), android.util.Base64.DEFAULT)
-            }.getOrNull()
+            }.getOrNull()?.takeIf { it.isNotEmpty() }
         }
-        haClient.authenticatedBytes(url)?.let { return@withContext it }
+        // Match Coil's HaImageLoader: bearer + MASS ingress cookie for HA/imageproxy hosts.
+        // Do not use authenticatedBytes alone — it omits the ingress cookie MASS needs.
         runCatching {
             val builder = Request.Builder().url(url).get()
             val base = haClient.currentBaseUrl.trimEnd('/')
-            if (base.isNotBlank() && url.startsWith(base)) {
+            val sameOrigin = base.isNotBlank() && url.startsWith(base)
+            if (sameOrigin || url.contains("/api/") || url.contains("/imageproxy")) {
                 haClient.bearerHeaders().forEach { (k, v) -> builder.header(k, v) }
                 haClient.massIngressHeaders().forEach { (k, v) -> builder.header(k, v) }
-            } else if (url.contains("/api/") || url.contains("/imageproxy")) {
-                haClient.massIngressHeaders().forEach { (k, v) -> builder.header(k, v) }
-                haClient.bearerHeaders().forEach { (k, v) -> builder.header(k, v) }
             }
             imageHttp.newCall(builder.build()).execute().use { response ->
-                if (!response.isSuccessful) return@use null
+                if (!response.isSuccessful) {
+                    android.util.Log.w(TAG, "cover HTTP ${response.code} for ${url.take(120)}")
+                    return@use null
+                }
                 response.body?.bytes()?.takeIf { it.isNotEmpty() }
             }
         }.getOrNull()
