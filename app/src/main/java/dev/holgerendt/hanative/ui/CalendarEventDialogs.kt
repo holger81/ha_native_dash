@@ -45,21 +45,31 @@ fun CalendarEventActionDialog(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val overlay = LocalOverlay.current
     CalendarPopupSheet(
         title = "Event",
         onDismiss = onDismiss,
     ) {
         Text(
             text = event.summary,
-            color = LocalOverlay.current.text,
+            color = overlay.text,
             fontSize = 16.sp,
             fontWeight = FontWeight.Medium,
             maxLines = 3,
             overflow = TextOverflow.Ellipsis,
         )
+        event.location?.trim()?.takeIf { it.isNotEmpty() }?.let { location ->
+            Text(
+                text = location,
+                color = overlay.muted,
+                fontSize = 14.sp,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = LocalOverlay.current.text)
+                Text("Cancel", color = overlay.text)
             }
             Button(
                 onClick = onEdit,

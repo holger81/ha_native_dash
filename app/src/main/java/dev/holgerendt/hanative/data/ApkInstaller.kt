@@ -91,6 +91,14 @@ class ApkInstaller(private val app: Context) {
         val installer = app.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
         params.setAppPackageName(app.packageName)
+        // Skip the Install confirm when allowed: device owner, or same-package
+        // self-update with UPDATE_PACKAGES_WITHOUT_USER_ACTION (API 31+).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            runCatching { params.setRequestUpdateOwnership(true) }
+        }
         val sessionId = installer.createSession(params)
         val session = installer.openSession(sessionId)
         try {

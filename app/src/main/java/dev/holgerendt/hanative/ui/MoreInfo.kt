@@ -560,6 +560,9 @@ private fun CalendarEvents(entityId: String, viewModel: HaViewModel) {
                 Column(Modifier.padding(vertical = 4.dp)) {
                     Text(event.summary, color = overlay.text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                     if (whenText.isNotBlank()) Text(whenText, color = overlay.muted, fontSize = 12.sp)
+                    event.location?.trim()?.takeIf { it.isNotEmpty() }?.let { location ->
+                        Text(location, color = overlay.muted, fontSize = 12.sp, maxLines = 2)
+                    }
                 }
             }
         }

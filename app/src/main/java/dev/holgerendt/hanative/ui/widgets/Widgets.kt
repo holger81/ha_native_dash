@@ -855,6 +855,9 @@ private fun DayEventsDialog(
                     ) {
                         Text(eventTimeLabel(event), color = TextMuted, fontSize = 12.sp)
                         Text(event.summary, color = TextDark, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        event.location?.trim()?.takeIf { it.isNotEmpty() }?.let { location ->
+                            Text(location, color = TextMuted, fontSize = 13.sp, maxLines = 2)
+                        }
                     }
                 }
             }
