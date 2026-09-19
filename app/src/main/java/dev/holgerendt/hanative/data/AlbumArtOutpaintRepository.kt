@@ -307,8 +307,9 @@ class AlbumArtOutpaintRepository(
                 cache.bindCoverRef(coverRef, source)
             } ?: local
         }
-        // One mediagen pass. Only mark attempted after a real HTTP outcome so a
-        // cold MASS/mediagen blip cannot silence Flux for the rest of the process.
+        // Only mark Flux attempted after an accepted Flux pad. A Local response
+        // (stale mediagen cache / rejected fill) must retry — otherwise the wall
+        // freezes on soft-enlarge forever.
         android.util.Log.i(TAG, "mediagen POST cover=${coverRef.take(96)} base=$mediagenBase")
         val result = runCatching { mediagen.outpaint(mediagenBase, source) }.getOrNull()
             ?.takeIf { it.bytes.isNotEmpty() }
@@ -317,14 +318,19 @@ class AlbumArtOutpaintRepository(
             scheduleRetry(coverRef, MEDIAGEN_RETRY_MS)
             return local
         }
-        fluxAttemptedRefs.add(coverRef)
-        retryAfterMs.remove(coverRef)
         android.util.Log.i(TAG, "mediagen ok source=${result.source} cover=${coverRef.take(96)}")
         if (shouldAcceptMediagenPad(result, source)) {
+            fluxAttemptedRefs.add(coverRef)
+            retryAfterMs.remove(coverRef)
             return cache.replace(source, result.bytes, markAsFlux = true)?.also {
                 cache.bindCoverRef(coverRef, source)
             } ?: local
         }
+        android.util.Log.w(
+            TAG,
+            "mediagen non-flux source=${result.source} cover=${coverRef.take(96)}; retry later",
+        )
+        scheduleRetry(coverRef, MEDIAGEN_RETRY_MS)
         return local
     }
 
