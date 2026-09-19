@@ -213,7 +213,8 @@ class MediagenOutpaintClient(
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .writeTimeout(60, TimeUnit.SECONDS)
-                .callTimeout(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                // Per-request only (POST or one poll). Overall Flux wait is [POLL_TIMEOUT_MS].
+                .callTimeout(60, TimeUnit.SECONDS)
                 .build()
     }
 }

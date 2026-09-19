@@ -909,7 +909,8 @@ class ManagementServer(
                 .live { background:#000; border-radius:14px; overflow:hidden; min-height:220px;
                   touch-action: none; user-select: none; }
                 .live img { width:100%; height:auto; display:block; cursor: crosshair;
-                  -webkit-user-drag: none; user-select: none; }
+                  -webkit-user-drag: none; user-select: none;
+                  image-rendering: auto; }
                 .update-box { margin: 16px 0; padding: 4px 0 8px; }
         """
 

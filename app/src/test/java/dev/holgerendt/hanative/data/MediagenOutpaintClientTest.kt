@@ -143,11 +143,14 @@ class MediagenOutpaintClientTest {
     }
 
     @Test
-    fun defaultClientUsesShortPerRequestTimeout() {
+    fun defaultClientUsesBoundedPerRequestCallTimeout() {
         val http = MediagenOutpaintClient.defaultClient()
+        // Call timeout is longer than read timeout so a multipart POST can finish;
+        // overall Flux wait is still POLL_TIMEOUT_MS across separate poll calls.
+        assertEquals(60_000L, http.callTimeoutMillis.toLong())
         assertEquals(
             MediagenOutpaintClient.REQUEST_TIMEOUT_SECONDS * 1000L,
-            http.callTimeoutMillis.toLong(),
+            http.readTimeoutMillis.toLong(),
         )
     }
 

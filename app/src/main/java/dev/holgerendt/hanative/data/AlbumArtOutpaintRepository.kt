@@ -50,6 +50,8 @@ class AlbumArtOutpaintRepository(
     private val failedRefs = ConcurrentHashMap.newKeySet<String>()
     /** Pictorial covers that already received a Flux upgrade attempt this process. */
     private val fluxAttemptedRefs = ConcurrentHashMap.newKeySet<String>()
+    /** Cover refs waiting out a transient fetch/mediagen miss before retry. */
+    private val retryAfterMs = ConcurrentHashMap<String, Long>()
 
     /**
      * Update the generation plan from the **active playlist only**.
@@ -60,17 +62,18 @@ class AlbumArtOutpaintRepository(
         if (mediagenUrl().isBlank()) return
         val plan = playlistOutpaintPlan(currentCover, upcomingCovers)
         val next = OutpaintTargets(current = plan.current, upcoming = plan.upcoming)
-        // Home media watch reschedules every few seconds; skip churn when the plan is unchanged.
+        val active = buildSet {
+            plan.current?.let { add(it) }
+            addAll(plan.upcoming)
+        }
+        // Home media watch reschedules every few seconds with the same plan.
+        // Always clear hard-fail poison for the active window so a MASS ingress
+        // blip at startup cannot blacklist covers for the whole process.
+        failedRefs.removeAll(active)
         if (targets.get() == next) {
             kickWorker()
             return
         }
-        // New playlist window — allow re-fetch of covers that failed earlier
-        // (transient HA/MASS blips used to blacklist a URL for the whole process).
-        failedRefs.removeAll(buildSet {
-            plan.current?.let { add(it) }
-            addAll(plan.upcoming)
-        })
         targets.set(next)
         kickWorker()
     }
@@ -180,22 +183,31 @@ class AlbumArtOutpaintRepository(
             val generated = runCatching {
                 val source = fetchCoverBytes(nextRef)
                 if (source == null) {
-                    failedRefs.add(nextRef)
+                    // Transient HA/MASS miss — cool down, do not poison failedRefs.
+                    scheduleRetry(nextRef, FETCH_RETRY_MS)
                     return@runCatching false
                 }
                 val file = warmCover(base, nextRef, source)
                 if (file != null) {
                     cache.bindCoverRef(nextRef, source)
-                    warmRefs.add(nextRef)
+                    if (cache.isFluxCompleteForCoverRef(nextRef) ||
+                        AlbumArtLocalOutpaint.hasUniformEdges(source) ||
+                        fluxAttemptedRefs.contains(nextRef)
+                    ) {
+                        warmRefs.add(nextRef)
+                    }
                     true
                 } else {
-                    failedRefs.add(nextRef)
+                    scheduleRetry(nextRef, FETCH_RETRY_MS)
                     false
                 }
             }.getOrDefault(false)
-            if (!generated && !warmRefs.contains(nextRef)) {
-                failedRefs.add(nextRef)
+            if (!generated && !warmRefs.contains(nextRef) && !isRetryCooling(nextRef)) {
+                scheduleRetry(nextRef, FETCH_RETRY_MS)
             }
+            // Avoid a tight loop when every remaining target is cooling down.
+            if (pickUncachedTarget(targets.get()) == null) break
+            if (!generated) delay(750L)
         }
     }
 
@@ -245,16 +257,27 @@ class AlbumArtOutpaintRepository(
             fluxAttemptedRefs.add(coverRef)
             return local
         }
-        if (!fluxAttemptedRefs.add(coverRef)) return local
+        if (fluxAttemptedRefs.contains(coverRef)) return local
         // If stable id already has Flux we returned above. Only run mediagen when missing.
         if (cache.isFluxCompleteForCoverRef(coverRef)) {
+            fluxAttemptedRefs.add(coverRef)
             return cache.cachedFileForCoverRef(coverRef) ?: local
         }
-        // One mediagen pass. Trust server gating for Flux; keep on-device local
-        // when the API returns local / fails / unknown.
+        if (isRetryCooling(coverRef)) return local
+        // One mediagen pass. Only mark attempted after a real HTTP outcome so a
+        // cold MASS/mediagen blip cannot silence Flux for the rest of the process.
+        android.util.Log.i(TAG, "mediagen POST cover=${coverRef.take(96)} base=$mediagenBase")
         val result = runCatching { mediagen.outpaint(mediagenBase, source) }.getOrNull()
             ?.takeIf { it.bytes.isNotEmpty() }
-        if (result != null && result.source == MediagenOutpaintSource.Flux) {
+        if (result == null) {
+            android.util.Log.w(TAG, "mediagen miss/fail cover=${coverRef.take(96)}")
+            scheduleRetry(coverRef, MEDIAGEN_RETRY_MS)
+            return local
+        }
+        fluxAttemptedRefs.add(coverRef)
+        retryAfterMs.remove(coverRef)
+        android.util.Log.i(TAG, "mediagen ok source=${result.source} cover=${coverRef.take(96)}")
+        if (result.source == MediagenOutpaintSource.Flux) {
             return cache.replace(source, result.bytes, markAsFlux = true)?.also {
                 cache.bindCoverRef(coverRef, source)
             } ?: local
@@ -284,7 +307,10 @@ class AlbumArtOutpaintRepository(
     }
 
     private suspend fun isCoverFullyWarm(coverRef: String): Boolean {
-        if (warmRefs.contains(coverRef) || failedRefs.contains(coverRef)) return true
+        if (warmRefs.contains(coverRef)) return true
+        // Hard fails only (decode/permanent). Transient fetch misses use retryAfterMs.
+        if (failedRefs.contains(coverRef)) return true
+        if (isRetryCooling(coverRef)) return true
         // Flux already on disk for this MASS/HA id — do not re-queue mediagen.
         if (cache.isFluxCompleteForCoverRef(coverRef) &&
             cache.cachedFileForCoverRef(coverRef) != null
@@ -293,15 +319,7 @@ class AlbumArtOutpaintRepository(
             fluxAttemptedRefs.add(coverRef)
             return true
         }
-        val source = fetchCoverBytes(coverRef) ?: run {
-            // Still warm if a stable alias exists (offline / flaky fetch).
-            if (cache.cachedFileForCoverRef(coverRef) != null) {
-                warmRefs.add(coverRef)
-                return true
-            }
-            failedRefs.add(coverRef)
-            return true
-        }
+        val source = fetchCoverBytes(coverRef) ?: return false
         val cached = cache.cachedFile(source) ?: cache.cachedFileForCoverRef(coverRef) ?: return false
         if (AlbumArtLocalOutpaint.hasUniformEdges(source)) {
             warmRefs.add(coverRef)
@@ -315,11 +333,22 @@ class AlbumArtOutpaintRepository(
             cache.bindCoverRef(coverRef, source)
             return true
         }
-        // Solid local pad still waiting for a Flux upgrade this process.
+        // Local pad on disk still needs a successful mediagen outcome this process.
         if (fluxAttemptedRefs.contains(coverRef)) {
             warmRefs.add(coverRef)
             return true
         }
+        return false
+    }
+
+    private fun scheduleRetry(coverRef: String, delayMs: Long) {
+        retryAfterMs[coverRef] = System.currentTimeMillis() + delayMs
+    }
+
+    private fun isRetryCooling(coverRef: String): Boolean {
+        val until = retryAfterMs[coverRef] ?: return false
+        if (until > System.currentTimeMillis()) return true
+        retryAfterMs.remove(coverRef)
         return false
     }
 
@@ -386,6 +415,10 @@ class AlbumArtOutpaintRepository(
 
         /** @deprecated Retries removed; empty-prompt Flux is accepted on first pass. */
         const val FLUX_ATTEMPTS = 1
+
+        private const val TAG = "AlbumArtOutpaint"
+        private const val FETCH_RETRY_MS = 8_000L
+        private const val MEDIAGEN_RETRY_MS = 20_000L
 
         fun imageFetchClient(): OkHttpClient = OkHttpClient.Builder()
             .addInterceptor { chain ->

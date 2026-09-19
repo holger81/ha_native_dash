@@ -485,8 +485,9 @@ class ScreenCapture {
     private data class Layer(val bitmap: Bitmap, val x: Int, val y: Int)
 
     companion object {
-        private const val MAX_SIDE = 800
-        private const val QUALITY = 70
+        /** Longest edge after capture; keep near panel native res so admin live view stays sharp. */
+        private const val MAX_SIDE = 1920
+        private const val QUALITY = 90
         private const val TIMEOUT_MS = 5_000L
 
         fun errorJpeg(message: String): Jpeg = Jpeg(placeholder, message)
