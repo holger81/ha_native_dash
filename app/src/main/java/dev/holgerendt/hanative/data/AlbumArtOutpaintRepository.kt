@@ -264,6 +264,17 @@ class AlbumArtOutpaintRepository(
             return cache.cachedFileForCoverRef(coverRef) ?: local
         }
         if (isRetryCooling(coverRef)) return local
+        // Prefer an already-ready Flux pad on mediagen (other clients / prior POST).
+        val cachedRemote = runCatching { mediagen.getCached(mediagenBase, source) }.getOrNull()
+            ?.takeIf { it.bytes.isNotEmpty() }
+        if (cachedRemote != null && shouldAcceptMediagenPad(cachedRemote, source)) {
+            fluxAttemptedRefs.add(coverRef)
+            retryAfterMs.remove(coverRef)
+            android.util.Log.i(TAG, "mediagen cache hit source=${cachedRemote.source} cover=${coverRef.take(96)}")
+            return cache.replace(source, cachedRemote.bytes, markAsFlux = true)?.also {
+                cache.bindCoverRef(coverRef, source)
+            } ?: local
+        }
         // One mediagen pass. Only mark attempted after a real HTTP outcome so a
         // cold MASS/mediagen blip cannot silence Flux for the rest of the process.
         android.util.Log.i(TAG, "mediagen POST cover=${coverRef.take(96)} base=$mediagenBase")
@@ -277,12 +288,28 @@ class AlbumArtOutpaintRepository(
         fluxAttemptedRefs.add(coverRef)
         retryAfterMs.remove(coverRef)
         android.util.Log.i(TAG, "mediagen ok source=${result.source} cover=${coverRef.take(96)}")
-        if (result.source == MediagenOutpaintSource.Flux) {
+        if (shouldAcceptMediagenPad(result, source)) {
             return cache.replace(source, result.bytes, markAsFlux = true)?.also {
                 cache.bindCoverRef(coverRef, source)
             } ?: local
         }
         return local
+    }
+
+    /** True when mediagen bytes should replace the on-device local pad and mark `.flux`. */
+    private fun shouldAcceptMediagenPad(
+        result: MediagenOutpaintResult,
+        source: ByteArray,
+    ): Boolean {
+        if (result.bytes.isEmpty()) return false
+        if (AlbumArtLocalOutpaint.shouldRejectFluxPad(result.bytes, source)) return false
+        return when (result.source) {
+            MediagenOutpaintSource.Flux -> true
+            MediagenOutpaintSource.Local -> false
+            // Missing/odd headers: still accept if it is not a solid local-style pad.
+            MediagenOutpaintSource.Unknown ->
+                !AlbumArtLocalOutpaint.looksLikeLocalSolidPad(result.bytes)
+        }
     }
 
     /** True when the on-disk pad should not be regenerated (Flux only). */

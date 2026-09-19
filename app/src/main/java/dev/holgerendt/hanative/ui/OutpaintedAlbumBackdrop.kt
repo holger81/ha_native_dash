@@ -142,7 +142,11 @@ fun AlbumOutpaintHero(
     }
 
     Crossfade(
-        targetState = if (fluxComplete) Triple(outpaintFile, layout, fileStamp) else Triple(null, null, 0L),
+        targetState = if (fluxComplete && outpaintFile != null && layout != null) {
+            Triple(outpaintFile, layout, fileStamp)
+        } else {
+            Triple(null, null, 0L)
+        },
         modifier = modifier.fillMaxWidth(),
         label = "album-outpaint-hero",
     ) { (file, geo, stamp) ->
@@ -346,7 +350,7 @@ private fun BoxScope.SoftAtmosphereLayer(
                 padStamp = 0L
                 lastStamp = 0L
             }
-            delay(if (padFile != null) 30_000L else 2_000L)
+            delay(if (fluxDone) 30_000L else 2_000L)
         }
     }
 

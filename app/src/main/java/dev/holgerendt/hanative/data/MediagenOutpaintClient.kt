@@ -96,15 +96,29 @@ class MediagenOutpaintClient(
 
     private suspend fun pollUntilReady(base: String, hash: String): MediagenOutpaintResult? {
         val deadline = System.currentTimeMillis() + pollTimeoutMs
+        var consecutiveErrors = 0
         while (System.currentTimeMillis() < deadline) {
             coroutineContext.ensureActive()
+            val remaining = deadline - System.currentTimeMillis()
+            if (remaining <= 0L) break
             when (val outcome = fetchByHash(base, hash)) {
                 is FetchOutcome.Ready -> return outcome.result
                 is FetchOutcome.Generating -> {
+                    consecutiveErrors = 0
                     val waitMs = max(defaultRetryAfterMs, outcome.retryAfterMs)
-                    delay(waitMs.coerceAtMost(deadline - System.currentTimeMillis()))
+                    delay(waitMs.coerceAtMost(remaining))
                 }
-                FetchOutcome.Missing, FetchOutcome.Error -> return null
+                FetchOutcome.Missing -> {
+                    // Job may not be visible yet right after 202 — keep polling.
+                    consecutiveErrors = 0
+                    delay(defaultRetryAfterMs.coerceAtMost(remaining))
+                }
+                FetchOutcome.Error -> {
+                    consecutiveErrors++
+                    // One flaky GET used to abort the whole Flux wait; tolerate blips.
+                    if (consecutiveErrors >= 8) return null
+                    delay(defaultRetryAfterMs.coerceAtMost(remaining))
+                }
             }
         }
         return null

@@ -1,0 +1,16 @@
+---
+description: After any fix, rebuild the Greatroom APK, then commit and push
+alwaysApply: true
+---
+
+# Build → commit → push after fixes
+
+When you finish a bugfix or behavior change meant for the wall tablet:
+
+1. **Rebuild** with `./gradlew :app:assembleGreatroomDebug` (bumps `versionCode` via assemble — never reuse an old APK).
+2. **Commit** the fix plus the bumped `app/version.properties` (and any related test/docs changes).
+3. **Push** to `origin` on the current branch.
+
+Do this without waiting for the user to ask “build commit push,” unless they explicitly say not to commit or push.
+
+Entrance panel fixes: also run `./gradlew :app:assembleEntranceDebug` when the change is entrance-specific or shared and both panels need a fresh APK.

@@ -125,6 +125,38 @@ class MediagenOutpaintClientTest {
     }
 
     @Test
+    fun outpaintPollsThroughTransientGetErrors() = runBlocking {
+        val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xD9.toByte(), 7, 8)
+        val hash = "c".repeat(64)
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(202)
+                .setHeader("Retry-After", "1")
+                .setHeader(MediagenOutpaintClient.HEADER_HASH, hash)
+                .setHeader(MediagenOutpaintClient.HEADER_STATUS, "generating")
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"status":"generating","hash":"$hash","retry_after_s":1}"""),
+        )
+        // Flaky GET must not abort the Flux wait.
+        server.enqueue(MockResponse().setResponseCode(500).setBody("boom"))
+        server.enqueue(MockResponse().setResponseCode(404).setBody("not yet"))
+        server.enqueue(
+            MockResponse()
+                .setHeader(MediagenOutpaintClient.HEADER_SOURCE, "flux")
+                .setHeader(MediagenOutpaintClient.HEADER_HASH, hash)
+                .setHeader(MediagenOutpaintClient.HEADER_STATUS, "ready")
+                .setBody(Buffer().write(jpeg)),
+        )
+
+        val result = client(defaultRetryAfterMs = 20L)
+            .outpaint("http://127.0.0.1:${server.port}", byteArrayOf(3, 3, 3))
+        assertNotNull(result)
+        assertTrue(result!!.bytes.contentEquals(jpeg))
+        assertEquals(MediagenOutpaintSource.Flux, result.source)
+        assertEquals(4, server.requestCount)
+    }
+
+    @Test
     fun blankBaseReturnsNull() = runBlocking {
         assertNull(client().outpaint("", byteArrayOf(1)))
     }
