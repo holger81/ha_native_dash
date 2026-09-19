@@ -380,7 +380,7 @@ private fun BoxScope.SoftAtmosphereLayer(
                 when {
                     vivid -> 1f
                     fluxComplete -> 0.85f
-                    else -> 0.55f
+                    else -> 0.7f
                 },
             ),
             modifier = Modifier
@@ -388,15 +388,17 @@ private fun BoxScope.SoftAtmosphereLayer(
                 .graphicsLayer {
                     alpha = when {
                         vivid -> 0.85f
-                        fluxComplete -> 0.72f
-                        else -> 0.4f
+                        fluxComplete -> 0.78f
+                        // Local edge pads must still read as a full-bleed atmosphere;
+                        // 0.4 + heavy CardLight fade looked like soft-enlarge pillars.
+                        else -> 0.68f
                     }
                 }
                 .then(if (fluxComplete || vivid) Modifier else softBlurFallback())
                 .then(
                     when {
                         vivid || fluxComplete -> Modifier
-                        else -> Modifier.fadeSoftAtmosphere()
+                        else -> Modifier.fadeLocalAtmosphere()
                     },
                 ),
         )
@@ -447,6 +449,22 @@ private fun Modifier.fadeSoftAtmosphere(): Modifier = drawWithContent {
                 0.50f to card.copy(alpha = 0.55f),
                 0.75f to card.copy(alpha = 0.78f),
                 1.00f to card.copy(alpha = 0.92f),
+            ),
+        ),
+    )
+}
+
+/** Lighter wash so local edge pads still fill the card width (not grey pillars). */
+private fun Modifier.fadeLocalAtmosphere(): Modifier = drawWithContent {
+    drawContent()
+    val card = CardLight
+    drawRect(
+        brush = Brush.verticalGradient(
+            colorStops = arrayOf(
+                0.00f to card.copy(alpha = 0.12f),
+                0.55f to card.copy(alpha = 0.22f),
+                0.82f to card.copy(alpha = 0.45f),
+                1.00f to card.copy(alpha = 0.68f),
             ),
         ),
     )
