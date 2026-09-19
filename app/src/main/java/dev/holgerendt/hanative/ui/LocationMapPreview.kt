@@ -51,7 +51,7 @@ fun LocationMapPreview(
     var failed by remember(locationText) { mutableStateOf(false) }
     var loading by remember(locationText) { mutableStateOf(false) }
 
-    LaunchedEffect(locationText) {
+    LaunchedEffect(locationText, home) {
         resolved = null
         failed = false
         if (!looksLikeMappableLocation(locationText)) {
@@ -59,7 +59,7 @@ fun LocationMapPreview(
             return@LaunchedEffect
         }
         loading = true
-        val point = LocationGeocoder.geocode(context, locationText)
+        val point = LocationGeocoder.geocode(context, locationText, bias = home)
         loading = false
         if (point == null) {
             failed = true

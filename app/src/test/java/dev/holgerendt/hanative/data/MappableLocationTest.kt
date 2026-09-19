@@ -37,4 +37,20 @@ class MappableLocationTest {
         assertTrue(looksLikeMappableLocation("37.309, -121.789"))
         assertTrue(looksLikeMappableLocation("geo:37.309,-121.789"))
     }
+
+    @Test
+    fun normalizeLocationQuery_collapsesMultiline() {
+        assertEquals(
+            "4900 Marie P DeBartolo Way, Santa Clara, CA",
+            normalizeLocationQuery("4900 Marie P DeBartolo Way\nSanta Clara, CA"),
+        )
+        assertNull(normalizeLocationQuery("  \n  "))
+    }
+
+    @Test
+    fun parseNominatimResponse_readsLatLon() {
+        val body = """[{"lat":"37.40","lon":"-121.97","display_name":"Test"}]"""
+        assertEquals(GeoPoint(37.40, -121.97), LocationGeocoder.parseNominatimResponse(body))
+        assertNull(LocationGeocoder.parseNominatimResponse("[]"))
+    }
 }
