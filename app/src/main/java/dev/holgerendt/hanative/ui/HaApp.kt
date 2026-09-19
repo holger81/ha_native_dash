@@ -1326,7 +1326,7 @@ private fun MediagenUrlCard(viewModel: HaViewModel) {
     ) {
         Text("Mediagen outpaint", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
         Text(
-            "LAN mediagen base URL for extending album art behind the media card. Leave blank to use a local soft enlarge only. Results are cached on this tablet.",
+            "LAN mediagen base URL for extending album art behind the media card. Default is the household mediagen; leave blank (Clear) for local soft enlarge only. Results are cached on this tablet.",
             color = overlay.muted,
             fontSize = 14.sp,
         )

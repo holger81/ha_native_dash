@@ -79,6 +79,8 @@ class CredentialsStore(context: Context) {
     var mediagenUrl: String = readMediagenUrl()
         set(value) {
             field = value.trim().trimEnd('/')
+            // Distinguish "never configured" (use default) from an explicit Clear in settings.
+            prefs.edit().putBoolean(KEY_MEDIAGEN_DISABLED, field.isBlank()).apply()
             persist()
         }
 
@@ -217,6 +219,8 @@ class CredentialsStore(context: Context) {
 
     /** Absent key means "follow Lovelace"; a stored (possibly empty) array is an explicit choice. */
     private fun readMediagenUrl(): String {
+        // Settings "Clear" stores blank + this flag so we do not revive the default.
+        if (prefs.getBoolean(KEY_MEDIAGEN_DISABLED, false)) return ""
         val modern = readPref(KEY_MEDIAGEN_URL)
         if (modern.isNotBlank()) return modern
         val legacy = readPref(KEY_COMFYUI_URL_LEGACY)
@@ -228,7 +232,9 @@ class CredentialsStore(context: Context) {
                 .apply()
             return legacy
         }
-        return ""
+        // Absent or empty key from older builds that persisted "" on every save —
+        // use the household mediagen so the wall actually requests Flux pads.
+        return DEFAULT_MEDIAGEN_URL
     }
 
     private fun readCalendarPref(): List<String>? {
@@ -370,7 +376,7 @@ class CredentialsStore(context: Context) {
             val url = obj.optString("go2rtc_url").trim().trimEnd('/')
             if (url.isNotBlank()) go2rtcUrl = url
         }
-        if (mediagenUrl.isBlank()) {
+        if (mediagenUrl.isBlank() || mediagenUrl == DEFAULT_MEDIAGEN_URL) {
             val url = obj.optString("mediagen_url").trim().trimEnd('/')
                 .ifBlank { obj.optString("comfyui_url").trim().trimEnd('/') }
             if (url.isNotBlank()) mediagenUrl = url
@@ -454,7 +460,10 @@ class CredentialsStore(context: Context) {
         private const val KEY_TOKEN = "ha_token"
         private const val KEY_GO2RTC_URL = "go2rtc_url"
         private const val KEY_MEDIAGEN_URL = "mediagen_url"
+        private const val KEY_MEDIAGEN_DISABLED = "mediagen_disabled"
         private const val KEY_COMFYUI_URL_LEGACY = "comfyui_url"
+        /** Household mediagen when the pref was never set (or only stored blank by older builds). */
+        const val DEFAULT_MEDIAGEN_URL = "http://192.168.10.31:18090"
         private const val KEY_PIN = "management_pin"
         private const val KEY_TIMEOUT_SECONDS = "screen_timeout_seconds"
         private const val KEY_TIMEOUT_MINUTES_LEGACY = "screen_timeout_minutes"

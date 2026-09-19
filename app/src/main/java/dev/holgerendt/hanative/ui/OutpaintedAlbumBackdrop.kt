@@ -313,16 +313,18 @@ private fun BoxScope.SoftAtmosphereLayer(
     var padStamp by remember(coverRefs) { mutableStateOf(0L) }
     var fluxComplete by remember(coverRefs) { mutableStateOf(false) }
 
-    LaunchedEffect(coverPath, viewModel.client.currentBaseUrl) {
+    LaunchedEffect(coverPath, viewModel.client.currentBaseUrl, ui.mediagenUrl) {
         coverUrl = runCatching { viewModel.client.resolveMusicCoverUrl(coverPath, size = 512) }.getOrNull()
             ?: resolveHaImageUrl(coverPath, viewModel.client.currentBaseUrl)
-        viewModel.scheduleAlbumArtOutpaintPrefetch(currentCoverOverride = coverPath)
+        if (ui.mediagenUrl.isNotBlank()) {
+            viewModel.scheduleAlbumArtOutpaintPrefetch(currentCoverOverride = coverPath)
+        }
     }
     LaunchedEffect(coverRefs, ui.mediagenUrl) {
         padFile = null
         padStamp = 0L
         fluxComplete = false
-        if (coverRefs.isEmpty()) return@LaunchedEffect
+        if (coverRefs.isEmpty() || ui.mediagenUrl.isBlank()) return@LaunchedEffect
         var lastStamp = 0L
         while (true) {
             val hit = runCatching {

@@ -767,6 +767,7 @@ fun WeekPlanner(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier =
         null -> Unit
         is WeekPlannerManageOverlay.ChooseAction -> CalendarEventActionDialog(
             event = overlay.event,
+            viewModel = viewModel,
             onDismiss = { manageOverlay = null },
             onEdit = { requestManageAction(overlay.event, CalendarManageAction.Edit) },
             onDelete = { requestManageAction(overlay.event, CalendarManageAction.Delete) },

@@ -7,12 +7,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,6 +27,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.holgerendt.hanative.data.HaCalendarEvent
+import dev.holgerendt.hanative.data.homeGeoPoint
+import dev.holgerendt.hanative.data.looksLikeMappableLocation
 import dev.holgerendt.hanative.ui.theme.ActiveYellow
 import dev.holgerendt.hanative.ui.theme.LocalOverlay
 import dev.holgerendt.hanative.ui.theme.OverlayLightPopup
@@ -38,34 +43,54 @@ enum class CalendarManageAction {
     Delete,
 }
 
+private const val HomeZoneEntityId = "zone.home"
+
 @Composable
 fun CalendarEventActionDialog(
     event: HaCalendarEvent,
+    viewModel: HaViewModel,
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val overlay = LocalOverlay.current
+    val homeZone by viewModel.entityFlow(HomeZoneEntityId).collectAsState()
+    val home = remember(homeZone) { homeZone.homeGeoPoint() }
+    val location = event.location?.trim().orEmpty()
     CalendarPopupSheet(
         title = "Event",
         onDismiss = onDismiss,
     ) {
-        Text(
-            text = event.summary,
-            color = overlay.text,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 3,
-            overflow = TextOverflow.Ellipsis,
-        )
-        event.location?.trim()?.takeIf { it.isNotEmpty() }?.let { location ->
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
             Text(
-                text = location,
-                color = overlay.muted,
-                fontSize = 14.sp,
+                text = event.summary,
+                color = overlay.text,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (location.isNotEmpty()) {
+                Text(
+                    text = location,
+                    color = overlay.muted,
+                    fontSize = 14.sp,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (looksLikeMappableLocation(location)) {
+                    LocationMapPreview(
+                        locationText = location,
+                        home = home,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = onDismiss) {

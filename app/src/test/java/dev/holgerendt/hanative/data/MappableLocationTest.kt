@@ -1,0 +1,40 @@
+package dev.holgerendt.hanative.data
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class MappableLocationTest {
+    @Test
+    fun looksLikeAddress_streetAndCity() {
+        assertTrue(looksLikeMappableLocation("123 Main St, San Jose, CA"))
+        assertTrue(looksLikeMappableLocation("Levi's Stadium, Santa Clara"))
+        assertTrue(looksLikeMappableLocation("1 Infinite Loop"))
+    }
+
+    @Test
+    fun looksLikeAddress_rejectsMeetingsAndUrls() {
+        assertFalse(looksLikeMappableLocation("Online"))
+        assertFalse(looksLikeMappableLocation("https://zoom.us/j/123"))
+        assertFalse(looksLikeMappableLocation("meet.google.com/abc-defg"))
+        assertFalse(looksLikeMappableLocation("Remote"))
+        assertFalse(looksLikeMappableLocation(""))
+        assertFalse(looksLikeMappableLocation(null))
+    }
+
+    @Test
+    fun parseCoordinates_geoAndPair() {
+        assertEquals(GeoPoint(37.3, -121.8), parseCoordinates("geo:37.3,-121.8"))
+        assertEquals(GeoPoint(37.309, -121.789), parseCoordinates("37.309, -121.789"))
+        assertNull(parseCoordinates("not coords"))
+        assertNull(parseCoordinates("91.0, 0.0")) // invalid lat
+    }
+
+    @Test
+    fun looksLikeAddress_acceptsExplicitCoords() {
+        assertTrue(looksLikeMappableLocation("37.309, -121.789"))
+        assertTrue(looksLikeMappableLocation("geo:37.309,-121.789"))
+    }
+}
