@@ -713,7 +713,7 @@ private fun SettingsPopup(popup: PopupNode, viewModel: HaViewModel) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ScreenTimeoutCard(viewModel)
         Go2rtcUrlCard(viewModel)
-        ComfyUiUrlCard(viewModel)
+        MediagenUrlCard(viewModel)
         ManagementPinCard(viewModel)
         CalendarSubscriptionsCard(viewModel)
         if (PanelConfig.IS_ENTRANCE) {
@@ -1305,14 +1305,14 @@ private fun Go2rtcUrlCard(viewModel: HaViewModel) {
 }
 
 @Composable
-private fun ComfyUiUrlCard(viewModel: HaViewModel) {
+private fun MediagenUrlCard(viewModel: HaViewModel) {
     val overlay = LocalOverlay.current
     val ui by viewModel.ui.collectAsState()
-    var urlText by remember { mutableStateOf(ui.comfyUiUrl) }
+    var urlText by remember { mutableStateOf(ui.mediagenUrl) }
     var error by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(ui.comfyUiUrl) {
-        urlText = ui.comfyUiUrl
+    LaunchedEffect(ui.mediagenUrl) {
+        urlText = ui.mediagenUrl
     }
     val fieldColors = settingsFieldColors(overlay)
     val scope = rememberCoroutineScope()
@@ -1324,9 +1324,9 @@ private fun ComfyUiUrlCard(viewModel: HaViewModel) {
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("ComfyUI outpaint", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Text("Mediagen outpaint", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
         Text(
-            "LAN ComfyUI base URL for extending album art behind the media card. Leave blank to use a local soft enlarge only. Results are cached on this tablet.",
+            "LAN mediagen base URL for extending album art behind the media card. Leave blank to use a local soft enlarge only. Results are cached on this tablet.",
             color = overlay.muted,
             fontSize = 14.sp,
         )
@@ -1337,8 +1337,8 @@ private fun ComfyUiUrlCard(viewModel: HaViewModel) {
                 error = null
                 message = null
             },
-            label = { Text("ComfyUI base URL") },
-            placeholder = { Text("http://192.168.10.50:8188") },
+            label = { Text("Mediagen base URL") },
+            placeholder = { Text("http://192.168.10.31:18090") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
             colors = fieldColors,
@@ -1349,10 +1349,10 @@ private fun ComfyUiUrlCard(viewModel: HaViewModel) {
             Button(
                 onClick = {
                     scope.launch {
-                        val result = viewModel.setComfyUiUrl(urlText)
+                        val result = viewModel.setMediagenUrl(urlText)
                         if (result.isSuccess) {
                             error = null
-                            message = if (urlText.isBlank()) "Outpaint disabled" else "ComfyUI URL saved"
+                            message = if (urlText.isBlank()) "Outpaint disabled" else "Mediagen URL saved"
                         } else {
                             message = null
                             error = result.exceptionOrNull()?.message ?: "Could not save URL"
@@ -1364,12 +1364,12 @@ private fun ComfyUiUrlCard(viewModel: HaViewModel) {
             ) {
                 Text("Save URL", color = Color.Black)
             }
-            if (ui.comfyUiUrl.isNotBlank() || urlText.isNotBlank()) {
+            if (ui.mediagenUrl.isNotBlank() || urlText.isNotBlank()) {
                 TextButton(
                     onClick = {
                         urlText = ""
                         scope.launch {
-                            val result = viewModel.setComfyUiUrl("")
+                            val result = viewModel.setMediagenUrl("")
                             if (result.isSuccess) {
                                 error = null
                                 message = "Outpaint disabled"

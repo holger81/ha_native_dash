@@ -75,8 +75,8 @@ class CredentialsStore(context: Context) {
             persist()
         }
 
-    /** LAN ComfyUI base URL for album-art outpainting. Blank disables outpaint. */
-    var comfyUiUrl: String = readPref(KEY_COMFYUI_URL)
+    /** LAN mediagen base URL for album-art outpainting. Blank disables generative outpaint. */
+    var mediagenUrl: String = readMediagenUrl()
         set(value) {
             field = value.trim().trimEnd('/')
             persist()
@@ -216,7 +216,23 @@ class CredentialsStore(context: Context) {
     private fun readPref(key: String): String = prefs.getString(key, "")?.trim().orEmpty()
 
     /** Absent key means "follow Lovelace"; a stored (possibly empty) array is an explicit choice. */
+    private fun readMediagenUrl(): String {
+        val modern = readPref(KEY_MEDIAGEN_URL)
+        if (modern.isNotBlank()) return modern
+        val legacy = readPref(KEY_COMFYUI_URL_LEGACY)
+        if (legacy.isNotBlank()) {
+            // One-shot migrate so subsequent reads and recovery use mediagen_url.
+            prefs.edit()
+                .putString(KEY_MEDIAGEN_URL, legacy)
+                .remove(KEY_COMFYUI_URL_LEGACY)
+                .apply()
+            return legacy
+        }
+        return ""
+    }
+
     private fun readCalendarPref(): List<String>? {
+
         val raw = prefs.getString(KEY_CALENDARS, null) ?: return null
         val arr = runCatching { JSONArray(raw) }.getOrNull() ?: return null
         return (0 until arr.length()).mapNotNull { index ->
@@ -238,7 +254,7 @@ class CredentialsStore(context: Context) {
             .putString(KEY_URL, baseUrl)
             .putString(KEY_TOKEN, token)
             .putString(KEY_GO2RTC_URL, go2rtcUrl)
-            .putString(KEY_COMFYUI_URL, comfyUiUrl)
+            .putString(KEY_MEDIAGEN_URL, mediagenUrl)
             .putString(KEY_PIN, managementPin)
             .putInt(KEY_TIMEOUT_SECONDS, screenTimeoutSeconds)
             .putString(KEY_DISPLAY_OFF, displayOffEntity)
@@ -278,7 +294,7 @@ class CredentialsStore(context: Context) {
             put("ha_url", url)
             put("ha_token", accessToken)
             put("go2rtc_url", go2rtcUrl)
-            put("comfyui_url", comfyUiUrl)
+            put("mediagen_url", mediagenUrl)
             put("management_pin", pin)
             put("screen_timeout_seconds", screenTimeoutSeconds)
             if (displayOffEntity.isNotBlank()) put("display_off_entity", displayOffEntity)
@@ -354,9 +370,10 @@ class CredentialsStore(context: Context) {
             val url = obj.optString("go2rtc_url").trim().trimEnd('/')
             if (url.isNotBlank()) go2rtcUrl = url
         }
-        if (comfyUiUrl.isBlank()) {
-            val url = obj.optString("comfyui_url").trim().trimEnd('/')
-            if (url.isNotBlank()) comfyUiUrl = url
+        if (mediagenUrl.isBlank()) {
+            val url = obj.optString("mediagen_url").trim().trimEnd('/')
+                .ifBlank { obj.optString("comfyui_url").trim().trimEnd('/') }
+            if (url.isNotBlank()) mediagenUrl = url
         }
         if (token.isBlank()) {
             val value = obj.optString("ha_token").trim()
@@ -436,7 +453,8 @@ class CredentialsStore(context: Context) {
         private const val KEY_URL = "ha_url"
         private const val KEY_TOKEN = "ha_token"
         private const val KEY_GO2RTC_URL = "go2rtc_url"
-        private const val KEY_COMFYUI_URL = "comfyui_url"
+        private const val KEY_MEDIAGEN_URL = "mediagen_url"
+        private const val KEY_COMFYUI_URL_LEGACY = "comfyui_url"
         private const val KEY_PIN = "management_pin"
         private const val KEY_TIMEOUT_SECONDS = "screen_timeout_seconds"
         private const val KEY_TIMEOUT_MINUTES_LEGACY = "screen_timeout_minutes"

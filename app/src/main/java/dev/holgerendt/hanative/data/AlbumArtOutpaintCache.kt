@@ -7,8 +7,8 @@ import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Disk cache for ComfyUI outpainted album art.
- * Keyed by [ComfyUiOutpaintClient.OUTPAINT_CACHE_VERSION] + SHA-256 of source
+ * Disk cache for outpainted album art (local pad and mediagen Flux).
+ * Keyed by [OutpaintPads.OUTPAINT_CACHE_VERSION] + SHA-256 of source
  * cover bytes; single-flight per hash.
  *
  * Default directory is Documents/[recovery]/outpaint_cache so pads survive
@@ -18,7 +18,7 @@ class AlbumArtOutpaintCache(
     private val directory: File,
     private val maxFiles: Int = MAX_FILES,
     private val maxBytes: Long = MAX_BYTES,
-    private val cacheVersion: String = ComfyUiOutpaintClient.OUTPAINT_CACHE_VERSION,
+    private val cacheVersion: String = OutpaintPads.OUTPAINT_CACHE_VERSION,
 ) {
     private val dirMutex = Mutex()
     private val inFlight = ConcurrentHashMap<String, Mutex>()
@@ -124,14 +124,18 @@ class AlbumArtOutpaintCache(
     }
 
     /** Overwrite an existing cache entry (e.g. Flux upgrade after a local pad). */
-    suspend fun replace(sourceBytes: ByteArray, generated: ByteArray): File? {
+    suspend fun replace(
+        sourceBytes: ByteArray,
+        generated: ByteArray,
+        markAsFlux: Boolean = true,
+    ): File? {
         if (generated.isEmpty()) return null
         val hash = cacheKey(sourceBytes)
         val flight = inFlight.getOrPut(hash) { Mutex() }
         return try {
             flight.withLock {
                 writeBytesLocked(hash, generated)?.also {
-                    fluxMarkerFor(hash).createNewFile()
+                    if (markAsFlux) fluxMarkerFor(hash).createNewFile()
                 }
             }
         } finally {

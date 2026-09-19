@@ -157,8 +157,8 @@ data class UiState(
     val displayIlluminanceEntity: String = "",
     /** Blank keeps dashboard `stream_server` / existing camera fallbacks. */
     val go2rtcUrl: String = "",
-    /** Blank disables ComfyUI album-art outpainting. */
-    val comfyUiUrl: String = "",
+    /** Blank disables mediagen album-art outpainting. */
+    val mediagenUrl: String = "",
 )
 
 data class MediaPreview(
@@ -178,7 +178,7 @@ class HaViewModel(
     val albumArtOutpaint = AlbumArtOutpaintRepository(
         context = app,
         haClient = client,
-        comfyUiUrl = { credentials.comfyUiUrl },
+        mediagenUrl = { credentials.mediagenUrl },
         scope = viewModelScope,
     )
 
@@ -310,7 +310,7 @@ class HaViewModel(
             displayBrightnessEntity = credentials.displayBrightnessEntity,
             displayIlluminanceEntity = credentials.displayIlluminanceEntity,
             go2rtcUrl = credentials.go2rtcUrl,
-            comfyUiUrl = credentials.comfyUiUrl,
+            mediagenUrl = credentials.mediagenUrl,
         )
         client.onKioskEvent = { params ->
             if (KioskCommands.panelAllowed(params)) {
@@ -1165,7 +1165,7 @@ class HaViewModel(
      * the **current** Music Assistant playlist (now-playing + next tracks).
      */
     fun scheduleAlbumArtOutpaintPrefetch(currentCoverOverride: String? = null) {
-        if (credentials.comfyUiUrl.isBlank()) return
+        if (credentials.mediagenUrl.isBlank()) return
         val wall = _musicWall.value
         val queue = wall.queue
         val musicId = wall.selectedEntityId
@@ -1660,7 +1660,7 @@ class HaViewModel(
         return Result.success(Unit)
     }
 
-    suspend fun setComfyUiUrl(url: String): Result<Unit> {
+    suspend fun setMediagenUrl(url: String): Result<Unit> {
         val trimmed = url.trim().trimEnd('/')
         if (trimmed.isNotBlank()) {
             if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
@@ -1669,14 +1669,14 @@ class HaViewModel(
                 )
             }
             val host = NetworkGuard.hostOf(trimmed)
-                ?: return Result.failure(IllegalArgumentException("Enter a valid ComfyUI base URL"))
+                ?: return Result.failure(IllegalArgumentException("Enter a valid Mediagen base URL"))
             val privateHost = withContext(Dispatchers.IO) { NetworkGuard.isPrivateHost(host) }
             if (!privateHost) {
                 return Result.failure(IllegalArgumentException(NetworkGuard.hostRejectionReason(host)))
             }
         }
-        credentials.comfyUiUrl = trimmed
-        _ui.value = _ui.value.copy(comfyUiUrl = credentials.comfyUiUrl)
+        credentials.mediagenUrl = trimmed
+        _ui.value = _ui.value.copy(mediagenUrl = credentials.mediagenUrl)
         return Result.success(Unit)
     }
 

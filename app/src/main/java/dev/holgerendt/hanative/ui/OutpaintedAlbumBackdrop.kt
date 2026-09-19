@@ -104,12 +104,12 @@ fun AlbumOutpaintHero(
     var fileStamp by remember(coverRefs) { mutableStateOf(0L) }
     var fluxComplete by remember(coverRefs) { mutableStateOf(false) }
 
-    LaunchedEffect(coverRefs, ui.comfyUiUrl) {
+    LaunchedEffect(coverRefs, ui.mediagenUrl) {
         outpaintFile = null
         layout = null
         fileStamp = 0L
         fluxComplete = false
-        if (coverRefs.isEmpty() || ui.comfyUiUrl.isBlank()) return@LaunchedEffect
+        if (coverRefs.isEmpty() || ui.mediagenUrl.isBlank()) return@LaunchedEffect
         viewModel.scheduleAlbumArtOutpaintPrefetch(currentCoverOverride = coverRefs.first())
         var lastStamp = 0L
         while (true) {
@@ -318,11 +318,11 @@ private fun BoxScope.SoftAtmosphereLayer(
             ?: resolveHaImageUrl(coverPath, viewModel.client.currentBaseUrl)
         viewModel.scheduleAlbumArtOutpaintPrefetch(currentCoverOverride = coverPath)
     }
-    LaunchedEffect(coverRefs, ui.comfyUiUrl) {
+    LaunchedEffect(coverRefs, ui.mediagenUrl) {
         padFile = null
         padStamp = 0L
         fluxComplete = false
-        if (ui.comfyUiUrl.isBlank() || coverRefs.isEmpty()) return@LaunchedEffect
+        if (coverRefs.isEmpty()) return@LaunchedEffect
         var lastStamp = 0L
         while (true) {
             val hit = runCatching {
@@ -351,6 +351,7 @@ private fun BoxScope.SoftAtmosphereLayer(
     val outpaint = padFile
     if (outpaint != null) {
         // Any cached pad (local or Flux) fills the card — soft enlarge is interim only.
+        // Flux pads stay visible behind title/controls; local pads keep a soft bottom fade.
         AsyncImage(
             model = ImageRequest.Builder(context)
                 .data(outpaint)
@@ -361,12 +362,29 @@ private fun BoxScope.SoftAtmosphereLayer(
             contentDescription = null,
             imageLoader = loader,
             contentScale = ContentScale.Crop,
-            colorFilter = desaturateFilter(if (vivid) 1f else if (fluxComplete) 0.7f else 0.55f),
+            colorFilter = desaturateFilter(
+                when {
+                    vivid -> 1f
+                    fluxComplete -> 0.85f
+                    else -> 0.55f
+                },
+            ),
             modifier = Modifier
                 .matchParentSize()
-                .graphicsLayer { alpha = if (vivid) 0.85f else if (fluxComplete) 0.55f else 0.4f }
-                .then(if (fluxComplete) Modifier else softBlurFallback())
-                .then(if (vivid) Modifier else Modifier.fadeSoftAtmosphere()),
+                .graphicsLayer {
+                    alpha = when {
+                        vivid -> 0.85f
+                        fluxComplete -> 0.72f
+                        else -> 0.4f
+                    }
+                }
+                .then(if (fluxComplete || vivid) Modifier else softBlurFallback())
+                .then(
+                    when {
+                        vivid || fluxComplete -> Modifier
+                        else -> Modifier.fadeSoftAtmosphere()
+                    },
+                ),
         )
         return
     }
@@ -380,16 +398,16 @@ private fun BoxScope.SoftAtmosphereLayer(
         contentDescription = null,
         imageLoader = loader,
         contentScale = ContentScale.Crop,
-        colorFilter = desaturateFilter(0.4f),
+        colorFilter = desaturateFilter(if (vivid) 0.75f else 0.4f),
         modifier = Modifier
             .matchParentSize()
             .graphicsLayer {
                 scaleX = 1.25f
                 scaleY = 1.25f
-                alpha = 0.28f
+                alpha = if (vivid) 0.5f else 0.28f
             }
             .then(softBlurFallback())
-            .fadeSoftAtmosphere(),
+            .then(if (vivid) Modifier else Modifier.fadeSoftAtmosphere()),
     )
 }
 

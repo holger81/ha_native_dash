@@ -24,10 +24,10 @@ object AlbumArtLocalOutpaint {
      */
     fun padFromEdges(
         sourceBytes: ByteArray,
-        padLeft: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_LEFT,
-        padTop: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_TOP,
-        padRight: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_RIGHT,
-        padBottom: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_BOTTOM,
+        padLeft: Int = OutpaintPads.OUTPAINT_PAD_LEFT,
+        padTop: Int = OutpaintPads.OUTPAINT_PAD_TOP,
+        padRight: Int = OutpaintPads.OUTPAINT_PAD_RIGHT,
+        padBottom: Int = OutpaintPads.OUTPAINT_PAD_BOTTOM,
     ): ByteArray? {
         if (sourceBytes.isEmpty()) return null
         val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
@@ -77,10 +77,10 @@ object AlbumArtLocalOutpaint {
     /** @deprecated Prefer [padFromEdges]; kept for callers/tests. */
     fun solidPadIfUniformEdges(
         sourceBytes: ByteArray,
-        padLeft: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_LEFT,
-        padTop: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_TOP,
-        padRight: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_RIGHT,
-        padBottom: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_BOTTOM,
+        padLeft: Int = OutpaintPads.OUTPAINT_PAD_LEFT,
+        padTop: Int = OutpaintPads.OUTPAINT_PAD_TOP,
+        padRight: Int = OutpaintPads.OUTPAINT_PAD_RIGHT,
+        padBottom: Int = OutpaintPads.OUTPAINT_PAD_BOTTOM,
     ): ByteArray? {
         if (sourceBytes.isEmpty()) return null
         val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
@@ -233,10 +233,10 @@ object AlbumArtLocalOutpaint {
     fun isPadColorMismatch(
         paddedBytes: ByteArray,
         sourceBytes: ByteArray,
-        padLeft: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_LEFT,
-        padTop: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_TOP,
-        padRight: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_RIGHT,
-        padBottom: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_BOTTOM,
+        padLeft: Int = OutpaintPads.OUTPAINT_PAD_LEFT,
+        padTop: Int = OutpaintPads.OUTPAINT_PAD_TOP,
+        padRight: Int = OutpaintPads.OUTPAINT_PAD_RIGHT,
+        padBottom: Int = OutpaintPads.OUTPAINT_PAD_BOTTOM,
     ): Boolean {
         val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
         val padded = BitmapFactory.decodeByteArray(paddedBytes, 0, paddedBytes.size, opts) ?: return false
@@ -275,10 +275,10 @@ object AlbumArtLocalOutpaint {
     fun shouldRejectFluxPad(
         paddedBytes: ByteArray,
         sourceBytes: ByteArray,
-        padLeft: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_LEFT,
-        padTop: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_TOP,
-        padRight: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_RIGHT,
-        padBottom: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_BOTTOM,
+        padLeft: Int = OutpaintPads.OUTPAINT_PAD_LEFT,
+        padTop: Int = OutpaintPads.OUTPAINT_PAD_TOP,
+        padRight: Int = OutpaintPads.OUTPAINT_PAD_RIGHT,
+        padBottom: Int = OutpaintPads.OUTPAINT_PAD_BOTTOM,
     ): Boolean {
         if (isPadSeamMismatch(paddedBytes, padLeft, padTop, padRight, padBottom)) return true
         val distance = padMismatchDistance(paddedBytes, sourceBytes, padLeft, padTop, padRight, padBottom)
@@ -303,10 +303,10 @@ object AlbumArtLocalOutpaint {
     fun padMismatchDistance(
         paddedBytes: ByteArray,
         sourceBytes: ByteArray,
-        padLeft: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_LEFT,
-        padTop: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_TOP,
-        padRight: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_RIGHT,
-        padBottom: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_BOTTOM,
+        padLeft: Int = OutpaintPads.OUTPAINT_PAD_LEFT,
+        padTop: Int = OutpaintPads.OUTPAINT_PAD_TOP,
+        padRight: Int = OutpaintPads.OUTPAINT_PAD_RIGHT,
+        padBottom: Int = OutpaintPads.OUTPAINT_PAD_BOTTOM,
     ): Double? {
         val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
         val padded = BitmapFactory.decodeByteArray(paddedBytes, 0, paddedBytes.size, opts) ?: return null
@@ -343,10 +343,10 @@ object AlbumArtLocalOutpaint {
      */
     fun isPadSeamMismatch(
         paddedBytes: ByteArray,
-        padLeft: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_LEFT,
-        padTop: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_TOP,
-        padRight: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_RIGHT,
-        padBottom: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_BOTTOM,
+        padLeft: Int = OutpaintPads.OUTPAINT_PAD_LEFT,
+        padTop: Int = OutpaintPads.OUTPAINT_PAD_TOP,
+        padRight: Int = OutpaintPads.OUTPAINT_PAD_RIGHT,
+        padBottom: Int = OutpaintPads.OUTPAINT_PAD_BOTTOM,
     ): Boolean {
         val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
         val padded = BitmapFactory.decodeByteArray(paddedBytes, 0, paddedBytes.size, opts) ?: return false
@@ -462,10 +462,10 @@ object AlbumArtLocalOutpaint {
      */
     fun looksLikeLocalSolidPad(
         paddedBytes: ByteArray,
-        padLeft: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_LEFT,
-        padTop: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_TOP,
-        padRight: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_RIGHT,
-        padBottom: Int = ComfyUiOutpaintClient.OUTPAINT_PAD_BOTTOM,
+        padLeft: Int = OutpaintPads.OUTPAINT_PAD_LEFT,
+        padTop: Int = OutpaintPads.OUTPAINT_PAD_TOP,
+        padRight: Int = OutpaintPads.OUTPAINT_PAD_RIGHT,
+        padBottom: Int = OutpaintPads.OUTPAINT_PAD_BOTTOM,
     ): Boolean {
         if (paddedBytes.isEmpty()) return false
         val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }

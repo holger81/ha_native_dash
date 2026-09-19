@@ -18,13 +18,13 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Resolves cover art, checks the on-disk outpaint cache, and generates pads:
- * 1. Uniform / black-frame covers → instant local solid pad (no Comfy)
- * 2. Pictorial covers → ComfyUI Flux fill in the background; reject lazy beige
- *    and fall back to local edge-mean pads
+ * 1. Uniform / black-frame covers → instant local solid pad (no mediagen)
+ * 2. Pictorial covers → mediagen Flux fill in the background; keep local pad
+ *    when the server returns local/fail
  *
  * Priority: now-playing cover first, then upcoming (+1 … +5).
  *
- * Never throws for network/Comfy failures — returns null so UI keeps the interim
+ * Never throws for network/mediagen failures — returns null so UI keeps the interim
  * soft local treatment until a pad is cached.
  *
  * Each cover ref is attempted at most once per process after a hard failure,
@@ -33,12 +33,12 @@ import java.util.concurrent.atomic.AtomicReference
 class AlbumArtOutpaintRepository(
     context: Context,
     private val haClient: HaClient,
-    private val comfyUiUrl: () -> String,
+    private val mediagenUrl: () -> String,
     private val scope: CoroutineScope,
     private val cache: AlbumArtOutpaintCache = AlbumArtOutpaintCache(
         RecoverableFiles.outpaintCacheDir(context),
     ),
-    private val comfy: ComfyUiOutpaintClient = ComfyUiOutpaintClient(context.applicationContext.assets),
+    private val mediagen: MediagenOutpaintClient = MediagenOutpaintClient(),
     private val imageHttp: OkHttpClient = imageFetchClient(),
 ) {
     private val workerMutex = Mutex()
@@ -46,7 +46,7 @@ class AlbumArtOutpaintRepository(
     private var workerJob: Job? = null
     /** Cover refs that already have a successful cache hit or generation this process. */
     private val warmRefs = ConcurrentHashMap.newKeySet<String>()
-    /** Cover refs that failed Comfy/fetch this process — do not hammer ComfyUI. */
+    /** Cover refs that failed mediagen/fetch this process — do not hammer the LAN API. */
     private val failedRefs = ConcurrentHashMap.newKeySet<String>()
     /** Pictorial covers that already received a Flux upgrade attempt this process. */
     private val fluxAttemptedRefs = ConcurrentHashMap.newKeySet<String>()
@@ -57,7 +57,7 @@ class AlbumArtOutpaintRepository(
      * next tracks, never more.
      */
     fun setTargets(currentCover: String?, upcomingCovers: List<String>) {
-        if (comfyUiUrl().isBlank()) return
+        if (mediagenUrl().isBlank()) return
         val plan = playlistOutpaintPlan(currentCover, upcomingCovers)
         val next = OutpaintTargets(current = plan.current, upcoming = plan.upcoming)
         // Home media watch reschedules every few seconds; skip churn when the plan is unchanged.
@@ -75,7 +75,7 @@ class AlbumArtOutpaintRepository(
         kickWorker()
     }
 
-    /** Cache-only lookup — never starts ComfyUI. Tries each cover ref until one hits. */
+    /** Cache-only lookup — never starts mediagen. Tries each cover ref until one hits. */
     suspend fun peekOutpaintedFile(coverRef: String?): File? =
         peekOutpaintedFile(listOf(coverRef))
 
@@ -85,7 +85,7 @@ class AlbumArtOutpaintRepository(
      * card peeks the other).
      */
     suspend fun peekOutpaintedFile(coverRefs: Collection<String?>): File? {
-        if (comfyUiUrl().isBlank()) return null
+        if (mediagenUrl().isBlank()) return null
         val refs = coverRefs.mapNotNull { it?.trim()?.takeIf(String::isNotEmpty) }.distinct()
         if (refs.isEmpty()) return null
         // Stable MASS/HA ids — no network, instant reuse of an already-warmed pad.
@@ -113,7 +113,7 @@ class AlbumArtOutpaintRepository(
         peekFluxComplete(listOf(coverRef))
 
     suspend fun peekFluxComplete(coverRefs: Collection<String?>): Boolean {
-        if (comfyUiUrl().isBlank()) return false
+        if (mediagenUrl().isBlank()) return false
         val refs = coverRefs.mapNotNull { it?.trim()?.takeIf(String::isNotEmpty) }.distinct()
         if (refs.isEmpty()) return false
         if (refs.any { cache.isFluxCompleteForCoverRef(it) }) return true
@@ -132,7 +132,7 @@ class AlbumArtOutpaintRepository(
      * while the priority worker runs (upcoming still goes first).
      */
     suspend fun getOutpaintedFile(coverRef: String?): File? {
-        if (coverRef.isNullOrBlank() || comfyUiUrl().isBlank()) return null
+        if (coverRef.isNullOrBlank() || mediagenUrl().isBlank()) return null
         peekOutpaintedFile(coverRef)?.let { return it }
         val existing = targets.get()
         setTargets(currentCover = coverRef, upcomingCovers = existing.upcoming)
@@ -172,7 +172,7 @@ class AlbumArtOutpaintRepository(
     }
 
     private suspend fun drainQueue() {
-        val base = comfyUiUrl().trim().trimEnd('/')
+        val base = mediagenUrl().trim().trimEnd('/')
         if (base.isBlank()) return
         while (true) {
             val plan = targets.get()
@@ -200,13 +200,14 @@ class AlbumArtOutpaintRepository(
     }
 
     /**
-     * Instant local edge pad for the UI, then optional Comfy Flux upgrade for
-     * pictorial covers (skipped for black/studio mattes). Lazy beige fills are rejected.
+     * Instant local edge pad for the UI, then optional mediagen Flux upgrade for
+     * pictorial covers (skipped for black/studio mattes). Server-local / failed
+     * responses keep the on-device local pad.
      *
      * Disk hits: keep textured / Flux pads; solid local pads still get one Flux
      * upgrade attempt (otherwise the instant pad would freeze forever).
      */
-    private suspend fun warmCover(comfyBase: String, coverRef: String, source: ByteArray): File? {
+    private suspend fun warmCover(mediagenBase: String, coverRef: String, source: ByteArray): File? {
         // Same MASS proxy id / HA path — reuse without caring that JPEG bytes drifted.
         cache.cachedFileForCoverRef(coverRef)?.let { stableHit ->
             if (cache.isFluxCompleteForCoverRef(coverRef)) {
@@ -245,16 +246,16 @@ class AlbumArtOutpaintRepository(
             return local
         }
         if (!fluxAttemptedRefs.add(coverRef)) return local
-        // If stable id already has Flux we returned above. Only run Comfy when missing.
+        // If stable id already has Flux we returned above. Only run mediagen when missing.
         if (cache.isFluxCompleteForCoverRef(coverRef)) {
             return cache.cachedFileForCoverRef(coverRef) ?: local
         }
-        // One Flux pass. Mild color drift is OK; seams / flat invents / extreme
-        // cream mats fall back to the local pad.
-        val flux = runCatching { comfy.outpaint(comfyBase, source) }.getOrNull()
-            ?.takeIf { it.isNotEmpty() }
-        if (flux != null && !AlbumArtLocalOutpaint.shouldRejectFluxPad(flux, source)) {
-            return cache.replace(source, flux)?.also {
+        // One mediagen pass. Trust server gating for Flux; keep on-device local
+        // when the API returns local / fails / unknown.
+        val result = runCatching { mediagen.outpaint(mediagenBase, source) }.getOrNull()
+            ?.takeIf { it.bytes.isNotEmpty() }
+        if (result != null && result.source == MediagenOutpaintSource.Flux) {
+            return cache.replace(source, result.bytes, markAsFlux = true)?.also {
                 cache.bindCoverRef(coverRef, source)
             } ?: local
         }
@@ -284,7 +285,7 @@ class AlbumArtOutpaintRepository(
 
     private suspend fun isCoverFullyWarm(coverRef: String): Boolean {
         if (warmRefs.contains(coverRef) || failedRefs.contains(coverRef)) return true
-        // Flux already on disk for this MASS/HA id — do not re-queue Comfy.
+        // Flux already on disk for this MASS/HA id — do not re-queue mediagen.
         if (cache.isFluxCompleteForCoverRef(coverRef) &&
             cache.cachedFileForCoverRef(coverRef) != null
         ) {
