@@ -23,10 +23,10 @@ Follow-up R1–R10 are implemented in source (see Phase 6 follow-up section).
 Visual acceptance (emulator/wall screenshots, Compose bounds) remains open.
 This is separate from the older Phase 4 UX items marked won't-implement.
 
-**Planned (2026-09-18):** Switch album-art outpainting from the embedded ComfyUI
-client to the household [mediagen](https://github.com/holger81/mediagen) HTTP
-API (`http://192.168.10.31:18090`). Keep on-device instant local pad + disk
-cache. See **Phase 7 — Mediagen outpaint switchover** below.
+**Landed (2026-09-18):** Phase 7 — album-art outpainting talks to household
+[mediagen](https://github.com/holger81/mediagen) (`http://192.168.10.31:18090`)
+instead of embedded ComfyUI. On-device instant local pad + disk cache kept.
+Device visual checklist under Phase 7.4 remains open.
 
 ## Phase 1 — Reliability & security
 
@@ -766,23 +766,19 @@ prompt/workflow quality changes.
   local spill into the right column; no full-screen artwork wallpaper.
 - [x] Start with a softened enlarged copy of the existing artwork for an
   immediate local effect while any AI job is pending or unavailable.
-- [x] **ComfyUI outpainting (LAN) — current:** configurable `comfyUiUrl`
-  (private-LAN only, same NetworkGuard policy as go2rtc). When set,
-  asynchronously upload the cover to ComfyUI, run the bundled Flux fill
-  pad/outpaint workflow, and store the result on-device under
-  Documents recovery `outpaint_cache/`, keyed by SHA-256 of
-  `cache_version || source` bytes. On a later request for the same cover, use
-  the cached file with no network. Blank URL disables outpaint (local soft
-  treatment only). Prefetch upcoming queue covers even when playback is idle;
-  warm the current cover first.
+- [−] **ComfyUI outpainting (LAN) — superseded by Phase 7 mediagen.** Former
+  `comfyUiUrl` / embedded workflow path removed; see mediagen item below.
 - [x] **Mediagen outpainting (LAN):** see Phase 7. Tablet calls
   `POST /v1/image/outpaint` on mediagen; keeps on-device local pad + cache for
   instant UI. Pref `mediagen_url` (migrates legacy `comfyui_url`).
-- [x] Never block playback transport or backyard cameras on outpaint. Cap wait
-  (mediagen cold Flux can exceed 90s; client timeout ≥ 180s), cancel when the
-  track/cover identity changes, and fall back to the local softened enlarge on
-  miss, timeout, or error. Single-flight per hash so concurrent UI does not
-  spam the generator. Soft size/count cap on the disk cache.
+  Prefetch upcoming queue covers; warm the current cover first. Blank URL
+  disables generative outpaint (local soft enlarge only).
+- [x] Never block playback transport or backyard cameras on outpaint. Mediagen
+  returns `202` + `Retry-After` while Flux runs; the tablet keeps the on-device
+  local pad and polls until ready (deadline ~180s). Cancel when the track/cover
+  identity changes, and fall back to soft enlarge on miss, timeout, or error.
+  Single-flight per hash so concurrent UI does not spam the generator. Soft
+  size/count cap on the disk cache.
 - [ ] **Visual accept (still open):** with outpaint URL set and a successful Flux
   job, the card atmosphere matches the cover edges (solid edge → same flat
   color; pictorial edge → generated scene continuation). Soft stretch of the
@@ -1112,18 +1108,25 @@ a successful build alone. No new redesign of rooms, Entrance, or camera lifecycl
   zero/three recent items, busy calendar, and 0/1/2/3 cameras with media/idle.
   Test contrast and touch targets on the physical wall before final sign-off.
 
-## Phase 7 — Mediagen outpaint switchover (landed)
+## Phase 7 — Mediagen outpaint switchover (landed; async follow-up)
 
 Replace the embedded ComfyUI client with a thin HTTP client to household
 mediagen (`http://192.168.10.31:18090`). Keep on-device instant local pad + disk
-cache so the home card does not wait for Flux (mediagen `POST` currently blocks
-until Flux finishes).
+cache so the home card does not wait for Flux.
+
+**Mediagen async contract (2026-09-18):** pictorial misses return `202` with
+`{status:"generating", hash, retry_after_s}` and `Retry-After`; clients poll
+`GET /v1/image/outpaint/{hash}` until `200` JPEG (`X-Outpaint-Status: ready`).
+Uniform/black mattes and cache hits still return `200` immediately. Env:
+`OUTPAINT_RETRY_AFTER_S` (default 5).
 
 ```text
 cover bytes → on-device local pad → on-device cache JPEG → backdrop/hero
-           ↘ POST /v1/image/outpaint → trust X-Outpaint-Source
-                flux → replace cache + .flux sidecar
-                local/fail → keep local pad
+           ↘ POST /v1/image/outpaint
+                200 ready (hit / local-only) → trust X-Outpaint-Source
+                202 generating → poll GET /{hash} → 200 ready
+                     flux → replace cache + .flux sidecar
+                     local/fail → keep local pad
 ```
 
 ### Chosen approach
@@ -1133,11 +1136,11 @@ cover bytes → on-device local pad → on-device cache JPEG → backdrop/hero
 - Keep `data/AlbumArtOutpaintCache.kt` as a local mirror (Coil / offline /
   Documents recovery).
 - Drop client-side Comfy workflow asset and upload/prompt/history/view loop.
-- Do **not** change mediagen to a two-phase API in this work.
 - Settings: rename UI to Mediagen; migrate pref `comfyui_url` → `mediagen_url`
   with one-shot fallback read of the old key.
 - Placeholder: `http://192.168.10.31:18090`. Blank URL disables generative path.
-- OkHttp call timeout ≥ 180s (match mediagen `OUTPAINT_POLL_TIMEOUT_S`).
+- Client polls on `202` (overall deadline ~180s); per-request HTTP timeouts stay
+  short (~30s).
 - NetworkGuard already allows `192.168.10.31` — no change.
 
 ### 7.1 Mediagen client
@@ -1145,8 +1148,10 @@ cover bytes → on-device local pad → on-device cache JPEG → backdrop/hero
 - [x] Add `MediagenOutpaintClient.kt`:
   - `POST {base}/v1/image/outpaint` multipart field `image`
   - Parse JPEG body + `X-Outpaint-Source`, `X-Media-Hash`
-  - Optional `GET {base}/v1/image/outpaint/{sha256}` (same versioned hash
-    `empty-prompt-feather0-v5`)
+  - Handle `202 generating` → poll `GET /v1/image/outpaint/{hash}` using
+    `Retry-After` / `retry_after_s` until `200` or deadline
+  - Optional `GET` cache-only probe (same versioned hash
+    `empty-prompt-feather0-v5`; hash = `sha256(version||bytes)`)
   - Private-LAN only via NetworkGuard interceptor
   - Return `null` on blank URL / non-private host / HTTP failure
 - [x] Wire `data/AlbumArtOutpaintRepository.kt`:
@@ -1168,7 +1173,7 @@ cover bytes → on-device local pad → on-device cache JPEG → backdrop/hero
 - [x] `ui/HaApp.kt` — rename `ComfyUiUrlCard` → Mediagen; placeholder
   `http://192.168.10.31:18090`
 - [x] `ui/OutpaintedAlbumBackdrop.kt` — depend on `ui.mediagenUrl`
-- Validation stays: http(s) + NetworkGuard private host
+- [x] Validation stays: http(s) + NetworkGuard private host
 
 ### 7.3 Remove Comfy from the app
 
@@ -1181,16 +1186,25 @@ cover bytes → on-device local pad → on-device cache JPEG → backdrop/hero
 
 ### 7.4 Tests and device verify
 
-- [x] New `MediagenOutpaintClientTest`: multipart POST, header parsing,
-  NetworkGuard reject of public hosts, timeout wiring
+- [x] `MediagenOutpaintClientTest`: multipart POST, header parsing, `202`→poll,
+  NetworkGuard reject of public hosts, timeout wiring, hash identity
 - [x] Keep `AlbumArtLocalOutpaintTest`, `AlbumArtOutpaintCacheTest`,
   `AlbumArtOutpaintPriorityTest`, `OutpaintCoverLayoutTest`
-- [ ] Device checklist:
+- [ ] Device checklist (after redeploying mediagen with async API):
   1. Set Mediagen URL to `http://192.168.10.31:18090`
-  2. Pictorial cover → instant local pad, then Flux upgrade / hero hover
+  2. Pictorial cover → instant local pad on tablet; mediagen `202` then Flux
+     upgrade / hero hover
   3. Uniform/black matte → local only, no long wait
   4. Blank URL → soft enlarge only
   5. Kill/reopen → cache hit from Documents `outpaint_cache`
+
+### 7.5 Mediagen async API (server)
+
+- [x] `POST` miss (pictorial) → `202` + `Retry-After` + `{status, hash, retry_after_s}`
+- [x] `GET /{hash}` while generating → `202`; when ready → `200` JPEG
+- [x] Cache hit / uniform local-only → sync `200`
+- [x] Single-flight per hash; `OUTPAINT_RETRY_AFTER_S` Portainer env
+- [ ] Redeploy mediagen stack from `main` and confirm with curl poll loop
 
 ### Rollback
 
@@ -1200,10 +1214,10 @@ cover bytes → on-device local pad → on-device cache JPEG → backdrop/hero
 
 ### Out of scope
 
-- Mediagen async / two-phase responses
 - Auth on mediagen
 - Pointing flavors that do not already share this code path
-- Removing on-device local pad (needs mediagen API change first)
+- Removing on-device local pad (optional later if mediagen returns early local
+  JPEG with `X-Outpaint-Status: generating`)
 
 ## Verification
 
