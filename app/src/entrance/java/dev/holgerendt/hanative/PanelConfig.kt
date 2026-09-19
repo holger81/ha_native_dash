@@ -16,8 +16,8 @@ object PanelConfig {
     const val DEFAULT_DISPLAY_BRIGHTNESS_ENTITY = ""
     const val DEFAULT_DISPLAY_ILLUMINANCE_ENTITY = ""
     const val ALLOW_CALENDAR_CREATE = false
+    /** Cameras stay on the home screen; no separate video popup. */
     val DRAWER_ITEMS = listOf(
-        DrawerDestination("Camera", CAMERA_POPUP),
         DrawerDestination("Changelog", "#changelog"),
         DrawerDestination("Settings", "#settings"),
     )
@@ -36,7 +36,7 @@ object PanelConfig {
             name = "Entrance",
             entity = "camera.entrance_fisheye_fluent",
             streamServer = go2rtcUrl,
-            streamName = "entrance_fisheye_sub",
+            streamName = "entrance_sub",
             muted = true,
         ),
     )

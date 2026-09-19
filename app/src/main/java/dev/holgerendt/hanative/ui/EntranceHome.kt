@@ -38,11 +38,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.holgerendt.hanative.PanelConfig
 import dev.holgerendt.hanative.data.EntityState
 import dev.holgerendt.hanative.data.LightAllowlist
 import dev.holgerendt.hanative.model.HomeDashboard
 import dev.holgerendt.hanative.model.WidgetNode
-import dev.holgerendt.hanative.ui.theme.AccentGreen
 import dev.holgerendt.hanative.ui.theme.ActiveYellow
 import dev.holgerendt.hanative.ui.theme.CardLight
 import dev.holgerendt.hanative.ui.theme.ChipDark
@@ -54,6 +54,8 @@ import dev.holgerendt.hanative.ui.widgets.CameraCard
 import dev.holgerendt.hanative.ui.widgets.ChipRow
 import dev.holgerendt.hanative.ui.widgets.WeekPlanner
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -125,13 +127,28 @@ fun EntranceHomeScreen(home: HomeDashboard, viewModel: HaViewModel) {
                         .fillMaxHeight(),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    home.heroCameras.forEach { camera ->
+                    val go2rtcUrl by remember(viewModel) {
+                        viewModel.ui.map { it.go2rtcUrl }.distinctUntilChanged()
+                    }.collectAsState(viewModel.ui.value.go2rtcUrl)
+                    val cameras = remember(home.heroCameras, go2rtcUrl) {
+                        val base = go2rtcUrl.trim().trimEnd('/').takeIf { it.isNotBlank() }
+                        if (base != null) {
+                            PanelConfig.wallCameras(base)
+                        } else {
+                            home.heroCameras.map { camera ->
+                                when (camera.streamName) {
+                                    "entrance_fisheye_sub" -> camera.copy(streamName = "entrance_sub")
+                                    else -> camera
+                                }
+                            }
+                        }
+                    }
+                    cameras.forEach { camera ->
                         Box(
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(18.dp))
-                                .clickable { viewModel.openPopup("#camera_alert") }
                                 .then(
                                     if (occupied) {
                                         Modifier.border(2.dp, ActiveYellow, RoundedCornerShape(18.dp))

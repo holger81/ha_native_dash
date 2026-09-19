@@ -63,7 +63,7 @@
         "entity": "camera.entrance_fisheye_fluent",
         "name": "Entrance",
         "stream_server": "http://192.168.10.31:1984/",
-        "stream_name": "entrance_fisheye_sub",
+        "stream_name": "entrance_sub",
         "camera_view": "live",
         "muted": true,
         "grid_area": "entrance"
@@ -110,49 +110,7 @@
         "grid_area": "lights"
       }
     ],
-    "popups": [
-      {
-        "type": "popup",
-        "name": "Visitor",
-        "icon": "mdi:video",
-        "hash": "#camera_alert",
-        "accent": "blue",
-        "cards": [
-          {
-            "type": "gap",
-            "height": 12
-          },
-          {
-            "type": "layout_grid",
-            "columns": "1fr",
-            "rows": "minmax(0, 1fr) minmax(0, 1fr)",
-            "areas": "\"door\"\n\"entrance\"\n",
-            "cards": [
-              {
-                "type": "camera",
-                "entity": "camera.reolink_video_doorbell_poe_fluent",
-                "name": "Front Door",
-                "stream_server": "http://192.168.10.31:1984/",
-                "stream_name": "frontdoor_sub",
-                "camera_view": "live",
-                "muted": true,
-                "grid_area": "door"
-              },
-              {
-                "type": "camera",
-                "entity": "camera.entrance_fisheye_fluent",
-                "name": "Entrance",
-                "stream_server": "http://192.168.10.31:1984/",
-                "stream_name": "entrance_fisheye_sub",
-                "camera_view": "live",
-                "muted": true,
-                "grid_area": "entrance"
-              }
-            ]
-          }
-        ]
-      }
-    ],
+    "popups": [],
     "calendar": {
       "type": "week_planner",
       "calendars": [
@@ -231,7 +189,6 @@
     "mdi:door",
     "mdi:lightbulb-off",
     "mdi:menu",
-    "mdi:video",
     "mdi:window-closed-variant"
   ]
 }

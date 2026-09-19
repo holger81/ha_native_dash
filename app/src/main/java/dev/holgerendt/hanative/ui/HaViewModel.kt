@@ -1452,6 +1452,13 @@ class HaViewModel(
     }
 
     fun openPopup(hash: String?) {
+        // Entrance keeps cameras on the home screen; doorbell/kiosk "camera"
+        // commands should just wake the panel instead of opening a sheet.
+        if (PanelConfig.IS_ENTRANCE && hash == KioskCommands.CAMERA_POPUP) {
+            wakeScreen()
+            _ui.value = _ui.value.copy(drawerOpen = false)
+            return
+        }
         val previous = _ui.value.popupHash
         if (hash == KioskCommands.CAMERA_POPUP) {
             // Ensure frontdoor/garage are already decoding before the sheet draws.

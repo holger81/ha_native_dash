@@ -840,7 +840,7 @@ def convert_entrance_home(view: dict) -> dict:
 
     for card in view.get("cards") or []:
         if card.get("type") == "custom:bubble-card" and card.get("card_type") == "pop-up":
-            popups.append(convert_popup(card))
+            # Entrance keeps cameras on the home screen; skip the Visitor sheet.
             continue
         area = (card.get("view_layout") or {}).get("grid-area")
         if area == "header":
@@ -870,6 +870,9 @@ def convert_entrance_home(view: dict) -> dict:
                         continue
                     kind = node.get("type")
                     if kind == "camera":
+                        # go2rtc stream is entrance_sub; Lovelace still used a stale alias.
+                        if node.get("stream_name") == "entrance_fisheye_sub":
+                            node["stream_name"] = "entrance_sub"
                         hero_cameras.append(node)
                     elif kind == "week_planner" and calendar is None:
                         calendar = node
