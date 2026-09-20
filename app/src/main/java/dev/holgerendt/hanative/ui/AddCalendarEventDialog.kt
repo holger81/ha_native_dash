@@ -57,7 +57,7 @@ fun EditCalendarEventDialog(
     val zone = remember { ZoneId.systemDefault() }
     val overlay = OverlayLightPopup
     androidx.compose.runtime.CompositionLocalProvider(LocalOverlay provides overlay) {
-        InWindowOverlay(
+        FullScreenDialogOverlay(
             onDismiss = onDismiss,
             dismissOnScrim = true,
             scrim = PopupScrim,
@@ -122,7 +122,7 @@ fun AddCalendarEventDialog(
 ) {
     val overlay = OverlayLightPopup
     androidx.compose.runtime.CompositionLocalProvider(LocalOverlay provides overlay) {
-        InWindowOverlay(
+        FullScreenDialogOverlay(
             onDismiss = onDismiss,
             dismissOnScrim = true,
             scrim = PopupScrim,

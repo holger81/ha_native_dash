@@ -110,7 +110,7 @@ import dev.holgerendt.hanative.ui.CalendarMessageDialog
 import dev.holgerendt.hanative.ui.DeleteCalendarEventDialog
 import dev.holgerendt.hanative.ui.EditCalendarEventDialog
 import dev.holgerendt.hanative.ui.HaViewModel
-import dev.holgerendt.hanative.ui.InWindowOverlay
+import dev.holgerendt.hanative.ui.FullScreenDialogOverlay
 import dev.holgerendt.hanative.ui.LoadingSpinner
 import dev.holgerendt.hanative.ui.MdiIcon
 import dev.holgerendt.hanative.ui.MediaPreview
@@ -824,7 +824,7 @@ private fun DayEventsDialog(
     onEventClick: (HaCalendarEvent) -> Unit,
 ) {
     val title = day.format(java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d"))
-    InWindowOverlay(
+    FullScreenDialogOverlay(
         onDismiss = onDismiss,
         dismissOnScrim = true,
         scrim = PopupScrim,
