@@ -1522,6 +1522,30 @@ class HaClient {
         }
     }
 
+    /**
+     * On-demand Waze drive time via HA `waze_travel_time.get_travel_times`.
+     * Returns the shortest route duration in whole minutes, or null on failure.
+     */
+    suspend fun wazeTravelMinutes(origin: GeoPoint, destination: GeoPoint): Int? {
+        if (!origin.isValid() || !destination.isValid()) return null
+        return runCatching {
+            withTimeout(10_000) {
+                val result = callService(
+                    domain = "waze_travel_time",
+                    service = "get_travel_times",
+                    data = mapOf(
+                        "origin" to JsonPrimitive(origin.toWazeCoord()),
+                        "destination" to JsonPrimitive(destination.toWazeCoord()),
+                        "region" to JsonPrimitive("us"),
+                        "realtime" to JsonPrimitive(true),
+                    ),
+                    returnResponse = true,
+                )
+                parseWazeTravelMinutes(result)
+            }
+        }.getOrNull()
+    }
+
     suspend fun updateCalendarEvent(
         entityId: String,
         uid: String,

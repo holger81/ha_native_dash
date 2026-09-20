@@ -7,9 +7,12 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -28,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import dev.holgerendt.hanative.data.GeoPoint
 import dev.holgerendt.hanative.data.LocationGeocoder
+import dev.holgerendt.hanative.data.formatTravelDriveLabel
 import dev.holgerendt.hanative.data.looksLikeMappableLocation
 import dev.holgerendt.hanative.ui.theme.LocalOverlay
 import kotlinx.serialization.json.Json
@@ -37,6 +41,9 @@ import kotlinx.serialization.json.put
 /**
  * Geocodes [locationText] when it looks like an address and shows an OSM/Leaflet
  * map (drag + pinch-zoom) with an optional home marker.
+ *
+ * When [home] and the event point are both available and [fetchTravelMinutes] is
+ * provided, requests drive time once (not on a timer) and shows it under the map.
  */
 @Composable
 fun LocationMapPreview(
@@ -44,16 +51,19 @@ fun LocationMapPreview(
     home: GeoPoint?,
     modifier: Modifier = Modifier,
     mapHeight: androidx.compose.ui.unit.Dp = 220.dp,
+    fetchTravelMinutes: (suspend (origin: GeoPoint, destination: GeoPoint) -> Int?)? = null,
 ) {
     val overlay = LocalOverlay.current
     val context = LocalContext.current
     var resolved by remember(locationText) { mutableStateOf<GeoPoint?>(null) }
     var failed by remember(locationText) { mutableStateOf(false) }
     var loading by remember(locationText) { mutableStateOf(false) }
+    var travelLabel by remember(locationText) { mutableStateOf<String?>(null) }
 
     LaunchedEffect(locationText, home) {
         resolved = null
         failed = false
+        travelLabel = null
         if (!looksLikeMappableLocation(locationText)) {
             failed = true
             return@LaunchedEffect
@@ -69,6 +79,16 @@ fun LocationMapPreview(
     }
 
     val point = resolved
+    LaunchedEffect(point, home) {
+        travelLabel = null
+        val origin = home
+        val destination = point
+        val fetch = fetchTravelMinutes
+        if (origin == null || destination == null || fetch == null) return@LaunchedEffect
+        val minutes = runCatching { fetch(origin, destination) }.getOrNull() ?: return@LaunchedEffect
+        travelLabel = formatTravelDriveLabel(minutes)
+    }
+
     when {
         loading -> Box(
             modifier = modifier
@@ -80,15 +100,28 @@ fun LocationMapPreview(
         ) {
             CircularProgressIndicator(color = overlay.muted, strokeWidth = 2.dp)
         }
-        point != null -> LeafletMap(
-            event = point,
-            home = home,
-            label = locationText,
-            modifier = modifier
-                .fillMaxWidth()
-                .height(mapHeight)
-                .clip(RoundedCornerShape(12.dp)),
-        )
+        point != null -> Column(
+            modifier = modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            LeafletMap(
+                event = point,
+                home = home,
+                label = locationText,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(mapHeight)
+                    .clip(RoundedCornerShape(12.dp)),
+            )
+            travelLabel?.let { label ->
+                Text(
+                    text = label,
+                    color = overlay.muted,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(start = 2.dp),
+                )
+            }
+        }
         failed && looksLikeMappableLocation(locationText) -> Text(
             "Could not place on map",
             color = overlay.muted,

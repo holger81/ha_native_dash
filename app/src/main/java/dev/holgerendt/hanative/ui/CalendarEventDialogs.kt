@@ -27,6 +27,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.holgerendt.hanative.data.HaCalendarEvent
+import dev.holgerendt.hanative.data.GeoPoint
 import dev.holgerendt.hanative.data.homeGeoPoint
 import dev.holgerendt.hanative.data.looksLikeMappableLocation
 import dev.holgerendt.hanative.ui.theme.ActiveYellow
@@ -84,10 +85,20 @@ fun CalendarEventActionDialog(
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (looksLikeMappableLocation(location)) {
+                    val fetchTravel: (suspend (GeoPoint, GeoPoint) -> Int?)? = remember(home != null) {
+                        if (home != null) {
+                            { origin, destination ->
+                                viewModel.wazeTravelMinutes(origin, destination)
+                            }
+                        } else {
+                            null
+                        }
+                    }
                     LocationMapPreview(
                         locationText = location,
                         home = home,
                         modifier = Modifier.fillMaxWidth(),
+                        fetchTravelMinutes = fetchTravel,
                     )
                 }
             }

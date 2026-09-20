@@ -14,6 +14,7 @@ import dev.holgerendt.hanative.data.ConnectionState
 import dev.holgerendt.hanative.data.CredentialsStore
 import dev.holgerendt.hanative.data.DashboardLoader
 import dev.holgerendt.hanative.data.EntityState
+import dev.holgerendt.hanative.data.GeoPoint
 import dev.holgerendt.hanative.data.HaClient
 import dev.holgerendt.hanative.data.KioskCommand
 import dev.holgerendt.hanative.data.KioskCommands
@@ -2430,6 +2431,10 @@ class HaViewModel(
             onResult(result)
         }
     }
+
+    /** On-demand Waze drive minutes via HA; null on failure (UI stays quiet). */
+    suspend fun wazeTravelMinutes(origin: GeoPoint, destination: GeoPoint): Int? =
+        runCatching { client.wazeTravelMinutes(origin, destination) }.getOrNull()
 
     private suspend fun runCalendarEventMutation(block: suspend () -> Unit): Result<Unit> {
         val result = runCatching { block() }
