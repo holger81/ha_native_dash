@@ -121,6 +121,11 @@ class AlbumArtOutpaintRepository(
      */
     suspend fun peekOutpaintLayout(coverRefs: Collection<String?>): OutpaintCoverLayout? {
         val file = peekOutpaintedFile(coverRefs) ?: return null
+        return outpaintLayoutForFile(file)
+    }
+
+    /** Read geometry for the exact file being rendered, not a different alternate cache hit. */
+    suspend fun outpaintLayoutForFile(file: File): OutpaintCoverLayout? {
         val pads = cache.readPadsForFile(file)
         val bounds = withContext(Dispatchers.IO) {
             val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }

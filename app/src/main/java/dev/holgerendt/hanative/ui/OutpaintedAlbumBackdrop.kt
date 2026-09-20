@@ -1,6 +1,12 @@
 package dev.holgerendt.hanative.ui
 
 import android.os.Build
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.BitmapShader
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.Shader
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -20,12 +26,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
@@ -34,6 +43,10 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import dev.holgerendt.hanative.ui.theme.CardLight
 import java.io.File
+import dev.holgerendt.hanative.data.OutpaintCoverLayout
+import dev.holgerendt.hanative.data.alignedOutpaintPlacement
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 
 /** Shared hero metrics: cover position/size is identical with or without outpaint. */
@@ -45,9 +58,8 @@ internal object MusicOutpaintHeroMetrics {
 /**
  * Atmosphere / hero art behind Phase 6 music UI.
  *
- * Soft enlarge fills the card until a pad is cached; Flux pads are drawn as a
- * full-bleed card backdrop only. The floating sharp cover always uses fixed
- * [MusicOutpaintHeroMetrics] — never mediagen canvas fractions.
+ * The full music hero registers the pad's original-cover region to the fixed
+ * sharp cover. Compact strips can continue using a decorative atmosphere.
  */
 @Composable
 fun OutpaintedAlbumBackdrop(
@@ -59,6 +71,7 @@ fun OutpaintedAlbumBackdrop(
     /** Extra cover refs (e.g. MASS queue art) to try when looking up a cached pad. */
     coverAlternates: List<String> = emptyList(),
     vivid: Boolean = false,
+    alignWithHero: Boolean = false,
     content: @Composable BoxScope.() -> Unit,
 ) {
     Box(modifier = modifier) {
@@ -68,6 +81,7 @@ fun OutpaintedAlbumBackdrop(
                 coverAlternates = coverAlternates,
                 viewModel = viewModel,
                 vivid = vivid,
+                alignWithHero = alignWithHero,
             )
         }
         content()
@@ -113,11 +127,11 @@ fun AlbumOutpaintHero(
             modifier = Modifier
                 .size(MusicOutpaintHeroMetrics.CoverSize)
                 .shadow(
-                    elevation = 28.dp,
+                    elevation = 10.dp,
                     shape = RoundedCornerShape(22.dp),
                     clip = false,
-                    ambientColor = Color.Black.copy(alpha = 0.28f),
-                    spotColor = Color.Black.copy(alpha = 0.55f),
+                    ambientColor = Color.Black.copy(alpha = 0.15f),
+                    spotColor = Color.Black.copy(alpha = 0.25f),
                 )
                 .clip(RoundedCornerShape(22.dp)),
             spinnerSize = 28.dp,
@@ -132,6 +146,7 @@ private fun BoxScope.SoftAtmosphereLayer(
     coverAlternates: List<String>,
     viewModel: HaViewModel,
     vivid: Boolean,
+    alignWithHero: Boolean,
 ) {
     val context = LocalContext.current
     val loader = rememberHaImageLoader(viewModel.client)
@@ -191,8 +206,17 @@ private fun BoxScope.SoftAtmosphereLayer(
     }
 
     val outpaint = padFile
-    if (outpaint != null && fluxComplete && !vivid) {
-        // Full-bleed Flux pad as card backdrop only (cover position is fixed in the hero).
+    // Map the pad's baked cover region onto the fixed 196/220 hero — never FillBounds-stretch.
+    if (outpaint != null && alignWithHero) {
+        val aligned = rememberAlignedHeroFrame(outpaint, padStamp, viewModel)
+        if (aligned != null) {
+            AlignedHeroBackdrop(aligned.first, aligned.second)
+            return
+        }
+        // While decoding, keep soft atmosphere below rather than a blank flash.
+    }
+    if (outpaint != null && fluxComplete && !vivid && !alignWithHero) {
+        // Compact / non-hero surfaces: decorative full-bleed pad (aspect may not match cover).
         AsyncImage(
             model = ImageRequest.Builder(context)
                 .data(outpaint)
@@ -202,7 +226,7 @@ private fun BoxScope.SoftAtmosphereLayer(
                 .build(),
             contentDescription = null,
             imageLoader = loader,
-            contentScale = ContentScale.FillBounds,
+            contentScale = ContentScale.Crop,
             colorFilter = desaturateFilter(0.92f),
             modifier = Modifier
                 .matchParentSize()
@@ -281,6 +305,69 @@ private fun BoxScope.SoftAtmosphereLayer(
             }
             .then(softBlurFallback())
             .then(if (vivid) Modifier else Modifier.fadeSoftAtmosphere()),
+    )
+}
+
+@Composable
+private fun rememberAlignedHeroFrame(
+    file: File,
+    stamp: Long,
+    viewModel: HaViewModel,
+): Pair<Bitmap, OutpaintCoverLayout>? {
+    var frame by remember(file, stamp) { mutableStateOf<Pair<Bitmap, OutpaintCoverLayout>?>(null) }
+    LaunchedEffect(file, stamp) {
+        frame = withContext(Dispatchers.IO) {
+            val layout = viewModel.albumArtOutpaint.outpaintLayoutForFile(file) ?: return@withContext null
+            val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return@withContext null
+            bitmap to layout
+        }
+    }
+    return frame
+}
+
+/**
+ * Scale/translate the pad so its baked-in cover region coincides with the sharp
+ * [MusicOutpaintHeroMetrics] rect. Clamp edge pixels only where the pad does not
+ * yet reach the card bounds (older/smaller pads).
+ */
+@Composable
+private fun BoxScope.AlignedHeroBackdrop(bitmap: Bitmap, layout: OutpaintCoverLayout) {
+    Box(
+        Modifier
+            .matchParentSize()
+            .drawWithCache {
+                val placement = alignedOutpaintPlacement(
+                    imageWidth = bitmap.width,
+                    imageHeight = bitmap.height,
+                    layout = layout,
+                    cardWidth = size.width,
+                    coverSize = MusicOutpaintHeroMetrics.CoverSize.toPx(),
+                    stageHeight = MusicOutpaintHeroMetrics.StageHeight.toPx(),
+                )
+                val shader = BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
+                    setLocalMatrix(
+                        Matrix().apply {
+                            setScale(placement.scale, placement.scale)
+                            postTranslate(placement.left, placement.top)
+                        },
+                    )
+                }
+                val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+                    this.shader = shader
+                }
+                // Keep the hero band untinted so horizon/wall lines match the cover.
+                val fadeStart =
+                    ((MusicOutpaintHeroMetrics.StageHeight + MusicOutpaintHeroMetrics.CoverSize) / 2).toPx()
+                val wash = Brush.verticalGradient(
+                    colors = listOf(Color.Transparent, CardLight.copy(alpha = 0.85f)),
+                    startY = fadeStart,
+                    endY = maxOf(size.height, fadeStart + 1f),
+                )
+                onDrawBehind {
+                    drawIntoCanvas { it.nativeCanvas.drawRect(0f, 0f, size.width, size.height, paint) }
+                    drawRect(wash)
+                }
+            },
     )
 }
 

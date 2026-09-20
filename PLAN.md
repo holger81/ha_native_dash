@@ -783,6 +783,17 @@ prompt/workflow quality changes.
   color; pictorial edge → generated scene continuation). Soft stretch of the
   cover is not acceptable as the final pictorial look. Cache hits must swap in
   without resetting to soft enlarge. Idle/compact states stay without atmosphere.
+- [x] **Cover registration (2026-09-20):** full Greatroom music card now reads
+  the rendered pad's `.pads` geometry and maps its original-cover region onto
+  the fixed 196 dp cover in the 220 dp hero stage. Use a uniform scale matching
+  the foreground's centered Crop behavior, not card-wide FillBounds. Preserve
+  image colors across the cover boundary, retain a subtle 10 dp floating-cover
+  shadow, and start the readability wash below the cover. This fixes the
+  doubled/misaligned horizon from separately scaling the two layers. Existing
+  cache files need no regeneration. Beyond an undersized pad's bounds, clamp
+  its edge pixels as a fallback; this is not newly generated scenery. Validate
+  the final appearance on the wall, especially older narrow pads. Unit tests
+  cover horizon registration, asymmetric pads, density, and non-square covers.
 - [x] Remove the extended background in idle and compact camera-priority states.
   Readability and a calm wall display take precedence over decorative effects.
 

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -482,6 +483,7 @@ private fun FullMusicCard(
         modifier = modifier.fillMaxSize().clip(RoundedCornerShape(24.dp)).background(CardLight),
         extendedBackdrop = true,
         vivid = false,
+        alignWithHero = true,
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             Box(
@@ -869,18 +871,19 @@ private fun MediaProgressRow(
     }.coerceIn(0.0, duration)
     val progress = (live / duration).toFloat().coerceIn(0f, 1f)
 
+    val overlay = LocalOverlay.current
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(4.dp)
                 .clip(RoundedCornerShape(2.dp))
-                .background(Color(0x22000000)),
+                .background(overlay.well),
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth(progress)
-                    .height(4.dp)
+                    .fillMaxHeight()
                     .background(ActiveYellow),
             )
         }
