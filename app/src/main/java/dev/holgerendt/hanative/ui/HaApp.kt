@@ -47,6 +47,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -65,6 +66,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -73,6 +75,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
+import android.graphics.drawable.ColorDrawable
+import android.view.WindowManager
 import dev.holgerendt.hanative.PanelConfig
 import dev.holgerendt.hanative.data.Changelog
 import dev.holgerendt.hanative.data.CrashLogger
@@ -1530,6 +1536,9 @@ fun InWindowOverlay(
 /**
  * Full-window overlay for dialogs composed inside nested layouts (e.g. WeekPlanner).
  * [InWindowOverlay] only fills its parent; this covers the entire screen.
+ *
+ * Plain Compose [Dialog] windows are floating with theme insets + rounded corners,
+ * so [fillMaxSize] alone still leaves a bright frame — force MATCH_PARENT + clear bg.
  */
 @Composable
 fun FullScreenDialogOverlay(
@@ -1544,8 +1553,19 @@ fun FullScreenDialogOverlay(
             dismissOnBackPress = true,
             dismissOnClickOutside = dismissOnScrim,
             usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
         ),
     ) {
+        val view = LocalView.current
+        SideEffect {
+            val window = (view.parent as? DialogWindowProvider)?.window ?: return@SideEffect
+            window.setLayout(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+            )
+            window.setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
