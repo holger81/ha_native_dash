@@ -485,13 +485,16 @@ private fun FullMusicCard(
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             Box(
-                Modifier.fillMaxWidth().height(220.dp).clickable { viewModel.openPopup("#music") },
+                Modifier
+                    .fillMaxWidth()
+                    .height(MusicOutpaintHeroMetrics.StageHeight)
+                    .clickable { viewModel.openPopup("#music") },
             ) {
                 AlbumOutpaintHero(
                     coverPath = snapshot.art,
                     coverAlternates = snapshot.artAlternates,
                     viewModel = viewModel,
-                    stageHeight = 220.dp,
+                    stageHeight = MusicOutpaintHeroMetrics.StageHeight,
                 )
                 if (snapshot.paused) PausedCoverBadge()
             }
