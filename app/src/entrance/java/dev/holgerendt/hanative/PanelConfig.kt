@@ -12,6 +12,8 @@ object PanelConfig {
     const val USE_TABLET_MOTION = true
     const val MOTION_ENTITY = "input_boolean.entrance_tablet_motion"
     val PANEL_ALIASES = listOf("entrance", "entrance-wall", "entrance_wall")
+    /** Same household HA as greatroom; NetworkGuard requires private DNS resolution. */
+    const val DEFAULT_HA_URL = "https://hrob.dnsalias.net:8123"
     const val DEFAULT_DISPLAY_OFF_ENTITY = ""
     const val DEFAULT_DISPLAY_BRIGHTNESS_ENTITY = ""
     const val DEFAULT_DISPLAY_ILLUMINANCE_ENTITY = ""

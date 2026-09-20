@@ -1,5 +1,6 @@
 package dev.holgerendt.hanative.data
 
+import dev.holgerendt.hanative.PanelConfig
 import fi.iki.elonen.NanoHTTPD
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -653,7 +654,7 @@ class ManagementServer(
                 </section>
                 <form method="post" action="/setup" autocomplete="off">
                   <label for="url">Home Assistant URL</label>
-                  <input id="url" name="url" value="${escape(url.ifBlank { "http://homeassistant.local:8123" })}" autocapitalize="off" required />
+                  <input id="url" name="url" value="${escape(url.ifBlank { PanelConfig.DEFAULT_HA_URL })}" autocapitalize="off" required />
                   <label for="token">Long-lived access token</label>
                   <textarea id="token" name="token" required placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9…"></textarea>
                   <button type="submit">Save on wall panel</button>

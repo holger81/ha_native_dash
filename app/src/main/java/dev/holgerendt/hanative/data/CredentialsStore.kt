@@ -165,6 +165,7 @@ class CredentialsStore(context: Context) {
         }
         migrateFromLegacy()
         restoreFromDocuments()
+        migratePlaceholderHaUrl()
         if (!prefs.contains(KEY_DISPLAY_OFF) && displayOffEntityBacking.isBlank()) {
             displayOffEntityBacking = PanelConfig.DEFAULT_DISPLAY_OFF_ENTITY
         }
@@ -175,7 +176,26 @@ class CredentialsStore(context: Context) {
             displayIlluminanceEntityBacking = PanelConfig.DEFAULT_DISPLAY_ILLUMINANCE_ENTITY
         }
         persistEnabled = true
-        if (isConfigured || managementPin.isNotBlank()) persist()
+        if (isConfigured || managementPin.isNotBlank() || baseUrl.isNotBlank()) persist()
+    }
+
+    /**
+     * Setup UI used to prefill `http://homeassistant.local:8123`. After a UniFi wipe that
+     * value often got saved with a fresh token. Rewrite to the household URL so the wall
+     * reconnects without re-entering the token (mDNS is unreliable on these panels).
+     */
+    private fun migratePlaceholderHaUrl() {
+        val preferred = PanelConfig.DEFAULT_HA_URL.trim().trimEnd('/')
+        if (preferred.isBlank()) return
+        val current = baseUrl.trim().trimEnd('/')
+        if (current.isBlank()) {
+            baseUrl = preferred
+            return
+        }
+        val host = NetworkGuard.hostOf(current) ?: return
+        if (host == "homeassistant.local" && current != preferred) {
+            baseUrl = preferred
+        }
     }
 
     /**

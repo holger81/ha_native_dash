@@ -1587,7 +1587,9 @@ fun SetupScreen(viewModel: HaViewModel) {
     val ui by viewModel.ui.collectAsState()
     val busy = ui.setupBusy
     val error = ui.setupError
-    var localUrl by remember { mutableStateOf(viewModel.savedUrl.ifBlank { "http://homeassistant.local:8123" }) }
+    var localUrl by remember {
+        mutableStateOf(viewModel.savedUrl.ifBlank { PanelConfig.DEFAULT_HA_URL })
+    }
     var localToken by remember { mutableStateOf(viewModel.savedToken) }
     var showOnDevice by remember { mutableStateOf(false) }
     val setupUrl = ui.remoteUrls.firstOrNull().orEmpty()
@@ -1681,7 +1683,7 @@ fun SetupScreen(viewModel: HaViewModel) {
                     value = localUrl,
                     onValueChange = { localUrl = it },
                     label = { Text("URL") },
-                    placeholder = { Text("http://homeassistant.local:8123") },
+                    placeholder = { Text(PanelConfig.DEFAULT_HA_URL) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     colors = fieldColors,

@@ -12,6 +12,11 @@ object PanelConfig {
     const val USE_TABLET_MOTION = false
     const val MOTION_ENTITY = ""
     val PANEL_ALIASES = listOf("greatroom", "greatroom-wall", "greatroom_wall")
+    /**
+     * Prefill / placeholder for setup when prefs were wiped (e.g. UniFi app switch).
+     * LAN split DNS must resolve this to a private IP so [NetworkGuard] allows it.
+     */
+    const val DEFAULT_HA_URL = "https://hrob.dnsalias.net:8123"
     const val DEFAULT_DISPLAY_OFF_ENTITY = "switch.uc_display"
     const val DEFAULT_DISPLAY_BRIGHTNESS_ENTITY = "number.uc_display_brightness"
     const val DEFAULT_DISPLAY_ILLUMINANCE_ENTITY = "sensor.secondary_living_room_switch_illuminance"
