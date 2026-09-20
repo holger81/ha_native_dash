@@ -1,16 +1,11 @@
 package dev.holgerendt.hanative.ui
 
 import android.os.Build
-import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -37,12 +32,11 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import dev.holgerendt.hanative.data.OutpaintCoverLayout
 import dev.holgerendt.hanative.ui.theme.CardLight
 import java.io.File
 import kotlinx.coroutines.delay
 
-/** Shared hero metrics for the interim (pre-Flux) centered cover. */
+/** Shared hero metrics: cover position/size is identical with or without outpaint. */
 internal object MusicOutpaintHeroMetrics {
     val StageHeight = 220.dp
     val CoverSize = 196.dp
@@ -51,9 +45,9 @@ internal object MusicOutpaintHeroMetrics {
 /**
  * Atmosphere / hero art behind Phase 6 music UI.
  *
- * Soft enlarge fills the card until a pad is cached; Flux pads are generated at
- * the music-player canvas size with the cover already placed, then drawn
- * FillBounds so the floating cover sits on the baked-in region.
+ * Soft enlarge fills the card until a pad is cached; Flux pads are drawn as a
+ * full-bleed card backdrop only. The floating sharp cover always uses fixed
+ * [MusicOutpaintHeroMetrics] — never mediagen canvas fractions.
  */
 @Composable
 fun OutpaintedAlbumBackdrop(
@@ -81,8 +75,8 @@ fun OutpaintedAlbumBackdrop(
 }
 
 /**
- * Full-card album hero: sharp cover on the pad's baked-in region when Flux is
- * ready; otherwise a centered cover in the top stage.
+ * Top-stage album hero: always a centered [MusicOutpaintHeroMetrics.CoverSize]
+ * cover in [stageHeight] — identical whether Flux outpaint is ready or not.
  */
 @Composable
 fun AlbumOutpaintHero(
@@ -99,104 +93,36 @@ fun AlbumOutpaintHero(
             .filter { it.isNotEmpty() }
             .distinct()
     }
-    var layout by remember(coverRefs) { mutableStateOf<OutpaintCoverLayout?>(null) }
-    var fluxComplete by remember(coverRefs) { mutableStateOf(false) }
     val resolvedStage = stageHeight ?: MusicOutpaintHeroMetrics.StageHeight
 
     LaunchedEffect(coverRefs, ui.mediagenUrl) {
-        layout = null
-        fluxComplete = false
         if (coverRefs.isEmpty()) return@LaunchedEffect
         viewModel.scheduleAlbumArtOutpaintPrefetch(currentCoverOverride = coverRefs.first())
         runCatching { viewModel.albumArtOutpaint.ensureLocalPad(coverRefs.first()) }
-        while (true) {
-            val fluxDone = runCatching {
-                viewModel.albumArtOutpaint.peekFluxComplete(coverRefs)
-            }.getOrDefault(false)
-            fluxComplete = fluxDone
-            if (fluxDone) {
-                layout = runCatching {
-                    viewModel.albumArtOutpaint.peekOutpaintLayout(coverRefs)
-                }.getOrNull()
-            }
-            delay(if (fluxDone) 30_000L else 2_000L)
-        }
     }
 
-    Crossfade(
-        targetState = if (fluxComplete && layout != null) layout else null,
-        modifier = modifier.fillMaxSize(),
-        label = "album-outpaint-hero",
-    ) { geo ->
-        if (geo != null) {
-            PlayerAlignedCover(
-                layout = geo,
-                coverPath = coverPath,
-                viewModel = viewModel,
-            )
-        } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(resolvedStage),
-                contentAlignment = Alignment.Center,
-            ) {
-                MusicCover(
-                    path = coverPath,
-                    viewModel = viewModel,
-                    modifier = Modifier
-                        .size(MusicOutpaintHeroMetrics.CoverSize)
-                        .shadow(
-                            elevation = 28.dp,
-                            shape = RoundedCornerShape(22.dp),
-                            clip = false,
-                            ambientColor = Color.Black.copy(alpha = 0.28f),
-                            spotColor = Color.Black.copy(alpha = 0.55f),
-                        )
-                        .clip(RoundedCornerShape(22.dp)),
-                    spinnerSize = 28.dp,
-                    fallbackIconSize = 64.dp,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun PlayerAlignedCover(
-    layout: OutpaintCoverLayout,
-    coverPath: String?,
-    viewModel: HaViewModel,
-) {
-    val coverShape = RoundedCornerShape(22.dp)
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val coverW = maxWidth * layout.coverWidthFrac
-        val coverH = maxHeight * layout.coverHeightFrac
-        val coverLeft = maxWidth * layout.coverLeftFrac
-        val coverTop = maxHeight * layout.coverTopFrac
-        Box(
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(resolvedStage),
+        contentAlignment = Alignment.Center,
+    ) {
+        MusicCover(
+            path = coverPath,
+            viewModel = viewModel,
             modifier = Modifier
-                .align(Alignment.TopStart)
-                .offset(x = coverLeft, y = coverTop)
-                .size(coverW, coverH)
+                .size(MusicOutpaintHeroMetrics.CoverSize)
                 .shadow(
                     elevation = 28.dp,
-                    shape = coverShape,
+                    shape = RoundedCornerShape(22.dp),
                     clip = false,
                     ambientColor = Color.Black.copy(alpha = 0.28f),
                     spotColor = Color.Black.copy(alpha = 0.55f),
                 )
-                .clip(coverShape)
-                .border(1.25.dp, Color.White.copy(alpha = 0.5f), coverShape),
-        ) {
-            MusicCover(
-                path = coverPath,
-                viewModel = viewModel,
-                modifier = Modifier.fillMaxSize(),
-                spinnerSize = 22.dp,
-                fallbackIconSize = 40.dp,
-            )
-        }
+                .clip(RoundedCornerShape(22.dp)),
+            spinnerSize = 28.dp,
+            fallbackIconSize = 64.dp,
+        )
     }
 }
 
@@ -266,7 +192,7 @@ private fun BoxScope.SoftAtmosphereLayer(
 
     val outpaint = padFile
     if (outpaint != null && fluxComplete && !vivid) {
-        // Player-sized Flux pad: FillBounds so baked-in cover region maps 1:1 to the card.
+        // Full-bleed Flux pad as card backdrop only (cover position is fixed in the hero).
         AsyncImage(
             model = ImageRequest.Builder(context)
                 .data(outpaint)

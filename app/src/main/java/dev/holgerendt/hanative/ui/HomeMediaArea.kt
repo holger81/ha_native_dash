@@ -33,7 +33,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -484,11 +483,11 @@ private fun FullMusicCard(
         extendedBackdrop = true,
         vivid = false,
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            // Full-card hero so cover fractions match the player-sized Flux pad.
+        Column(modifier = Modifier.fillMaxSize()) {
             Box(
                 Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
+                    .height(MusicOutpaintHeroMetrics.StageHeight)
                     .clickable { viewModel.openPopup("#music") },
             ) {
                 AlbumOutpaintHero(
@@ -501,52 +500,38 @@ private fun FullMusicCard(
             }
             Column(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .background(
-                        Brush.verticalGradient(
-                            colorStops = arrayOf(
-                                0.00f to CardLight.copy(alpha = 0f),
-                                0.35f to CardLight.copy(alpha = 0.55f),
-                                1.00f to CardLight.copy(alpha = 0.82f),
-                            ),
-                        ),
-                    )
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                    .clickable { viewModel.openPopup("#music") }
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { viewModel.openPopup("#music") },
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
+                Text(
+                    snapshot.title,
+                    color = TextDark,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                )
+                if (snapshot.subtitle.isNotBlank()) {
                     Text(
-                        snapshot.title,
-                        color = TextDark,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        snapshot.subtitle,
+                        color = TextMuted,
+                        fontSize = 14.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
                     )
-                    if (snapshot.subtitle.isNotBlank()) {
-                        Text(
-                            snapshot.subtitle,
-                            color = TextMuted,
-                            fontSize = 14.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
                 }
-                MediaPlaybackBar(
-                    snapshot = snapshot,
-                    viewModel = viewModel,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 6.dp),
-                )
             }
+            MediaPlaybackBar(
+                snapshot = snapshot,
+                viewModel = viewModel,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+            )
         }
     }
 }
