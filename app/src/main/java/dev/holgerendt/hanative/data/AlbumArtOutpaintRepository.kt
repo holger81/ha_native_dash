@@ -177,16 +177,18 @@ class AlbumArtOutpaintRepository(
         val layout = MusicPlayerOutpaint.padsForSourceBytes(source)
         val local = cache.cachedFile(source, layout)
             ?: cache.cachedFileForCoverRef(coverRef)
-            ?: cache.getOrEnqueue(source, layout = layout) { bytes ->
-                val pads = MusicPlayerOutpaint.padsForSourceBytes(bytes)
-                AlbumArtLocalOutpaint.padFromEdges(
-                    bytes,
-                    padLeft = pads.padLeft,
-                    padTop = pads.padTop,
-                    padRight = pads.padRight,
-                    padBottom = pads.padBottom,
-                )
-            }
+            ?: runCatching {
+                cache.getOrEnqueue(source, layout = layout) { bytes ->
+                    val pads = MusicPlayerOutpaint.padsForSourceBytes(bytes)
+                    AlbumArtLocalOutpaint.padFromEdges(
+                        bytes,
+                        padLeft = pads.padLeft,
+                        padTop = pads.padTop,
+                        padRight = pads.padRight,
+                        padBottom = pads.padBottom,
+                    )
+                }
+            }.getOrNull()
             ?: return null
         cache.bindCoverRef(coverRef, source)
         setTargets(currentCover = coverRef, upcomingCovers = targets.get().upcoming)
@@ -283,6 +285,9 @@ class AlbumArtOutpaintRepository(
      *
      * Disk hits: keep textured / Flux pads; solid local pads still get one Flux
      * upgrade attempt (otherwise the instant pad would freeze forever).
+     *
+     * Mediagen is attempted even when local pad creation fails — otherwise a
+     * tablet OOM on the edge pad would silently skip Comfy forever.
      */
     private suspend fun warmCover(mediagenBase: String, coverRef: String, source: ByteArray): File? {
         // Same MASS proxy id / HA path — reuse without caring that JPEG bytes drifted.
@@ -315,18 +320,23 @@ class AlbumArtOutpaintRepository(
         val stableLocal = cache.cachedFileForCoverRef(coverRef)
         val local = cache.cachedFile(source, layout)
             ?: stableLocal
-            ?: cache.getOrEnqueue(source, layout = layout) { bytes ->
-                val pads = MusicPlayerOutpaint.padsForSourceBytes(bytes)
-                AlbumArtLocalOutpaint.padFromEdges(
-                    bytes,
-                    padLeft = pads.padLeft,
-                    padTop = pads.padTop,
-                    padRight = pads.padRight,
-                    padBottom = pads.padBottom,
-                )
-            }
-            ?: return null
-        cache.bindCoverRef(coverRef, source)
+            ?: runCatching {
+                cache.getOrEnqueue(source, layout = layout) { bytes ->
+                    val pads = MusicPlayerOutpaint.padsForSourceBytes(bytes)
+                    AlbumArtLocalOutpaint.padFromEdges(
+                        bytes,
+                        padLeft = pads.padLeft,
+                        padTop = pads.padTop,
+                        padRight = pads.padRight,
+                        padBottom = pads.padBottom,
+                    )
+                }
+            }.getOrNull()
+        if (local != null) {
+            cache.bindCoverRef(coverRef, source)
+        } else {
+            android.util.Log.w(TAG, "local pad miss cover=${coverRef.take(96)}; still trying mediagen")
+        }
         if (AlbumArtLocalOutpaint.hasUniformEdges(source)) {
             fluxAttemptedRefs.add(coverRef)
             return local
@@ -357,9 +367,9 @@ class AlbumArtOutpaintRepository(
                 cache.bindCoverRef(coverRef, source)
             } ?: local
         }
-        // Only mark Flux attempted after an accepted Flux pad. A Local response
-        // (stale mediagen cache / rejected fill) must retry — otherwise the wall
-        // freezes on soft-enlarge forever.
+        // Only mark Flux attempted after an accepted Flux pad, or after mediagen
+        // confirms a settled local (no Comfy re-queue). Transient Local without
+        // settle still retries — otherwise a race would freeze soft-enlarge forever.
         android.util.Log.i(
             TAG,
             "mediagen POST cover=${coverRef.take(96)} base=$mediagenBase canvas=${canvas?.let { "${it.outWidth}x${it.outHeight}@${it.x},${it.y}" }}",
@@ -379,6 +389,19 @@ class AlbumArtOutpaintRepository(
             retryAfterMs.remove(coverRef)
             val pads = result.layout ?: layout
             return cache.replace(source, result.bytes, markAsFlux = true, layout = pads)?.also {
+                cache.bindCoverRef(coverRef, source)
+            } ?: local
+        }
+        // Settled local from mediagen: store for atmosphere, stop re-POSTing.
+        if (result.source == MediagenOutpaintSource.Local) {
+            android.util.Log.w(
+                TAG,
+                "mediagen settled local cover=${coverRef.take(96)}; not re-queueing Flux this process",
+            )
+            fluxAttemptedRefs.add(coverRef)
+            retryAfterMs.remove(coverRef)
+            val pads = result.layout ?: layout
+            return cache.replace(source, result.bytes, markAsFlux = false, layout = pads)?.also {
                 cache.bindCoverRef(coverRef, source)
             } ?: local
         }
@@ -491,25 +514,31 @@ class AlbumArtOutpaintRepository(
 
     private suspend fun fetchCoverBytes(coverRef: String): ByteArray? = withContext(Dispatchers.IO) {
         if (coverRef.startsWith("data:image")) {
-            val comma = coverRef.indexOf(',')
-            if (comma < 0) return@withContext null
-            return@withContext runCatching {
-                android.util.Base64.decode(coverRef.substring(comma + 1), android.util.Base64.DEFAULT)
-            }.getOrNull()?.takeIf { it.isNotEmpty() }
+            return@withContext decodeDataImage(coverRef)
         }
-        val url = haClient.resolveMusicCoverUrl(coverRef, size = 512)
-            ?: resolveRelative(coverRef)
-            ?: return@withContext null
-        if (url.startsWith("data:image")) {
-            val comma = url.indexOf(',')
-            if (comma < 0) return@withContext null
-            return@withContext runCatching {
-                android.util.Base64.decode(url.substring(comma + 1), android.util.Base64.DEFAULT)
-            }.getOrNull()?.takeIf { it.isNotEmpty() }
+        // Prefer size=256 first — same URL MusicCover / Coil already warmed — then 512.
+        for (size in COVER_FETCH_SIZES) {
+            val url = haClient.resolveMusicCoverUrl(coverRef, size = size)
+                ?: resolveRelative(coverRef)
+                ?: continue
+            fetchUrlBytes(url)?.let { return@withContext it }
         }
+        null
+    }
+
+    private fun decodeDataImage(ref: String): ByteArray? {
+        val comma = ref.indexOf(',')
+        if (comma < 0) return null
+        return runCatching {
+            android.util.Base64.decode(ref.substring(comma + 1), android.util.Base64.DEFAULT)
+        }.getOrNull()?.takeIf { it.isNotEmpty() }
+    }
+
+    private fun fetchUrlBytes(url: String): ByteArray? {
+        if (url.startsWith("data:image")) return decodeDataImage(url)
         // Match Coil's HaImageLoader: bearer + MASS ingress cookie for HA/imageproxy hosts.
         // Do not use authenticatedBytes alone — it omits the ingress cookie MASS needs.
-        runCatching {
+        return runCatching {
             val builder = Request.Builder().url(url).get()
             val base = haClient.currentBaseUrl.trimEnd('/')
             val sameOrigin = base.isNotBlank() && url.startsWith(base)
@@ -556,6 +585,8 @@ class AlbumArtOutpaintRepository(
         private const val TAG = "AlbumArtOutpaint"
         private const val FETCH_RETRY_MS = 8_000L
         private const val MEDIAGEN_RETRY_MS = 20_000L
+        /** Match [MusicCover] (256) first so Coil-warmed MASS proxy URLs hit; then 512. */
+        private val COVER_FETCH_SIZES = intArrayOf(256, 512)
 
         fun imageFetchClient(): OkHttpClient = OkHttpClient.Builder()
             .addInterceptor { chain ->

@@ -164,7 +164,8 @@ private fun BoxScope.SoftAtmosphereLayer(
     var fluxComplete by remember(coverRefs) { mutableStateOf(false) }
 
     LaunchedEffect(coverPath, viewModel.client.currentBaseUrl, ui.mediagenUrl) {
-        coverUrl = runCatching { viewModel.client.resolveMusicCoverUrl(coverPath, size = 512) }.getOrNull()
+        // Same size as MusicCover so Coil's warmed MASS proxy entry is reused.
+        coverUrl = runCatching { viewModel.client.resolveMusicCoverUrl(coverPath, size = 256) }.getOrNull()
             ?: resolveHaImageUrl(coverPath, viewModel.client.currentBaseUrl)
         viewModel.scheduleAlbumArtOutpaintPrefetch(currentCoverOverride = coverPath)
     }
@@ -207,13 +208,13 @@ private fun BoxScope.SoftAtmosphereLayer(
 
     val outpaint = padFile
     // Map the pad's baked cover region onto the fixed 196/220 hero — never FillBounds-stretch.
+    // Always keep a soft pad/enlarge underneath so a decode miss cannot leave bare CardLight.
     if (outpaint != null && alignWithHero) {
         val aligned = rememberAlignedHeroFrame(outpaint, padStamp, viewModel)
         if (aligned != null) {
             AlignedHeroBackdrop(aligned.first, aligned.second)
             return
         }
-        // While decoding, keep soft atmosphere below rather than a blank flash.
     }
     if (outpaint != null && fluxComplete && !vivid && !alignWithHero) {
         // Compact / non-hero surfaces: decorative full-bleed pad (aspect may not match cover).
@@ -263,7 +264,7 @@ private fun BoxScope.SoftAtmosphereLayer(
                 when {
                     vivid -> 1f
                     fluxComplete -> 0.85f
-                    else -> 0.7f
+                    else -> 0.78f
                 },
             ),
             modifier = Modifier
@@ -272,7 +273,7 @@ private fun BoxScope.SoftAtmosphereLayer(
                     alpha = when {
                         vivid -> 0.85f
                         fluxComplete -> 0.78f
-                        else -> 0.68f
+                        else -> 0.82f
                     }
                 }
                 .then(if (fluxComplete || vivid) Modifier else softBlurFallback())
@@ -295,13 +296,13 @@ private fun BoxScope.SoftAtmosphereLayer(
         contentDescription = null,
         imageLoader = loader,
         contentScale = ContentScale.Crop,
-        colorFilter = desaturateFilter(if (vivid) 0.75f else 0.4f),
+        colorFilter = desaturateFilter(if (vivid) 0.75f else 0.55f),
         modifier = Modifier
             .matchParentSize()
             .graphicsLayer {
                 scaleX = 1.25f
                 scaleY = 1.25f
-                alpha = if (vivid) 0.5f else 0.28f
+                alpha = if (vivid) 0.5f else 0.42f
             }
             .then(softBlurFallback())
             .then(if (vivid) Modifier else Modifier.fadeSoftAtmosphere()),
@@ -389,10 +390,10 @@ private fun Modifier.fadeSoftAtmosphere(): Modifier = drawWithContent {
     drawRect(
         brush = Brush.verticalGradient(
             colorStops = arrayOf(
-                0.00f to card.copy(alpha = 0.35f),
-                0.50f to card.copy(alpha = 0.55f),
-                0.75f to card.copy(alpha = 0.78f),
-                1.00f to card.copy(alpha = 0.92f),
+                0.00f to card.copy(alpha = 0.18f),
+                0.50f to card.copy(alpha = 0.32f),
+                0.75f to card.copy(alpha = 0.55f),
+                1.00f to card.copy(alpha = 0.78f),
             ),
         ),
     )
