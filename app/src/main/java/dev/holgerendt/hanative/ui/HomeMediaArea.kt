@@ -622,13 +622,12 @@ private fun FullTvCard(
     modifier: Modifier = Modifier,
 ) {
     val entityId = snapshot.entityId ?: APPLE_TV_ENTITY
-    // TV posters: soft/local enlarge behind the card (no Flux hovering hero).
+    // TV: standard CardLight + poster only — no SoftAtmosphere / Flux / local pads.
     OutpaintedAlbumBackdrop(
         coverPath = snapshot.art,
         viewModel = viewModel,
         modifier = modifier.fillMaxSize().clip(RoundedCornerShape(24.dp)).background(CardLight),
-        extendedBackdrop = !snapshot.art.isNullOrBlank(),
-        vivid = true,
+        extendedBackdrop = false,
     ) {
         Column(
             modifier = Modifier
