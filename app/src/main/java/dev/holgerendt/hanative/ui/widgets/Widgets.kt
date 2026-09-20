@@ -3206,12 +3206,19 @@ fun popupSheetModifier(kind: PopupSheetKind = PopupSheetKind.Room): Modifier {
         PopupSheetKind.Camera -> Triple(0.86f, 920.dp, 0.78f)
         PopupSheetKind.Utility -> Triple(0.74f, 720.dp, 0.70f)
         PopupSheetKind.Settings -> Triple(0.72f, 640.dp, 0.78f)
+        // Wrap content; cap at fraction so edit/more-info forms can still scroll.
         PopupSheetKind.Detail -> Triple(0.68f, 600.dp, 0.70f)
     }
-    return Modifier
+    val base = Modifier
         .fillMaxWidth(widthFraction)
         .widthIn(max = maxWidth)
-        .height(screenH * heightFraction)
+    // Room/Camera/etc. keep fixed height for PopupScaffold weight(1f) scroll areas.
+    // Detail dialogs (calendar event, PIN, more-info) should hug content.
+    return if (kind == PopupSheetKind.Detail) {
+        base.heightIn(max = screenH * heightFraction)
+    } else {
+        base.height(screenH * heightFraction)
+    }
 }
 
 @Composable
