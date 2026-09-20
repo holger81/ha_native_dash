@@ -80,19 +80,18 @@ internal fun ExactWidgetOutpaint(
                 // A layout change drops the old canvas instead of stretching it during a frame.
                 if (bitmap != null && bitmap.width == size.width.roundToInt() && bitmap.height == size.height.roundToInt()) {
                     drawImage(bitmap.asImageBitmap())
-                    // Readable band under the hero: transparent at cover bottom, then
-                    // opaque CardLight behind title / room / progress / controls so
-                    // TextDark / TextMuted stay legible on dark (or light) outpaint.
+                    // Near-transparent wash under the hero — outpaint stays dominant;
+                    // metadata readability comes from soft white text glow, not a solid band.
                     val fadeStart = geometry?.let { (it.coverY + it.coverHeight).toFloat() } ?: size.height
                     val fadeEnd = maxOf(size.height, fadeStart + 1f)
                     drawRect(
                         brush = Brush.verticalGradient(
                             colorStops = arrayOf(
                                 0.00f to Color.Transparent,
-                                0.10f to CardLight.copy(alpha = 0.58f),
-                                0.28f to CardLight.copy(alpha = 0.80f),
-                                0.55f to CardLight.copy(alpha = 0.92f),
-                                1.00f to CardLight.copy(alpha = 0.96f),
+                                0.20f to CardLight.copy(alpha = 0.04f),
+                                0.45f to CardLight.copy(alpha = 0.08f),
+                                0.70f to CardLight.copy(alpha = 0.12f),
+                                1.00f to CardLight.copy(alpha = 0.16f),
                             ),
                             startY = fadeStart,
                             endY = fadeEnd,

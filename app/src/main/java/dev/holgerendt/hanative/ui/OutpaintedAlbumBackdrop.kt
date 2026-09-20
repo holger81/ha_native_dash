@@ -230,19 +230,18 @@ private fun BoxScope.SoftAtmosphereLayer(
                 .matchParentSize()
                 .graphicsLayer { alpha = 0.94f },
         )
-        // Soft readable wash: keep outpaint visible up top, solid CardLight under
-        // title / controls so TextDark stays readable on dark pads.
+        // Near-transparent wash so Flux outpaint shows through; text glow carries readability.
         Box(
             Modifier
                 .matchParentSize()
                 .background(
                     Brush.verticalGradient(
                         colorStops = arrayOf(
-                            0.00f to CardLight.copy(alpha = 0.06f),
-                            0.40f to CardLight.copy(alpha = 0.12f),
-                            0.58f to CardLight.copy(alpha = 0.42f),
-                            0.78f to CardLight.copy(alpha = 0.78f),
-                            1.00f to CardLight.copy(alpha = 0.94f),
+                            0.00f to CardLight.copy(alpha = 0.02f),
+                            0.40f to CardLight.copy(alpha = 0.04f),
+                            0.58f to CardLight.copy(alpha = 0.08f),
+                            0.78f to CardLight.copy(alpha = 0.12f),
+                            1.00f to CardLight.copy(alpha = 0.16f),
                         ),
                     ),
                 ),
@@ -337,10 +336,10 @@ private fun Modifier.fadeSoftAtmosphere(): Modifier = drawWithContent {
     drawRect(
         brush = Brush.verticalGradient(
             colorStops = arrayOf(
-                0.00f to card.copy(alpha = 0.14f),
-                0.45f to card.copy(alpha = 0.30f),
-                0.70f to card.copy(alpha = 0.65f),
-                1.00f to card.copy(alpha = 0.90f),
+                0.00f to card.copy(alpha = 0.04f),
+                0.45f to card.copy(alpha = 0.08f),
+                0.70f to card.copy(alpha = 0.14f),
+                1.00f to card.copy(alpha = 0.20f),
             ),
         ),
     )
@@ -353,10 +352,10 @@ private fun Modifier.fadeLocalAtmosphere(): Modifier = drawWithContent {
     drawRect(
         brush = Brush.verticalGradient(
             colorStops = arrayOf(
-                0.00f to card.copy(alpha = 0.10f),
-                0.50f to card.copy(alpha = 0.22f),
-                0.75f to card.copy(alpha = 0.58f),
-                1.00f to card.copy(alpha = 0.86f),
+                0.00f to card.copy(alpha = 0.03f),
+                0.50f to card.copy(alpha = 0.06f),
+                0.75f to card.copy(alpha = 0.12f),
+                1.00f to card.copy(alpha = 0.18f),
             ),
         ),
     )

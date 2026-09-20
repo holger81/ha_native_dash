@@ -34,15 +34,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.holgerendt.hanative.data.EntityState
@@ -507,34 +511,82 @@ private fun FullMusicCard(
                     .padding(horizontal = 16.dp, vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(
+                MusicOutpaintMetaText(
                     snapshot.title,
                     color = TextDark,
                     fontSize = 24.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center,
                 )
                 if (snapshot.subtitle.isNotBlank()) {
-                    Text(
+                    MusicOutpaintMetaText(
                         snapshot.subtitle,
                         color = TextMuted,
                         fontSize = 14.sp,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
             MediaPlaybackBar(
                 snapshot = snapshot,
                 viewModel = viewModel,
+                outpaintReadable = true,
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
                     .padding(horizontal = 16.dp, vertical = 6.dp),
             )
         }
+    }
+}
+
+/** Soft white glyph halo so TextDark/TextMuted stay readable over dark outpaint. */
+@Composable
+private fun MusicOutpaintMetaText(
+    text: String,
+    color: Color,
+    fontSize: TextUnit,
+    fontWeight: FontWeight? = null,
+    maxLines: Int = 1,
+    textAlign: TextAlign? = null,
+    modifier: Modifier = Modifier,
+) {
+    val halo = TextStyle(
+        shadow = Shadow(
+            color = Color.White.copy(alpha = 0.95f),
+            offset = Offset.Zero,
+            blurRadius = 22f,
+        ),
+    )
+    val edge = TextStyle(
+        shadow = Shadow(
+            color = Color.White.copy(alpha = 0.88f),
+            offset = Offset.Zero,
+            blurRadius = 8f,
+        ),
+    )
+    Box(modifier = modifier) {
+        Text(
+            text,
+            color = Color.White.copy(alpha = 0.70f),
+            fontSize = fontSize,
+            fontWeight = fontWeight,
+            maxLines = maxLines,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = textAlign,
+            style = halo,
+        )
+        Text(
+            text,
+            color = color,
+            fontSize = fontSize,
+            fontWeight = fontWeight,
+            maxLines = maxLines,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = textAlign,
+            style = edge,
+        )
     }
 }
 
@@ -555,6 +607,7 @@ private fun MediaPlaybackBar(
     snapshot: HomeMediaSnapshot,
     viewModel: HaViewModel,
     modifier: Modifier = Modifier,
+    outpaintReadable: Boolean = false,
 ) {
     val overlay = LocalOverlay.current
     val entityId = snapshot.entityId
@@ -569,7 +622,16 @@ private fun MediaPlaybackBar(
             ) {
                 MdiIcon("mdi:speaker", tint = TextMuted, size = 14.dp)
                 Spacer(Modifier.width(6.dp))
-                Text(snapshot.room, color = TextMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (outpaintReadable) {
+                    MusicOutpaintMetaText(
+                        snapshot.room,
+                        color = TextMuted,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                    )
+                } else {
+                    Text(snapshot.room, color = TextMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
         MediaProgressRow(snapshot.positionSec, snapshot.durationSec, snapshot.positionUpdatedAtMs, snapshot.playing)
