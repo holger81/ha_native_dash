@@ -39,6 +39,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -193,7 +195,11 @@ private val BatteryRuntimeEntities = listOf(
     "sensor.housepanel_total_consumption_house_consumption_1h_mean",
     "input_number.battery_energy_helper",
     "sensor.envoy_202234122877_reserve_battery_energy",
+    "sensor.envoy_202234122877_battery",
 )
+
+/** House battery state-of-charge (%); used on live energy + battery panels. */
+private const val BatterySocEntity = "sensor.envoy_202234122877_battery"
 
 private val EnergyStatsEntities = listOf(
     "sensor.envoy_202234122877_current_power_production",
@@ -2286,36 +2292,86 @@ fun BatteryRuntimePanel(viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val stored = states.number("input_number.battery_energy_helper", 2, " kWh", 0.001)
     val reserve = states.number("sensor.envoy_202234122877_reserve_battery_energy", 0, " Wh")
     Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(CardShape)
-            .background(overlay.card)
-            .clickable { viewModel.openMoreInfo("sensor.battery_runtime_remaining") }
-            .padding(20.dp),
+        modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MdiIcon("mdi:battery-charging", tint = overlay.muted, size = 24.dp)
-            Text("Battery", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-        }
-        if (!discharging) {
-            Text("Not discharging right now.", color = overlay.muted, fontSize = 14.sp)
-            return@Column
-        }
-        Text(
-            text = runtime.ifBlank { "—" },
-            color = overlay.text,
-            fontSize = 40.sp,
-            fontWeight = FontWeight.Light,
-        )
-        Text("Estimated runtime at current load", color = overlay.muted, fontSize = 13.sp)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            RuntimeStatTile("Load (1h avg)", load, Modifier.weight(1f))
-            RuntimeStatTile("Stored", stored, Modifier.weight(1f))
-            RuntimeStatTile("Reserve", reserve, Modifier.weight(1f))
+        BatterySocChart(viewModel = viewModel, modifier = Modifier.fillMaxWidth())
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(CardShape)
+                .background(overlay.card)
+                .clickable { viewModel.openMoreInfo("sensor.battery_runtime_remaining") }
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                MdiIcon("mdi:battery-charging", tint = overlay.muted, size = 24.dp)
+                Text("Battery", color = overlay.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+            }
+            if (!discharging) {
+                Text("Not discharging right now.", color = overlay.muted, fontSize = 14.sp)
+                return@Column
+            }
+            Text(
+                text = runtime.ifBlank { "—" },
+                color = overlay.text,
+                fontSize = 40.sp,
+                fontWeight = FontWeight.Light,
+            )
+            Text("Estimated runtime at current load", color = overlay.muted, fontSize = 13.sp)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RuntimeStatTile("Load (1h avg)", load, Modifier.weight(1f))
+                RuntimeStatTile("Stored", stored, Modifier.weight(1f))
+                RuntimeStatTile("Reserve", reserve, Modifier.weight(1f))
+            }
         }
     }
 }
+
+@Composable
+private fun BatterySocChart(viewModel: HaViewModel, modifier: Modifier = Modifier) {
+    val overlay = LocalOverlay.current
+    val entity by viewModel.entityFlow(BatterySocEntity).collectAsState()
+    var points by remember { mutableStateOf(listOf<Pair<Long, Double>>()) }
+    LaunchedEffect(viewModel.client.currentBaseUrl) {
+        while (true) {
+            val fresh = runCatching { viewModel.client.history(BatterySocEntity, 24) }.getOrNull()
+            if (!fresh.isNullOrEmpty()) points = fresh
+            delay(45_000L)
+        }
+    }
+    val socText = entity?.state?.toDoubleOrNull()?.let { "${it.roundToInt()}%" } ?: "—"
+    Column(
+        modifier = modifier
+            .height(200.dp)
+            .clip(CardShape)
+            .background(overlay.card)
+            .clickable { viewModel.openMoreInfo(BatterySocEntity) }
+            .padding(16.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column {
+                Text("Battery charge", color = overlay.text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text("Last 24 hours", color = overlay.muted, fontSize = 12.sp)
+            }
+            Text(socText, color = overlay.text, fontSize = 22.sp, fontWeight = FontWeight.Light)
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        if (points.size < 2) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Loading charge history…", color = overlay.muted, fontSize = 13.sp)
+            }
+        } else {
+            Sparkline(points, Modifier.fillMaxSize(), HistoryGraph)
+        }
+    }
+}
+
 
 @Composable
 private fun RuntimeStatTile(label: String, value: String, modifier: Modifier = Modifier) {
@@ -2783,9 +2839,11 @@ private fun parseAutoEntitiesFilter(filterElement: JsonElement?): AutoEntitiesFi
 fun AutoEntitiesWidget(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
     val allStates by viewModel.states.collectAsState()
+    val excludedIds by viewModel.excludedPowerEntities.collectAsState()
     val filter = remember(widget.filter) { parseAutoEntitiesFilter(widget.filter) }
+    var detailEntityId by remember { mutableStateOf<String?>(null) }
 
-    val (tree, totalWatts) = remember(allStates, filter) {
+    val (activeTree, excludedTree, totalWatts) = remember(allStates, filter, excludedIds) {
         val now = Instant.now()
         val allConsumers = allStates.values.asSequence()
             .filter { state ->
@@ -2839,22 +2897,33 @@ fun AutoEntitiesWidget(widget: WidgetNode, viewModel: HaViewModel, modifier: Mod
         // Roots are consumers that don't have an active parent
         val rootItems = allConsumers.values.filter { it.entityId !in activeChildToParent }
 
+        fun sortChildren(nodes: List<ConsumerNode>): List<ConsumerNode> {
+            val (kept, dropped) = nodes.partition { it.item.entityId !in excludedIds }
+            return kept.sortedByDescending { it.item.value } + dropped.sortedByDescending { it.item.value }
+        }
+
         fun buildNode(item: PowerConsumerItem, parent: PowerConsumerItem?, depth: Int): ConsumerNode {
             val childIds = parentToChildren[item.entityId].orEmpty()
-            val childNodes = childIds.mapNotNull { allConsumers[it] }
-                .sortedByDescending { it.value }
-                .map { buildNode(it, item, depth + 1) }
+            val childNodes = sortChildren(
+                childIds.mapNotNull { allConsumers[it] }.map { buildNode(it, item, depth + 1) },
+            )
             return ConsumerNode(item, parent, childNodes, depth)
         }
 
-        val treeNodes = rootItems.map { buildNode(it, null, 0) }
-            .sortedByDescending { it.item.value }
+        val allRoots = rootItems.map { buildNode(it, null, 0) }
+        val (activeRoots, excludedRoots) = allRoots.partition { it.item.entityId !in excludedIds }
+        val activeSorted = activeRoots.sortedByDescending { it.item.value }
+        val excludedSorted = excludedRoots.sortedByDescending { it.item.value }
 
-        // Total power: use housepanel total if available, otherwise sum root items (avoids double-counting!)
-        val total = allStates["sensor.housepanel_total_consumption_power_minute_average"]?.state?.toDoubleOrNull()
-            ?: rootItems.sumOf { it.value }
+        // Prefer house total only when nothing is user-excluded; otherwise sum included roots.
+        val total = if (excludedIds.isEmpty()) {
+            allStates["sensor.housepanel_total_consumption_power_minute_average"]?.state?.toDoubleOrNull()
+                ?: activeSorted.sumOf { it.item.value }
+        } else {
+            activeSorted.sumOf { it.item.value }
+        }
 
-        treeNodes to total
+        Triple(activeSorted, excludedSorted, total)
     }
 
     val totalText = if (totalWatts >= 1000) {
@@ -2864,8 +2933,10 @@ fun AutoEntitiesWidget(widget: WidgetNode, viewModel: HaViewModel, modifier: Mod
     }
 
     val title = widget.name ?: widget.title ?: "Live Power Draw (Top Consumers)"
+    val circuitCount = activeTree.size
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        BatterySocChart(viewModel = viewModel, modifier = Modifier.fillMaxWidth())
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -2877,16 +2948,16 @@ fun AutoEntitiesWidget(widget: WidgetNode, viewModel: HaViewModel, modifier: Mod
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
             )
-            if (tree.isNotEmpty()) {
+            if (activeTree.isNotEmpty() || excludedTree.isNotEmpty()) {
                 Text(
-                    text = "${tree.size} circuits • $totalText",
+                    text = "$circuitCount circuits • $totalText",
                     color = overlay.muted,
                     fontSize = 13.sp,
                 )
             }
         }
 
-        if (tree.isEmpty()) {
+        if (activeTree.isEmpty() && excludedTree.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2902,10 +2973,40 @@ fun AutoEntitiesWidget(widget: WidgetNode, viewModel: HaViewModel, modifier: Mod
                 )
             }
         } else {
-            tree.forEach { node ->
-                ConsumerNodeTree(node = node, viewModel = viewModel)
+            activeTree.forEach { node ->
+                ConsumerNodeTree(
+                    node = node,
+                    viewModel = viewModel,
+                    excludedIds = excludedIds,
+                    onOpenDetail = { detailEntityId = it },
+                )
+            }
+            if (excludedTree.isNotEmpty()) {
+                Text(
+                    text = "Excluded",
+                    color = overlay.muted,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 4.dp),
+                )
+                excludedTree.forEach { node ->
+                    ConsumerNodeTree(
+                        node = node,
+                        viewModel = viewModel,
+                        excludedIds = excludedIds,
+                        onOpenDetail = { detailEntityId = it },
+                    )
+                }
             }
         }
+    }
+
+    detailEntityId?.let { entityId ->
+        PowerCircuitDetailDialog(
+            entityId = entityId,
+            viewModel = viewModel,
+            onDismiss = { detailEntityId = null },
+        )
     }
 }
 
@@ -2913,10 +3014,13 @@ fun AutoEntitiesWidget(widget: WidgetNode, viewModel: HaViewModel, modifier: Mod
 private fun ConsumerNodeTree(
     node: ConsumerNode,
     viewModel: HaViewModel,
+    excludedIds: Set<String>,
+    onOpenDetail: (String) -> Unit,
 ) {
     val overlay = LocalOverlay.current
     val item = node.item
     val depth = node.depth
+    val excluded = item.entityId in excludedIds
 
     val indent = when (depth) {
         0 -> 0.dp
@@ -2924,10 +3028,12 @@ private fun ConsumerNodeTree(
         else -> 48.dp
     }
 
-    val background = when (depth) {
-        0 -> overlay.card
+    val background = when {
+        excluded -> overlay.well.copy(alpha = 0.55f)
+        depth == 0 -> overlay.card
         else -> overlay.well
     }
+    val textAlpha = if (excluded) 0.55f else 1f
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -2936,14 +3042,14 @@ private fun ConsumerNodeTree(
                 .padding(start = indent)
                 .clip(RoundedCornerShape(if (depth == 0) 14.dp else 12.dp))
                 .background(background)
-                .clickable { viewModel.openMoreInfo(item.entityId) }
+                .clickable { onOpenDetail(item.entityId) }
                 .padding(horizontal = 14.dp, vertical = if (depth == 0) 10.dp else 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (depth > 0) {
                 MdiIcon(
                     name = "mdi:subdirectory-arrow-right",
-                    tint = overlay.muted,
+                    tint = overlay.muted.copy(alpha = textAlpha),
                     size = 18.dp,
                 )
                 Spacer(Modifier.width(8.dp))
@@ -2958,20 +3064,32 @@ private fun ConsumerNodeTree(
             ) {
                 MdiIcon(
                     name = item.icon,
-                    tint = AccentYellow,
+                    tint = AccentYellow.copy(alpha = textAlpha),
                     size = if (depth == 0) 20.dp else 16.dp,
                 )
             }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = item.name,
-                    color = overlay.text,
-                    fontSize = if (depth == 0) 14.sp else 13.sp,
-                    fontWeight = if (depth == 0) FontWeight.Medium else FontWeight.Normal,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = item.name,
+                        color = overlay.text.copy(alpha = textAlpha),
+                        fontSize = if (depth == 0) 14.sp else 13.sp,
+                        fontWeight = if (depth == 0) FontWeight.Medium else FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (excluded) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "Excluded",
+                            color = overlay.muted,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                }
                 val subText = when {
                     node.parentItem != null && node.parentItem.value > 0 -> {
                         val pct = (item.value / node.parentItem.value * 100).roundToInt().coerceIn(1, 100)
@@ -2986,7 +3104,7 @@ private fun ConsumerNodeTree(
                 if (subText != null) {
                     Text(
                         text = subText,
-                        color = overlay.muted,
+                        color = overlay.muted.copy(alpha = textAlpha),
                         fontSize = 11.sp,
                     )
                 }
@@ -2994,7 +3112,7 @@ private fun ConsumerNodeTree(
             Spacer(Modifier.width(10.dp))
             Text(
                 text = item.formattedValue,
-                color = overlay.text,
+                color = overlay.text.copy(alpha = textAlpha),
                 fontSize = if (depth == 0) 15.sp else 14.sp,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -3007,12 +3125,117 @@ private fun ConsumerNodeTree(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 node.children.forEach { child ->
-                    ConsumerNodeTree(node = child, viewModel = viewModel)
+                    ConsumerNodeTree(
+                        node = child,
+                        viewModel = viewModel,
+                        excludedIds = excludedIds,
+                        onOpenDetail = onOpenDetail,
+                    )
                 }
             }
         }
     }
 }
+
+@Composable
+private fun PowerCircuitDetailDialog(
+    entityId: String,
+    viewModel: HaViewModel,
+    onDismiss: () -> Unit,
+) {
+    val overlay = OverlayLightPopup
+    val entity by viewModel.entityFlow(entityId).collectAsState()
+    val excludedIds by viewModel.excludedPowerEntities.collectAsState()
+    val excluded = entityId in excludedIds
+    val name = cleanConsumerName(entityId, entity?.friendlyName ?: entityId)
+    val powerText = remember(entity?.state, entity?.attributes) {
+        val num = entity?.state?.toDoubleOrNull()
+        val unit = entity?.attrString("unit_of_measurement") ?: "W"
+        when {
+            num == null -> "—"
+            num >= 100 -> "${num.roundToInt()} $unit"
+            else -> String.format(java.util.Locale.US, "%.1f %s", num, unit)
+        }
+    }
+    val lastUpdated = entity?.lastChanged?.relativeToNow(Instant.now()) ?: "—"
+
+    CompositionLocalProvider(LocalOverlay provides overlay) {
+        FullScreenDialogOverlay(onDismiss = onDismiss, dismissOnScrim = true, scrim = PopupScrim) {
+            Column(
+                modifier = popupSheetModifier(PopupSheetKind.Detail)
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                    .popupSheetLook(overlay.sheet)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {},
+                    )
+                    .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                PopupSheetChrome(
+                    title = name,
+                    onClose = onDismiss,
+                    overlay = overlay,
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(overlay.well)
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(overlay.card),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        MdiIcon(
+                            name = consumerIcon(entityId, entity?.attrString("icon")),
+                            tint = AccentYellow,
+                            size = 24.dp,
+                        )
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(powerText, color = overlay.text, fontSize = 28.sp, fontWeight = FontWeight.Light)
+                        Text("Updated $lastUpdated", color = overlay.muted, fontSize = 13.sp)
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(overlay.card)
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text("Exclude", color = overlay.text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                        Text(
+                            "Omit from live power total and move to the bottom of the list.",
+                            color = overlay.muted,
+                            fontSize = 13.sp,
+                        )
+                    }
+                    Switch(
+                        checked = excluded,
+                        onCheckedChange = { viewModel.setPowerEntityExcluded(entityId, it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.Black,
+                            checkedTrackColor = ActiveYellow,
+                        ),
+                    )
+                }
+            }
+        }
+    }
+}
+
 
 @Composable
 fun EnergyDateBar(modifier: Modifier = Modifier) {

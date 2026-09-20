@@ -239,6 +239,9 @@ class HaViewModel(
     private val _monitoredLights = MutableStateFlow(credentials.monitoredLightEntities)
     val monitoredLights: StateFlow<List<String>?> = _monitoredLights
 
+    private val _excludedPowerEntities = MutableStateFlow(credentials.excludedPowerEntities)
+    val excludedPowerEntities: StateFlow<Set<String>> = _excludedPowerEntities
+
     private val _tabletMotion = MutableStateFlow(false)
 
     val occupancyActive: StateFlow<Boolean> = combine(
@@ -2340,6 +2343,18 @@ class HaViewModel(
     fun setMonitoredLights(ids: List<String>?) {
         credentials.monitoredLightEntities = ids
         _monitoredLights.value = credentials.monitoredLightEntities
+    }
+
+    fun setPowerEntityExcluded(entityId: String, excluded: Boolean) {
+        val id = CredentialsStore.normalizeEntityId(entityId)
+        if (id.isBlank() || !id.contains('.')) return
+        val next = if (excluded) {
+            _excludedPowerEntities.value + id
+        } else {
+            _excludedPowerEntities.value - id
+        }
+        credentials.excludedPowerEntities = next
+        _excludedPowerEntities.value = credentials.excludedPowerEntities
     }
 
     fun lightSwitchChoices(): List<Pair<String, String>> =

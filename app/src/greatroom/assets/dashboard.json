@@ -2968,6 +2968,7 @@
     "sensor.envoy_202234122877_current_net_power_consumption",
     "sensor.envoy_202234122877_current_power_production",
     "sensor.envoy_202234122877_available_battery_energy",
+    "sensor.envoy_202234122877_battery",
     "sensor.envoy_202234122877_reserve_battery_energy",
     "sensor.front_load_washer",
     "sensor.great_room_4afa_temperature",

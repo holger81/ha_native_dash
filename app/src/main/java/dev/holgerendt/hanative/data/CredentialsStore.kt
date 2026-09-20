@@ -91,6 +91,13 @@ class CredentialsStore(context: Context) {
             persist()
         }
 
+    /** Power sensors omitted from live-energy totals (still shown greyed at the bottom). */
+    var excludedPowerEntities: Set<String> = readExcludedPowerPref()
+        set(value) {
+            field = value.map { normalizeEntityId(it) }.filter { it.contains('.') }.toSet()
+            persist()
+        }
+
     /** Null means follow Lovelace week-planner calendars; empty means none. */
     var subscribedCalendars: List<String>? = readCalendarPref()
         set(value) {
@@ -278,6 +285,14 @@ class CredentialsStore(context: Context) {
         }.distinct()
     }
 
+    private fun readExcludedPowerPref(): Set<String> {
+        val raw = prefs.getString(KEY_EXCLUDED_POWER, null) ?: return emptySet()
+        val arr = runCatching { JSONArray(raw) }.getOrNull() ?: return emptySet()
+        return (0 until arr.length()).mapNotNull { index ->
+            arr.optString(index).trim().takeIf { it.contains('.') }
+        }.toSet()
+    }
+
     private fun persist() {
         if (!persistEnabled) return
         val editor = prefs.edit()
@@ -291,6 +306,7 @@ class CredentialsStore(context: Context) {
             .putString(KEY_DISPLAY_BRIGHTNESS, displayBrightnessEntity)
             .putString(KEY_DISPLAY_ILLUMINANCE, displayIlluminanceEntity)
             .putString(KEY_MUSIC_PLAYER, musicPlayerEntity)
+            .putString(KEY_EXCLUDED_POWER, JSONArray(excludedPowerEntities.toList()).toString())
         val calendars = subscribedCalendars
         if (calendars != null) {
             editor.putString(KEY_CALENDARS, JSONArray(calendars).toString())
@@ -497,6 +513,7 @@ class CredentialsStore(context: Context) {
         private const val KEY_MUSIC_PLAYER = "music_player_entity"
         private const val KEY_CALENDARS = "subscribed_calendars"
         private const val KEY_MONITORED_LIGHTS = "monitored_lights"
+        private const val KEY_EXCLUDED_POWER = "excluded_power_entities"
         private const val KEY_RECOVERY_SEALED = "recovery_sealed"
         const val MAX_SCREEN_TIMEOUT_SECONDS = 86_400
         val DEFAULT_DISPLAY_OFF_ENTITY: String get() = PanelConfig.DEFAULT_DISPLAY_OFF_ENTITY
