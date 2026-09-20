@@ -328,8 +328,8 @@ private fun rememberAlignedHeroFrame(
 
 /**
  * Scale/translate the pad so its baked-in cover region coincides with the sharp
- * [MusicOutpaintHeroMetrics] rect. Clamp edge pixels only where the pad does not
- * yet reach the card bounds (older/smaller pads).
+ * [MusicOutpaintHeroMetrics] rect, then uniformly enlarge around the cover center
+ * until the pad fills the card (no letterboxing). Clamp is only a subpixel safety net.
  */
 @Composable
 private fun BoxScope.AlignedHeroBackdrop(bitmap: Bitmap, layout: OutpaintCoverLayout) {
@@ -344,6 +344,7 @@ private fun BoxScope.AlignedHeroBackdrop(bitmap: Bitmap, layout: OutpaintCoverLa
                     cardWidth = size.width,
                     coverSize = MusicOutpaintHeroMetrics.CoverSize.toPx(),
                     stageHeight = MusicOutpaintHeroMetrics.StageHeight.toPx(),
+                    cardHeight = size.height,
                 )
                 val shader = BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
                     setLocalMatrix(

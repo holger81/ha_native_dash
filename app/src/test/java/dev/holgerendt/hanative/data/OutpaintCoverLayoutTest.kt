@@ -3,40 +3,84 @@ package dev.holgerendt.hanative.data
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OutpaintCoverLayoutTest {
     @Test
-    fun playerPadHorizonMatchesFloatingCoverRatherThanCardBounds() {
+    fun playerPadFillsCardWhilePinningCoverCenter() {
         val pads = MusicPlayerOutpaint.padsForSource(512, 512)
         val w = pads.outWidth(512)
         val h = pads.outHeight(512)
         val layout = outpaintCoverLayout(w, h, pads.padLeft, pads.padTop, pads.padRight, pads.padBottom)!!
-        val placement = alignedOutpaintPlacement(w, h, layout, 520f, 196f, 220f)
-        assertEquals(162f, placement.left + pads.padLeft * placement.scale, 0.001f)
-        assertEquals(12f, placement.top + pads.padTop * placement.scale, 0.001f)
-        // A horizon 80% down the original must meet precisely at the foreground edge.
-        assertEquals(168.8f, placement.top + (pads.padTop + 512 * 0.8f) * placement.scale, 0.001f)
-        assertEquals(196f, 512 * placement.scale, 0.001f)
+        val cardW = 520f
+        val cardH = 650f
+        val coverSize = 196f
+        val stageH = 220f
+        val placement = alignedOutpaintPlacement(w, h, layout, cardW, coverSize, stageH, cardH)
+
+        val coverCx = cardW / 2f
+        val coverCy = stageH / 2f
+        val coverBmpCx = w * (layout.coverLeftFrac + layout.coverWidthFrac / 2f)
+        val coverBmpCy = h * (layout.coverTopFrac + layout.coverHeightFrac / 2f)
+        assertEquals(coverCx, placement.left + coverBmpCx * placement.scale, 0.001f)
+        assertEquals(coverCy, placement.top + coverBmpCy * placement.scale, 0.001f)
+
+        // Full-bleed: pad covers the card (no letterboxing).
+        assertTrue(placement.left <= 0.001f)
+        assertTrue(placement.top <= 0.001f)
+        assertTrue(placement.left + w * placement.scale >= cardW - 0.001f)
+        assertTrue(placement.top + h * placement.scale >= cardH - 0.001f)
+
+        // Baked cover may grow past the sharp 196.dp hero; never shrink below it.
+        assertTrue(512 * placement.scale >= coverSize - 0.001f)
     }
 
     @Test
-    fun asymmetricLegacyPadsAlsoRegisterAtDoubleDensity() {
+    fun asymmetricLegacyPadsAlsoFillAndPinCoverCenter() {
         val layout = outpaintCoverLayout(1000, 900, 100, 40, 300, 260)!!
-        val placement = alignedOutpaintPlacement(1000, 900, layout, 1040f, 392f, 440f)
-        assertEquals(324f, placement.left + 100 * placement.scale, 0.001f)
-        assertEquals(24f, placement.top + 40 * placement.scale, 0.001f)
-        assertEquals(392f, 600 * placement.scale, 0.001f)
+        val cardW = 1040f
+        val cardH = 900f
+        val coverSize = 392f
+        val stageH = 440f
+        val placement = alignedOutpaintPlacement(1000, 900, layout, cardW, coverSize, stageH, cardH)
+        val coverCx = cardW / 2f
+        val coverCy = stageH / 2f
+        val coverBmpCx = 1000 * (layout.coverLeftFrac + layout.coverWidthFrac / 2f)
+        val coverBmpCy = 900 * (layout.coverTopFrac + layout.coverHeightFrac / 2f)
+        assertEquals(coverCx, placement.left + coverBmpCx * placement.scale, 0.001f)
+        assertEquals(coverCy, placement.top + coverBmpCy * placement.scale, 0.001f)
+        assertTrue(placement.left <= 0.001f)
+        assertTrue(placement.top <= 0.001f)
+        assertTrue(placement.left + 1000 * placement.scale >= cardW - 0.001f)
+        assertTrue(placement.top + 900 * placement.scale >= cardH - 0.001f)
+        assertTrue(600 * placement.scale >= coverSize - 0.001f)
     }
 
     @Test
-    fun rectangularSourceMatchesCenteredSquareCropWithoutDistortion() {
+    fun rectangularSourceKeepsUniformScaleWithoutDistortion() {
         val layout = outpaintCoverLayout(1200, 1000, 200, 100, 200, 500)!!
-        val placement = alignedOutpaintPlacement(1200, 1000, layout, 520f, 196f, 220f)
-        // 800x400 source is cropped to its centered 400x400 region by MusicCover.
-        assertEquals(162f, placement.left + (200 + 200) * placement.scale, 0.001f)
-        assertEquals(12f, placement.top + 100 * placement.scale, 0.001f)
-        assertEquals(196f, 400 * placement.scale, 0.001f)
+        val placement = alignedOutpaintPlacement(1200, 1000, layout, 520f, 196f, 220f, 650f)
+        // Uniform scale only — cover center stays pinned to stage center.
+        assertEquals(260f, placement.left + 1200 * (layout.coverLeftFrac + layout.coverWidthFrac / 2f) * placement.scale, 0.001f)
+        assertEquals(110f, placement.top + 1000 * (layout.coverTopFrac + layout.coverHeightFrac / 2f) * placement.scale, 0.001f)
+        assertTrue(placement.left <= 0.001f)
+        assertTrue(placement.left + 1200 * placement.scale >= 520f - 0.001f)
+    }
+
+    @Test
+    fun stageOnlyHeightStillAlignsWhenPadAlreadyCovers() {
+        // Tall pad relative to a short stage: align scale may already cover; fillScale stays 1.
+        val layout = outpaintCoverLayout(400, 800, 50, 50, 50, 450)!!
+        val placement = alignedOutpaintPlacement(400, 800, layout, 300f, 200f, 220f, 220f)
+        val coverBmpCx = 400 * (layout.coverLeftFrac + layout.coverWidthFrac / 2f)
+        val coverBmpCy = 800 * (layout.coverTopFrac + layout.coverHeightFrac / 2f)
+        assertEquals(150f, placement.left + coverBmpCx * placement.scale, 0.001f)
+        assertEquals(110f, placement.top + coverBmpCy * placement.scale, 0.001f)
+        assertTrue(placement.left <= 0.001f)
+        assertTrue(placement.top <= 0.001f)
+        assertTrue(placement.left + 400 * placement.scale >= 300f - 0.001f)
+        assertTrue(placement.top + 800 * placement.scale >= 220f - 0.001f)
     }
 
     @Test
