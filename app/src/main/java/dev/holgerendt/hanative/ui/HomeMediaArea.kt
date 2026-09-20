@@ -508,8 +508,10 @@ private fun FullMusicCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { viewModel.openPopup("#music") }
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                    .padding(horizontal = 16.dp)
+                    .padding(top = 2.dp, bottom = 0.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(1.dp),
             ) {
                 MusicOutpaintMetaText(
                     snapshot.title,
@@ -535,13 +537,17 @@ private fun FullMusicCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                    .padding(horizontal = 16.dp)
+                    .padding(top = 2.dp, bottom = 6.dp),
             )
         }
     }
 }
 
-/** Soft white glyph halo so TextDark/TextMuted stay readable over dark outpaint. */
+/**
+ * Soft white glyph halo so title/artist/room stay readable on light *and* dark outpaint.
+ * Small/muted lines get a stronger pillow + slightly darker ink.
+ */
 @Composable
 private fun MusicOutpaintMetaText(
     text: String,
@@ -552,34 +558,39 @@ private fun MusicOutpaintMetaText(
     textAlign: TextAlign? = null,
     modifier: Modifier = Modifier,
 ) {
-    val halo = TextStyle(
+    val mutedLine = color.alpha < 0.95f || fontSize.value <= 16f
+    val ink = if (mutedLine) TextDark.copy(alpha = 0.90f) else color
+    val washAlpha = if (mutedLine) 0.95f else 0.78f
+    val washBlur = if (mutedLine) 32f else 24f
+    val edgeBlur = if (mutedLine) 14f else 9f
+    val wash = TextStyle(
         shadow = Shadow(
-            color = Color.White.copy(alpha = 0.95f),
+            color = Color.White.copy(alpha = 1f),
             offset = Offset.Zero,
-            blurRadius = 22f,
+            blurRadius = washBlur,
         ),
     )
     val edge = TextStyle(
         shadow = Shadow(
-            color = Color.White.copy(alpha = 0.88f),
+            color = Color.White.copy(alpha = 0.98f),
             offset = Offset.Zero,
-            blurRadius = 8f,
+            blurRadius = edgeBlur,
         ),
     )
     Box(modifier = modifier) {
         Text(
             text,
-            color = Color.White.copy(alpha = 0.70f),
+            color = Color.White.copy(alpha = washAlpha),
             fontSize = fontSize,
             fontWeight = fontWeight,
             maxLines = maxLines,
             overflow = TextOverflow.Ellipsis,
             textAlign = textAlign,
-            style = halo,
+            style = wash,
         )
         Text(
             text,
-            color = color,
+            color = ink,
             fontSize = fontSize,
             fontWeight = fontWeight,
             maxLines = maxLines,
@@ -613,14 +624,19 @@ private fun MediaPlaybackBar(
     val entityId = snapshot.entityId
     var volume by remember(snapshot.volume, entityId) { mutableFloatStateOf(snapshot.volume ?: 0.4f) }
     LaunchedEffect(snapshot.volume) { snapshot.volume?.let { volume = it } }
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    val stackGap = if (outpaintReadable) 4.dp else 6.dp
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(stackGap)) {
         if (snapshot.room.isNotBlank()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                MdiIcon("mdi:speaker", tint = TextMuted, size = 14.dp)
+                MdiIcon(
+                    "mdi:speaker",
+                    tint = if (outpaintReadable) TextDark.copy(alpha = 0.88f) else TextMuted,
+                    size = 14.dp,
+                )
                 Spacer(Modifier.width(6.dp))
                 if (outpaintReadable) {
                     MusicOutpaintMetaText(
@@ -634,7 +650,13 @@ private fun MediaPlaybackBar(
                 }
             }
         }
-        MediaProgressRow(snapshot.positionSec, snapshot.durationSec, snapshot.positionUpdatedAtMs, snapshot.playing)
+        MediaProgressRow(
+            snapshot.positionSec,
+            snapshot.durationSec,
+            snapshot.positionUpdatedAtMs,
+            snapshot.playing,
+            outpaintReadable = outpaintReadable,
+        )
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -644,6 +666,7 @@ private fun MediaPlaybackBar(
                 MediaIconButton(
                     "mdi:skip-previous",
                     label = "Previous track",
+                    solid = outpaintReadable,
                     onClick = { entityId?.let { viewModel.homeMediaCommand(it, "media_previous_track") } },
                 )
             }
@@ -658,10 +681,15 @@ private fun MediaPlaybackBar(
                 MediaIconButton(
                     "mdi:skip-next",
                     label = "Next track",
+                    solid = outpaintReadable,
                     onClick = { entityId?.let { viewModel.homeMediaCommand(it, "media_next_track") } },
                 )
             }
-            MdiIcon("mdi:volume-medium", tint = TextMuted, size = 20.dp)
+            MdiIcon(
+                "mdi:volume-medium",
+                tint = if (outpaintReadable) TextDark.copy(alpha = 0.88f) else TextMuted,
+                size = 20.dp,
+            )
             Slider(
                 value = volume,
                 onValueChange = {
@@ -672,7 +700,11 @@ private fun MediaPlaybackBar(
                 colors = SliderDefaults.colors(
                     thumbColor = ActiveYellow,
                     activeTrackColor = ActiveYellow,
-                    inactiveTrackColor = overlay.well,
+                    inactiveTrackColor = if (outpaintReadable) {
+                        Color.White.copy(alpha = 0.88f)
+                    } else {
+                        overlay.well
+                    },
                 ),
             )
         }
@@ -914,6 +946,7 @@ private fun MediaProgressRow(
     durationSec: Double?,
     positionUpdatedAtMs: Long?,
     playing: Boolean,
+    outpaintReadable: Boolean = false,
 ) {
     var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(playing, positionSec, positionUpdatedAtMs) {
@@ -940,7 +973,9 @@ private fun MediaProgressRow(
                 .fillMaxWidth()
                 .height(4.dp)
                 .clip(RoundedCornerShape(2.dp))
-                .background(overlay.well),
+                .background(
+                    if (outpaintReadable) Color.White.copy(alpha = 0.88f) else overlay.well,
+                ),
         ) {
             Box(
                 modifier = Modifier
@@ -950,8 +985,13 @@ private fun MediaProgressRow(
             )
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(formatClock(live), color = TextMuted, fontSize = 12.sp)
-            Text(formatClock(duration), color = TextMuted, fontSize = 12.sp)
+            if (outpaintReadable) {
+                MusicOutpaintMetaText(formatClock(live), color = TextMuted, fontSize = 12.sp)
+                MusicOutpaintMetaText(formatClock(duration), color = TextMuted, fontSize = 12.sp)
+            } else {
+                Text(formatClock(live), color = TextMuted, fontSize = 12.sp)
+                Text(formatClock(duration), color = TextMuted, fontSize = 12.sp)
+            }
         }
     }
 }
@@ -962,14 +1002,21 @@ private fun MediaIconButton(
     onClick: () -> Unit,
     label: String,
     filled: Boolean = false,
+    /** Opaque light disc so skip controls stay visible over busy outpaint. */
+    solid: Boolean = false,
     size: Dp = 48.dp,
     iconSize: Dp = 26.dp,
 ) {
+    val background = when {
+        filled -> ActiveYellow
+        solid -> Color.White.copy(alpha = 0.94f)
+        else -> Color(0x14000000)
+    }
     Box(
         modifier = Modifier
             .size(size)
             .clip(CircleShape)
-            .background(if (filled) ActiveYellow else Color(0x14000000))
+            .background(background)
             .semantics {
                 role = Role.Button
                 contentDescription = label
