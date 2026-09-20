@@ -69,8 +69,8 @@ class MediagenOutpaintClient(
                 .setType(MultipartBody.FORM)
                 .addFormDataPart(
                     "image",
-                    "album_cover.jpg",
-                    sourceBytes.toRequestBody("image/jpeg".toMediaType()),
+                    if (sourceBytes.firstOrNull() == 0x89.toByte()) "album_cover.png" else "album_cover.jpg",
+                    sourceBytes.toRequestBody((if (sourceBytes.firstOrNull() == 0x89.toByte()) "image/png" else "image/jpeg").toMediaType()),
                 )
             if (canvas != null) {
                 bodyBuilder

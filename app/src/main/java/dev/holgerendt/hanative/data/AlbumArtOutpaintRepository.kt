@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicReference
  * and warm refs are remembered so flaky re-downloads cannot re-queue the same art.
  */
 class AlbumArtOutpaintRepository(
-    context: Context,
+    private val context: Context,
     private val haClient: HaClient,
     private val mediagenUrl: () -> String,
     private val scope: CoroutineScope,
@@ -41,7 +41,34 @@ class AlbumArtOutpaintRepository(
     ),
     private val mediagen: MediagenOutpaintClient = MediagenOutpaintClient(),
     private val imageHttp: OkHttpClient = imageFetchClient(),
+    private val widgetGeometry: WidgetOutpaintGeometry? = null,
 ) {
+    private var exactSession: AlbumArtOutpaintRepository? = null
+    private val preparedSources = ConcurrentHashMap<String, ByteArray>()
+
+    /** Each measured geometry owns its cache and worker; legacy pads cannot leak in. */
+    fun forWidget(geometry: WidgetOutpaintGeometry): AlbumArtOutpaintRepository {
+        exactSession?.takeIf { it.widgetGeometry == geometry }?.let { return it }
+        exactSession?.targets?.set(OutpaintTargets())
+        exactSession?.workerJob?.cancel()
+        return AlbumArtOutpaintRepository(
+            context, haClient, mediagenUrl, scope,
+            AlbumArtOutpaintCache(File(RecoverableFiles.outpaintCacheDir(context), "exact-v1-${geometry.key}"), useCoverAliases = false),
+            mediagen, imageHttp, geometry,
+        ).also {
+            exactSession = it
+            val plan = targets.get()
+            it.setTargets(plan.current, plan.upcoming)
+        }
+    }
+
+    private fun sourcePads(source: ByteArray) = widgetGeometry?.pads
+        ?: MusicPlayerOutpaint.padsForSourceBytes(source)
+    private fun sourceCanvas(source: ByteArray) = widgetGeometry?.canvas
+        ?: MusicPlayerOutpaint.canvasForSourceBytes(source)
+
+    suspend fun preparedCover(coverRef: String): ByteArray? = fetchCoverBytes(coverRef)
+
     private val workerMutex = Mutex()
     private val targets = AtomicReference(OutpaintTargets())
     private var workerJob: Job? = null
@@ -65,6 +92,12 @@ class AlbumArtOutpaintRepository(
     fun setTargets(currentCover: String?, upcomingCovers: List<String>) {
         val plan = playlistOutpaintPlan(currentCover, upcomingCovers)
         val next = OutpaintTargets(current = plan.current, upcoming = plan.upcoming)
+        if (widgetGeometry == null) {
+            // Hold the playlist until the full card supplies physical geometry.
+            targets.set(next)
+            exactSession?.setTargets(currentCover, upcomingCovers)
+            return
+        }
         val active = buildSet {
             plan.current?.let { add(it) }
             addAll(plan.upcoming)
@@ -99,15 +132,15 @@ class AlbumArtOutpaintRepository(
         }
         for (ref in refs) {
             val source = fetchCoverBytes(ref) ?: continue
-            val layout = MusicPlayerOutpaint.padsForSourceBytes(source)
+            val layout = sourcePads(source)
             val hit = cache.cachedFile(source, layout) ?: continue
-            cache.bindCoverRef(ref, source)
+            cache.bindCoverRef(ref, source, sourcePads(source))
             for (other in refs) {
                 if (other == ref) continue
                 val otherSource = fetchCoverBytes(other) ?: continue
-                val otherLayout = MusicPlayerOutpaint.padsForSourceBytes(otherSource)
+                val otherLayout = sourcePads(otherSource)
                 if (cache.cachedFile(otherSource, otherLayout)?.absolutePath == hit.absolutePath) {
-                    cache.bindCoverRef(other, otherSource)
+                    cache.bindCoverRef(other, otherSource, sourcePads(otherSource))
                 }
             }
             return hit
@@ -152,9 +185,9 @@ class AlbumArtOutpaintRepository(
         if (refs.any { cache.isFluxCompleteForCoverRef(it) }) return true
         for (ref in refs) {
             val source = fetchCoverBytes(ref) ?: continue
-            val layout = MusicPlayerOutpaint.padsForSourceBytes(source)
+            val layout = sourcePads(source)
             if (cache.isFluxComplete(source, layout) && cache.cachedFile(source, layout) != null) {
-                cache.bindCoverRef(ref, source)
+                cache.bindCoverRef(ref, source, sourcePads(source))
                 return true
             }
         }
@@ -174,23 +207,23 @@ class AlbumArtOutpaintRepository(
             android.util.Log.w(TAG, "ensureLocalPad fetch miss cover=${coverRef.take(96)}")
             return null
         }
-        val layout = MusicPlayerOutpaint.padsForSourceBytes(source)
+        val layout = sourcePads(source)
         val local = cache.cachedFile(source, layout)
             ?: cache.cachedFileForCoverRef(coverRef)
             ?: runCatching {
                 cache.getOrEnqueue(source, layout = layout) { bytes ->
-                    val pads = MusicPlayerOutpaint.padsForSourceBytes(bytes)
+                    val pads = sourcePads(bytes)
                     AlbumArtLocalOutpaint.padFromEdges(
                         bytes,
                         padLeft = pads.padLeft,
                         padTop = pads.padTop,
                         padRight = pads.padRight,
                         padBottom = pads.padBottom,
-                    )
+                    )?.let { widgetGeometry?.restoreCover(it, bytes) ?: it }
                 }
             }.getOrNull()
             ?: return null
-        cache.bindCoverRef(coverRef, source)
+        cache.bindCoverRef(coverRef, source, sourcePads(source))
         setTargets(currentCover = coverRef, upcomingCovers = targets.get().upcoming)
         return local
     }
@@ -255,7 +288,7 @@ class AlbumArtOutpaintRepository(
                 }
                 val file = warmCover(base, nextRef, source)
                 if (file != null) {
-                    cache.bindCoverRef(nextRef, source)
+                    cache.bindCoverRef(nextRef, source, sourcePads(source))
                     if (base.isBlank() ||
                         cache.isFluxCompleteForCoverRef(nextRef) ||
                         AlbumArtLocalOutpaint.hasUniformEdges(source) ||
@@ -294,12 +327,12 @@ class AlbumArtOutpaintRepository(
         cache.cachedFileForCoverRef(coverRef)?.let { stableHit ->
             if (cache.isFluxCompleteForCoverRef(coverRef)) {
                 fluxAttemptedRefs.add(coverRef)
-                cache.bindCoverRef(coverRef, source)
+                cache.bindCoverRef(coverRef, source, sourcePads(source))
                 return stableHit
             }
         }
-        val layout = MusicPlayerOutpaint.padsForSourceBytes(source)
-        val canvas = MusicPlayerOutpaint.canvasForSourceBytes(source)
+        val layout = sourcePads(source)
+        val canvas = sourceCanvas(source)
         val existing = cache.cachedFile(source, layout)
         if (existing != null && isFluxPadSettled(source, existing, layout)) {
             val settledBytes = withContext(Dispatchers.IO) {
@@ -308,10 +341,10 @@ class AlbumArtOutpaintRepository(
             // Old / invented Flux pads used to stick forever via the .flux sidecar.
             if (settledBytes != null &&
                 settledBytes.isNotEmpty() &&
-                !AlbumArtLocalOutpaint.shouldRejectFluxPad(settledBytes, source)
+                !rejectPad(settledBytes, source)
             ) {
                 fluxAttemptedRefs.add(coverRef)
-                cache.bindCoverRef(coverRef, source)
+                cache.bindCoverRef(coverRef, source, sourcePads(source))
                 return existing
             }
             cache.invalidate(source, layout)
@@ -322,18 +355,18 @@ class AlbumArtOutpaintRepository(
             ?: stableLocal
             ?: runCatching {
                 cache.getOrEnqueue(source, layout = layout) { bytes ->
-                    val pads = MusicPlayerOutpaint.padsForSourceBytes(bytes)
+                    val pads = sourcePads(bytes)
                     AlbumArtLocalOutpaint.padFromEdges(
                         bytes,
                         padLeft = pads.padLeft,
                         padTop = pads.padTop,
                         padRight = pads.padRight,
                         padBottom = pads.padBottom,
-                    )
+                    )?.let { widgetGeometry?.restoreCover(it, bytes) ?: it }
                 }
             }.getOrNull()
         if (local != null) {
-            cache.bindCoverRef(coverRef, source)
+            cache.bindCoverRef(coverRef, source, sourcePads(source))
         } else {
             android.util.Log.w(TAG, "local pad miss cover=${coverRef.take(96)}; still trying mediagen")
         }
@@ -363,8 +396,8 @@ class AlbumArtOutpaintRepository(
             retryAfterMs.remove(coverRef)
             android.util.Log.i(TAG, "mediagen cache hit source=${cachedRemote.source} cover=${coverRef.take(96)}")
             val pads = cachedRemote.layout ?: layout
-            return cache.replace(source, cachedRemote.bytes, markAsFlux = true, layout = pads)?.also {
-                cache.bindCoverRef(coverRef, source)
+            return cache.replace(source, widgetGeometry?.restoreCover(cachedRemote.bytes, source) ?: cachedRemote.bytes, markAsFlux = true, layout = pads)?.also {
+                cache.bindCoverRef(coverRef, source, sourcePads(source))
             } ?: local
         }
         // Only mark Flux attempted after an accepted Flux pad, or after mediagen
@@ -388,12 +421,13 @@ class AlbumArtOutpaintRepository(
             fluxAttemptedRefs.add(coverRef)
             retryAfterMs.remove(coverRef)
             val pads = result.layout ?: layout
-            return cache.replace(source, result.bytes, markAsFlux = true, layout = pads)?.also {
-                cache.bindCoverRef(coverRef, source)
+            return cache.replace(source, widgetGeometry?.restoreCover(result.bytes, source) ?: result.bytes, markAsFlux = true, layout = pads)?.also {
+                cache.bindCoverRef(coverRef, source, sourcePads(source))
             } ?: local
         }
         // Settled local from mediagen: store for atmosphere, stop re-POSTing.
-        if (result.source == MediagenOutpaintSource.Local) {
+        if (result.source == MediagenOutpaintSource.Local &&
+            (widgetGeometry == null || widgetGeometry.accepts(result.bytes, result.layout))) {
             android.util.Log.w(
                 TAG,
                 "mediagen settled local cover=${coverRef.take(96)}; not re-queueing Flux this process",
@@ -401,8 +435,8 @@ class AlbumArtOutpaintRepository(
             fluxAttemptedRefs.add(coverRef)
             retryAfterMs.remove(coverRef)
             val pads = result.layout ?: layout
-            return cache.replace(source, result.bytes, markAsFlux = false, layout = pads)?.also {
-                cache.bindCoverRef(coverRef, source)
+            return cache.replace(source, widgetGeometry?.restoreCover(result.bytes, source) ?: result.bytes, markAsFlux = false, layout = pads)?.also {
+                cache.bindCoverRef(coverRef, source, sourcePads(source))
             } ?: local
         }
         android.util.Log.w(
@@ -413,19 +447,29 @@ class AlbumArtOutpaintRepository(
         return local
     }
 
+    private fun rejectPad(bytes: ByteArray, source: ByteArray): Boolean {
+        val pads = sourcePads(source)
+        return AlbumArtLocalOutpaint.shouldRejectFluxPad(bytes, source,
+            pads.padLeft, pads.padTop, pads.padRight, pads.padBottom)
+    }
+
     /** True when mediagen bytes should replace the on-device local pad and mark `.flux`. */
     private fun shouldAcceptMediagenPad(
         result: MediagenOutpaintResult,
         source: ByteArray,
     ): Boolean {
         if (result.bytes.isEmpty()) return false
-        if (AlbumArtLocalOutpaint.shouldRejectFluxPad(result.bytes, source)) return false
+        if (widgetGeometry != null && !widgetGeometry.accepts(result.bytes, result.layout)) return false
+        if (rejectPad(result.bytes, source)) return false
         return when (result.source) {
             MediagenOutpaintSource.Flux -> true
             MediagenOutpaintSource.Local -> false
             // Missing/odd headers: still accept if it is not a solid local-style pad.
             MediagenOutpaintSource.Unknown ->
-                !AlbumArtLocalOutpaint.looksLikeLocalSolidPad(result.bytes)
+                sourcePads(source).let { pads ->
+                    !AlbumArtLocalOutpaint.looksLikeLocalSolidPad(result.bytes,
+                        pads.padLeft, pads.padTop, pads.padRight, pads.padBottom)
+                }
         }
     }
 
@@ -433,7 +477,7 @@ class AlbumArtOutpaintRepository(
     private fun isFluxPadSettled(
         source: ByteArray,
         cached: File,
-        layout: OutpaintPadLayout = MusicPlayerOutpaint.padsForSourceBytes(source),
+        layout: OutpaintPadLayout = sourcePads(source),
     ): Boolean {
         // Only the `.flux` sidecar means a generative upgrade landed. Local edge
         // pads are textured enough to look "done" and used to freeze upgrades.
@@ -468,27 +512,27 @@ class AlbumArtOutpaintRepository(
             return true
         }
         val source = fetchCoverBytes(coverRef) ?: return false
-        val layout = MusicPlayerOutpaint.padsForSourceBytes(source)
+        val layout = sourcePads(source)
         val cached = cache.cachedFile(source, layout)
             ?: cache.cachedFileForCoverRef(coverRef)
             ?: return false
         if (AlbumArtLocalOutpaint.hasUniformEdges(source)) {
             warmRefs.add(coverRef)
             fluxAttemptedRefs.add(coverRef)
-            cache.bindCoverRef(coverRef, source)
+            cache.bindCoverRef(coverRef, source, sourcePads(source))
             return true
         }
         // No mediagen URL: local pad is the finished state.
         if (mediagenUrl().isBlank()) {
             warmRefs.add(coverRef)
             fluxAttemptedRefs.add(coverRef)
-            cache.bindCoverRef(coverRef, source)
+            cache.bindCoverRef(coverRef, source, sourcePads(source))
             return true
         }
         if (isFluxPadSettled(source, cached, layout) || cache.isFluxCompleteForCoverRef(coverRef)) {
             warmRefs.add(coverRef)
             fluxAttemptedRefs.add(coverRef)
-            cache.bindCoverRef(coverRef, source)
+            cache.bindCoverRef(coverRef, source, sourcePads(source))
             return true
         }
         // Local pad on disk still needs a successful mediagen outcome this process.
@@ -513,6 +557,14 @@ class AlbumArtOutpaintRepository(
     private suspend fun isCoverCached(coverRef: String): Boolean = isCoverFullyWarm(coverRef)
 
     private suspend fun fetchCoverBytes(coverRef: String): ByteArray? = withContext(Dispatchers.IO) {
+        preparedSources[coverRef]?.let { return@withContext it }
+        val raw = fetchRawCoverBytes(coverRef) ?: return@withContext null
+        val prepared = widgetGeometry?.prepareCover(raw) ?: if (widgetGeometry == null) raw else return@withContext null
+        if (preparedSources.size >= 20) preparedSources.clear()
+        preparedSources.putIfAbsent(coverRef, prepared) ?: prepared
+    }
+
+    private suspend fun fetchRawCoverBytes(coverRef: String): ByteArray? = withContext(Dispatchers.IO) {
         if (coverRef.startsWith("data:image")) {
             return@withContext decodeDataImage(coverRef)
         }

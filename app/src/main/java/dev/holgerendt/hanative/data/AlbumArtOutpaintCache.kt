@@ -17,6 +17,7 @@ class AlbumArtOutpaintCache(
     private val maxFiles: Int = MAX_FILES,
     private val maxBytes: Long = MAX_BYTES,
     private val cacheVersion: String = OutpaintPads.OUTPAINT_CACHE_VERSION,
+    private val useCoverAliases: Boolean = true,
 ) {
     private val dirMutex = Mutex()
     private val inFlight = ConcurrentHashMap<String, Mutex>()
@@ -38,10 +39,10 @@ class AlbumArtOutpaintCache(
      * Remember which cover ref produced [sourceBytes] so a later lookup with the
      * same ref (or stable MASS/HA id) can find the pad without re-fetching.
      */
-    fun bindCoverRef(coverRef: String, sourceBytes: ByteArray) {
+    fun bindCoverRef(coverRef: String, sourceBytes: ByteArray, layout: OutpaintPadLayout = MusicPlayerOutpaint.padsForSourceBytes(sourceBytes)) {
+        if (!useCoverAliases) return
         val trimmed = coverRef.trim()
         if (trimmed.isEmpty()) return
-        val layout = MusicPlayerOutpaint.padsForSourceBytes(sourceBytes)
         val hash = cacheKey(sourceBytes, layout)
         if (cachedFileForHash(hash) == null) return
         runCatching {
@@ -55,6 +56,7 @@ class AlbumArtOutpaintCache(
 
     /** Lookup by cover ref alias written in [bindCoverRef]. */
     fun cachedFileForCoverRef(coverRef: String): File? {
+        if (!useCoverAliases) return null
         val trimmed = coverRef.trim()
         if (trimmed.isEmpty()) return null
         cachedFileForRefHash(refFileFor(trimmed))?.let { return it }
@@ -65,6 +67,7 @@ class AlbumArtOutpaintCache(
         cachedFileForRefHash(stableFileFor(stableKey))
 
     fun isFluxCompleteForCoverRef(coverRef: String): Boolean {
+        if (!useCoverAliases) return false
         val trimmed = coverRef.trim()
         if (trimmed.isEmpty()) return false
         if (isFluxCompleteForRefFile(refFileFor(trimmed))) return true

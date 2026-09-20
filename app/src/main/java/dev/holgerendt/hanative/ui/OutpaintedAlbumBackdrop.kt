@@ -1,12 +1,6 @@
 package dev.holgerendt.hanative.ui
 
 import android.os.Build
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.BitmapShader
-import android.graphics.Matrix
-import android.graphics.Paint
-import android.graphics.Shader
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -18,7 +12,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -27,16 +20,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -44,10 +36,6 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import dev.holgerendt.hanative.ui.theme.CardLight
 import java.io.File
-import dev.holgerendt.hanative.data.OutpaintCoverLayout
-import dev.holgerendt.hanative.data.alignedOutpaintPlacement
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 
 /** Shared hero metrics: cover position/size is identical with or without outpaint. */
@@ -59,8 +47,8 @@ internal object MusicOutpaintHeroMetrics {
 /**
  * Atmosphere / hero art behind Phase 6 music UI.
  *
- * The full music hero registers the pad's original-cover region to the fixed
- * sharp cover. Compact strips can continue using a decorative atmosphere.
+ * The full music hero uses a measured, pixel-exact canvas. Compact strips
+ * retain their decorative atmosphere.
  */
 @Composable
 fun OutpaintedAlbumBackdrop(
@@ -75,6 +63,10 @@ fun OutpaintedAlbumBackdrop(
     alignWithHero: Boolean = false,
     content: @Composable BoxScope.() -> Unit,
 ) {
+    if (alignWithHero && extendedBackdrop) {
+        ExactWidgetOutpaint(coverPath, viewModel, modifier, content)
+        return
+    }
     Box(modifier = modifier) {
         if (extendedBackdrop && !coverPath.isNullOrBlank()) {
             SoftAtmosphereLayer(
@@ -82,7 +74,6 @@ fun OutpaintedAlbumBackdrop(
                 coverAlternates = coverAlternates,
                 viewModel = viewModel,
                 vivid = vivid,
-                alignWithHero = alignWithHero,
             )
         }
         content()
@@ -101,6 +92,7 @@ fun AlbumOutpaintHero(
     coverAlternates: List<String> = emptyList(),
     stageHeight: Dp? = null,
 ) {
+    val exact = LocalExactWidgetArt.current
     val ui by viewModel.ui.collectAsState()
     val coverRefs = remember(coverPath, coverAlternates) {
         (listOfNotNull(coverPath) + coverAlternates)
@@ -111,7 +103,7 @@ fun AlbumOutpaintHero(
     val resolvedStage = stageHeight ?: MusicOutpaintHeroMetrics.StageHeight
 
     LaunchedEffect(coverRefs, ui.mediagenUrl) {
-        if (coverRefs.isEmpty()) return@LaunchedEffect
+        if (exact != null || coverRefs.isEmpty()) return@LaunchedEffect
         viewModel.scheduleAlbumArtOutpaintPrefetch(currentCoverOverride = coverRefs.first())
         runCatching { viewModel.albumArtOutpaint.ensureLocalPad(coverRefs.first()) }
     }
@@ -122,22 +114,21 @@ fun AlbumOutpaintHero(
             .height(resolvedStage),
         contentAlignment = Alignment.Center,
     ) {
-        MusicCover(
-            path = coverPath,
-            viewModel = viewModel,
-            modifier = Modifier
-                .size(MusicOutpaintHeroMetrics.CoverSize)
-                .shadow(
-                    elevation = 10.dp,
-                    shape = RoundedCornerShape(22.dp),
-                    clip = false,
-                    ambientColor = Color.Black.copy(alpha = 0.15f),
-                    spotColor = Color.Black.copy(alpha = 0.25f),
-                )
-                .clip(RoundedCornerShape(22.dp)),
-            spinnerSize = 28.dp,
-            fallbackIconSize = 64.dp,
-        )
+        val coverModifier = Modifier
+            .size(MusicOutpaintHeroMetrics.CoverSize)
+            .then(if (exact != null) Modifier.onGloballyPositioned { exact.coverCoordinates = it; exact.measure() } else Modifier)
+            .shadow(10.dp, RoundedCornerShape(22.dp), clip = false,
+                ambientColor = Color.Black.copy(alpha = 0.15f),
+                spotColor = Color.Black.copy(alpha = 0.25f))
+            .clip(RoundedCornerShape(22.dp))
+        if (exact != null && exact.cover != null) {
+            Box(coverModifier.drawWithContent {
+                drawImage(exact.cover!!.asImageBitmap())
+            })
+        } else {
+            MusicCover(path = coverPath, viewModel = viewModel, modifier = coverModifier,
+                spinnerSize = 28.dp, fallbackIconSize = 64.dp)
+        }
     }
 }
 
@@ -147,7 +138,6 @@ private fun BoxScope.SoftAtmosphereLayer(
     coverAlternates: List<String>,
     viewModel: HaViewModel,
     vivid: Boolean,
-    alignWithHero: Boolean,
 ) {
     val context = LocalContext.current
     val loader = rememberHaImageLoader(viewModel.client)
@@ -216,18 +206,7 @@ private fun BoxScope.SoftAtmosphereLayer(
     }
 
     val outpaint = padFile
-    // Map the pad's baked cover region onto the fixed 196/220 hero — never FillBounds-stretch.
-    // Always keep a soft pad/enlarge underneath so a decode miss cannot leave bare CardLight.
-    if (outpaint != null && alignWithHero) {
-        val aligned = rememberAlignedHeroFrame(outpaint, padStamp, fluxComplete, viewModel)
-        if (aligned != null) {
-            key(padStamp, fluxComplete) {
-                AlignedHeroBackdrop(aligned.first, aligned.second)
-            }
-            return
-        }
-    }
-    if (outpaint != null && fluxComplete && !vivid && !alignWithHero) {
+    if (outpaint != null && fluxComplete && !vivid) {
         // Compact / non-hero surfaces: decorative full-bleed pad (aspect may not match cover).
         AsyncImage(
             model = ImageRequest.Builder(context)
@@ -244,16 +223,19 @@ private fun BoxScope.SoftAtmosphereLayer(
                 .matchParentSize()
                 .graphicsLayer { alpha = 0.94f },
         )
+        // Soft readable wash: keep outpaint visible up top, solid CardLight under
+        // title / controls so TextDark stays readable on dark pads.
         Box(
             Modifier
                 .matchParentSize()
                 .background(
                     Brush.verticalGradient(
                         colorStops = arrayOf(
-                            0.00f to CardLight.copy(alpha = 0.06f),
-                            0.45f to CardLight.copy(alpha = 0.10f),
-                            0.72f to CardLight.copy(alpha = 0.28f),
-                            1.00f to CardLight.copy(alpha = 0.42f),
+                            0.00f to CardLight.copy(alpha = 0.08f),
+                            0.40f to CardLight.copy(alpha = 0.16f),
+                            0.58f to CardLight.copy(alpha = 0.55f),
+                            0.78f to CardLight.copy(alpha = 0.90f),
+                            1.00f to CardLight,
                         ),
                     ),
                 ),
@@ -320,30 +302,6 @@ private fun BoxScope.SoftAtmosphereLayer(
     )
 }
 
-@Composable
-private fun rememberAlignedHeroFrame(
-    file: File,
-    stamp: Long,
-    fluxComplete: Boolean,
-    viewModel: HaViewModel,
-): Pair<Bitmap, OutpaintCoverLayout>? {
-    // Keep the last good frame across stamp bumps so a Flux replace does not flash soft-enlarge.
-    var frame by remember(file.absolutePath) {
-        mutableStateOf<Pair<Bitmap, OutpaintCoverLayout>?>(null)
-    }
-    LaunchedEffect(file.absolutePath, stamp, fluxComplete) {
-        val next = withContext(Dispatchers.IO) {
-            val layout = viewModel.albumArtOutpaint.outpaintLayoutForFile(file) ?: return@withContext null
-            val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return@withContext null
-            bitmap to layout
-        }
-        if (next != null) {
-            frame = next
-        }
-    }
-    return frame
-}
-
 /**
  * Disk revision for a cached pad. Mixing in [fluxComplete] ensures an in-place Flux
  * [AlbumArtOutpaintCache.replace] always invalidates SoftAtmosphere / Coil keys even when
@@ -352,53 +310,6 @@ private fun rememberAlignedHeroFrame(
 internal fun outpaintFileRevision(file: File, fluxComplete: Boolean): Long {
     val fluxBit = if (fluxComplete) 1L shl 62 else 0L
     return file.length() xor file.lastModified() xor fluxBit
-}
-
-/**
- * Scale/translate the pad so its baked-in cover region coincides with the sharp
- * [MusicOutpaintHeroMetrics] rect, then uniformly enlarge around the cover center
- * until the pad fills the card (no letterboxing). Clamp is only a subpixel safety net.
- */
-@Composable
-private fun BoxScope.AlignedHeroBackdrop(bitmap: Bitmap, layout: OutpaintCoverLayout) {
-    Box(
-        Modifier
-            .matchParentSize()
-            .drawWithCache {
-                val placement = alignedOutpaintPlacement(
-                    imageWidth = bitmap.width,
-                    imageHeight = bitmap.height,
-                    layout = layout,
-                    cardWidth = size.width,
-                    coverSize = MusicOutpaintHeroMetrics.CoverSize.toPx(),
-                    stageHeight = MusicOutpaintHeroMetrics.StageHeight.toPx(),
-                    cardHeight = size.height,
-                )
-                val shader = BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
-                    setLocalMatrix(
-                        Matrix().apply {
-                            setScale(placement.scale, placement.scale)
-                            postTranslate(placement.left, placement.top)
-                        },
-                    )
-                }
-                val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-                    this.shader = shader
-                }
-                // Keep the hero band untinted so horizon/wall lines match the cover.
-                val fadeStart =
-                    ((MusicOutpaintHeroMetrics.StageHeight + MusicOutpaintHeroMetrics.CoverSize) / 2).toPx()
-                val wash = Brush.verticalGradient(
-                    colors = listOf(Color.Transparent, CardLight.copy(alpha = 0.85f)),
-                    startY = fadeStart,
-                    endY = maxOf(size.height, fadeStart + 1f),
-                )
-                onDrawBehind {
-                    drawIntoCanvas { it.nativeCanvas.drawRect(0f, 0f, size.width, size.height, paint) }
-                    drawRect(wash)
-                }
-            },
-    )
 }
 
 private fun softBlurFallback(): Modifier =
@@ -420,9 +331,9 @@ private fun Modifier.fadeSoftAtmosphere(): Modifier = drawWithContent {
         brush = Brush.verticalGradient(
             colorStops = arrayOf(
                 0.00f to card.copy(alpha = 0.18f),
-                0.50f to card.copy(alpha = 0.32f),
-                0.75f to card.copy(alpha = 0.55f),
-                1.00f to card.copy(alpha = 0.78f),
+                0.45f to card.copy(alpha = 0.38f),
+                0.70f to card.copy(alpha = 0.78f),
+                1.00f to card,
             ),
         ),
     )
@@ -436,9 +347,9 @@ private fun Modifier.fadeLocalAtmosphere(): Modifier = drawWithContent {
         brush = Brush.verticalGradient(
             colorStops = arrayOf(
                 0.00f to card.copy(alpha = 0.12f),
-                0.55f to card.copy(alpha = 0.22f),
-                0.82f to card.copy(alpha = 0.45f),
-                1.00f to card.copy(alpha = 0.68f),
+                0.50f to card.copy(alpha = 0.28f),
+                0.75f to card.copy(alpha = 0.72f),
+                1.00f to card.copy(alpha = 0.94f),
             ),
         ),
     )
