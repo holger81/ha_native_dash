@@ -545,8 +545,9 @@ private fun FullMusicCard(
 }
 
 /**
- * Soft white glyph halo so title/artist/room stay readable on light *and* dark outpaint.
- * Small/muted lines get a stronger pillow + slightly darker ink.
+ * Outpaint metadata glyph halo.
+ * Title keeps dark ink + soft white pillow; muted lines (artist/room/times) use
+ * near-white ink with a soft black halo so they read on light and dark pads.
  */
 @Composable
 private fun MusicOutpaintMetaText(
@@ -559,20 +560,37 @@ private fun MusicOutpaintMetaText(
     modifier: Modifier = Modifier,
 ) {
     val mutedLine = color.alpha < 0.95f || fontSize.value <= 16f
-    val ink = if (mutedLine) TextDark.copy(alpha = 0.90f) else color
-    val washAlpha = if (mutedLine) 0.95f else 0.78f
-    val washBlur = if (mutedLine) 32f else 24f
-    val edgeBlur = if (mutedLine) 14f else 9f
+    val ink: Color
+    val washFill: Color
+    val washShadow: Color
+    val edgeShadow: Color
+    val washBlur: Float
+    val edgeBlur: Float
+    if (mutedLine) {
+        ink = Color.White.copy(alpha = 0.94f)
+        washFill = Color.Black.copy(alpha = 0.42f)
+        washShadow = Color.Black.copy(alpha = 0.72f)
+        edgeShadow = Color.Black.copy(alpha = 0.55f)
+        washBlur = 28f
+        edgeBlur = 10f
+    } else {
+        ink = color
+        washFill = Color.White.copy(alpha = 0.78f)
+        washShadow = Color.White.copy(alpha = 1f)
+        edgeShadow = Color.White.copy(alpha = 0.98f)
+        washBlur = 24f
+        edgeBlur = 9f
+    }
     val wash = TextStyle(
         shadow = Shadow(
-            color = Color.White.copy(alpha = 1f),
+            color = washShadow,
             offset = Offset.Zero,
             blurRadius = washBlur,
         ),
     )
     val edge = TextStyle(
         shadow = Shadow(
-            color = Color.White.copy(alpha = 0.98f),
+            color = edgeShadow,
             offset = Offset.Zero,
             blurRadius = edgeBlur,
         ),
@@ -580,7 +598,7 @@ private fun MusicOutpaintMetaText(
     Box(modifier = modifier) {
         Text(
             text,
-            color = Color.White.copy(alpha = washAlpha),
+            color = washFill,
             fontSize = fontSize,
             fontWeight = fontWeight,
             maxLines = maxLines,
@@ -634,7 +652,7 @@ private fun MediaPlaybackBar(
             ) {
                 MdiIcon(
                     "mdi:speaker",
-                    tint = if (outpaintReadable) TextDark.copy(alpha = 0.88f) else TextMuted,
+                    tint = if (outpaintReadable) Color.White.copy(alpha = 0.92f) else TextMuted,
                     size = 14.dp,
                 )
                 Spacer(Modifier.width(6.dp))
@@ -687,7 +705,7 @@ private fun MediaPlaybackBar(
             }
             MdiIcon(
                 "mdi:volume-medium",
-                tint = if (outpaintReadable) TextDark.copy(alpha = 0.88f) else TextMuted,
+                tint = if (outpaintReadable) Color.White.copy(alpha = 0.92f) else TextMuted,
                 size = 20.dp,
             )
             Slider(
