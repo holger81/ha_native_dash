@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -180,12 +181,13 @@ private fun BoxScope.SoftAtmosphereLayer(
         }.getOrNull()
         if (local != null) {
             padFile = local
-            padStamp = local.length() xor local.lastModified()
+            padStamp = outpaintFileRevision(local, fluxComplete = false)
         }
         for (ref in coverRefs.drop(1)) {
             runCatching { viewModel.albumArtOutpaint.ensureLocalPad(ref) }
         }
         var lastStamp = padStamp
+        var lastFluxDone = false
         while (true) {
             val hit = runCatching {
                 viewModel.albumArtOutpaint.peekOutpaintedFile(coverRefs)
@@ -193,14 +195,21 @@ private fun BoxScope.SoftAtmosphereLayer(
             val fluxDone = runCatching {
                 viewModel.albumArtOutpaint.peekFluxComplete(coverRefs)
             }.getOrDefault(false)
+            // Flip fluxComplete before stamp so aligned/Coil keys see Flux in the same frame.
             fluxComplete = fluxDone
             if (hit != null) {
-                val stamp = hit.length() xor hit.lastModified()
-                if (stamp != lastStamp) {
+                // Include .flux in the stamp: replace() writes the same path, and length/mtime
+                // alone can collide (1s FS resolution + similar JPEG sizes) so SoftAtmosphere
+                // would keep the decoded local pad until a forced remount.
+                val stamp = outpaintFileRevision(hit, fluxDone)
+                if (stamp != lastStamp || fluxDone != lastFluxDone) {
                     lastStamp = stamp
+                    lastFluxDone = fluxDone
                     padFile = hit
                     padStamp = stamp
                 }
+            } else if (fluxDone != lastFluxDone) {
+                lastFluxDone = fluxDone
             }
             delay(if (fluxDone) 30_000L else 2_000L)
         }
@@ -210,9 +219,11 @@ private fun BoxScope.SoftAtmosphereLayer(
     // Map the pad's baked cover region onto the fixed 196/220 hero — never FillBounds-stretch.
     // Always keep a soft pad/enlarge underneath so a decode miss cannot leave bare CardLight.
     if (outpaint != null && alignWithHero) {
-        val aligned = rememberAlignedHeroFrame(outpaint, padStamp, viewModel)
+        val aligned = rememberAlignedHeroFrame(outpaint, padStamp, fluxComplete, viewModel)
         if (aligned != null) {
-            AlignedHeroBackdrop(aligned.first, aligned.second)
+            key(padStamp, fluxComplete) {
+                AlignedHeroBackdrop(aligned.first, aligned.second)
+            }
             return
         }
     }
@@ -313,17 +324,34 @@ private fun BoxScope.SoftAtmosphereLayer(
 private fun rememberAlignedHeroFrame(
     file: File,
     stamp: Long,
+    fluxComplete: Boolean,
     viewModel: HaViewModel,
 ): Pair<Bitmap, OutpaintCoverLayout>? {
-    var frame by remember(file, stamp) { mutableStateOf<Pair<Bitmap, OutpaintCoverLayout>?>(null) }
-    LaunchedEffect(file, stamp) {
-        frame = withContext(Dispatchers.IO) {
+    // Keep the last good frame across stamp bumps so a Flux replace does not flash soft-enlarge.
+    var frame by remember(file.absolutePath) {
+        mutableStateOf<Pair<Bitmap, OutpaintCoverLayout>?>(null)
+    }
+    LaunchedEffect(file.absolutePath, stamp, fluxComplete) {
+        val next = withContext(Dispatchers.IO) {
             val layout = viewModel.albumArtOutpaint.outpaintLayoutForFile(file) ?: return@withContext null
             val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return@withContext null
             bitmap to layout
         }
+        if (next != null) {
+            frame = next
+        }
     }
     return frame
+}
+
+/**
+ * Disk revision for a cached pad. Mixing in [fluxComplete] ensures an in-place Flux
+ * [AlbumArtOutpaintCache.replace] always invalidates SoftAtmosphere / Coil keys even when
+ * length and mtime are unchanged.
+ */
+internal fun outpaintFileRevision(file: File, fluxComplete: Boolean): Long {
+    val fluxBit = if (fluxComplete) 1L shl 62 else 0L
+    return file.length() xor file.lastModified() xor fluxBit
 }
 
 /**

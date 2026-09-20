@@ -200,6 +200,9 @@ class AlbumArtOutpaintCache(
                 target.writeBytes(generated)
                 tmp.delete()
             }
+            // Force a distinct mtime so SoftAtmosphere's length⊕mtime stamp moves even when
+            // the replacement JPEG is the same size as the local pad (common on 1s FS clocks).
+            target.setLastModified(System.currentTimeMillis())
             padsMarkerFor(hash).writeText(layout.headerPad())
             enforceLimitsLocked()
             target.takeIf { it.isFile && it.length() > 0L }

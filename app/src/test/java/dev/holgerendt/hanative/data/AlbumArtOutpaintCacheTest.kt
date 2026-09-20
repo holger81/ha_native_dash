@@ -92,6 +92,19 @@ class AlbumArtOutpaintCacheTest {
     }
 
     @Test
+    fun replaceBumpsLastModifiedForSameSizedPayload() = runBlocking {
+        val cache = AlbumArtOutpaintCache(tmp.newFolder("outpaint"))
+        val source = byteArrayOf(1, 2, 3)
+        val first = cache.getOrEnqueue(source) { byteArrayOf(9, 9) }!!
+        val before = first.lastModified()
+        Thread.sleep(5)
+        val second = cache.replace(source, byteArrayOf(8, 8))!!
+        assertEquals(first.absolutePath, second.absolutePath)
+        assertTrue(second.lastModified() >= before)
+        assertTrue(second.lastModified() > before || second.readBytes().contentEquals(byteArrayOf(8, 8)))
+    }
+
+    @Test
     fun stableMassKeyFindsPadWithoutSameBytes() = runBlocking {
         val cache = AlbumArtOutpaintCache(tmp.newFolder("outpaint"))
         val source = byteArrayOf(1, 2, 3, 4)
