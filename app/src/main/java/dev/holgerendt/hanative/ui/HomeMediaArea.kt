@@ -704,7 +704,7 @@ private fun MediaPlaybackBar(
                 )
             }
             MdiIcon(
-                "mdi:volume-medium",
+                "mdi:volume-high",
                 tint = if (outpaintReadable) Color.White.copy(alpha = 0.92f) else TextMuted,
                 size = 20.dp,
             )
