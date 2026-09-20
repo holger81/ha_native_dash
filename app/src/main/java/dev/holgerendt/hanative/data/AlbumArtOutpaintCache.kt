@@ -8,11 +8,9 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Disk cache for outpainted album art (local pad and mediagen Flux).
- * Keyed by [OutpaintPads.OUTPAINT_CACHE_VERSION] + SHA-256 of source
- * cover bytes; single-flight per hash.
- *
- * Default directory is Documents/[recovery]/outpaint_cache so pads survive
- * uninstall (see [RecoverableFiles.outpaintCacheDir]).
+ * Keyed by [OutpaintPads.OUTPAINT_CACHE_VERSION] + layout tag + source bytes;
+ * single-flight per hash. Writes a `.pads` sidecar so the UI can place the
+ * floating cover on the baked-in region.
  */
 class AlbumArtOutpaintCache(
     private val directory: File,
@@ -27,8 +25,11 @@ class AlbumArtOutpaintCache(
         directory.mkdirs()
     }
 
-    fun cachedFile(sourceBytes: ByteArray): File? {
-        val hash = cacheKey(sourceBytes)
+    fun cachedFile(
+        sourceBytes: ByteArray,
+        layout: OutpaintPadLayout = MusicPlayerOutpaint.padsForSourceBytes(sourceBytes),
+    ): File? {
+        val hash = cacheKey(sourceBytes, layout)
         val file = fileFor(hash)
         return file.takeIf { it.isFile && it.length() > 0L }
     }
@@ -40,7 +41,8 @@ class AlbumArtOutpaintCache(
     fun bindCoverRef(coverRef: String, sourceBytes: ByteArray) {
         val trimmed = coverRef.trim()
         if (trimmed.isEmpty()) return
-        val hash = cacheKey(sourceBytes)
+        val layout = MusicPlayerOutpaint.padsForSourceBytes(sourceBytes)
+        val hash = cacheKey(sourceBytes, layout)
         if (cachedFileForHash(hash) == null) return
         runCatching {
             directory.mkdirs()
@@ -88,16 +90,34 @@ class AlbumArtOutpaintCache(
     }
 
     /** True after a successful Flux upgrade was written for this source. */
-    fun isFluxComplete(sourceBytes: ByteArray): Boolean =
-        fluxMarkerFor(cacheKey(sourceBytes)).isFile
+    fun isFluxComplete(
+        sourceBytes: ByteArray,
+        layout: OutpaintPadLayout = MusicPlayerOutpaint.padsForSourceBytes(sourceBytes),
+    ): Boolean = fluxMarkerFor(cacheKey(sourceBytes, layout)).isFile
 
-    fun markFluxComplete(sourceBytes: ByteArray) {
-        val hash = cacheKey(sourceBytes)
+    fun markFluxComplete(
+        sourceBytes: ByteArray,
+        layout: OutpaintPadLayout = MusicPlayerOutpaint.padsForSourceBytes(sourceBytes),
+    ) {
+        val hash = cacheKey(sourceBytes, layout)
         if (cachedFileForHash(hash) == null) return
         runCatching {
             directory.mkdirs()
             fluxMarkerFor(hash).createNewFile()
         }
+    }
+
+    /** Pads used when [file] was written (from `.pads` sidecar). */
+    fun readPadsForFile(file: File): OutpaintPadLayout? {
+        val hash = file.name.removeSuffix(".jpg")
+        if (hash.isEmpty() || hash == file.name) return null
+        return readPadsForHash(hash)
+    }
+
+    fun readPadsForHash(hash: String): OutpaintPadLayout? {
+        val path = padsMarkerFor(hash)
+        if (!path.isFile) return null
+        return OutpaintPadLayout.parseHeader(runCatching { path.readText() }.getOrNull())
     }
 
     /**
@@ -106,9 +126,10 @@ class AlbumArtOutpaintCache(
      */
     suspend fun getOrEnqueue(
         sourceBytes: ByteArray,
+        layout: OutpaintPadLayout = MusicPlayerOutpaint.padsForSourceBytes(sourceBytes),
         generate: suspend (ByteArray) -> ByteArray?,
     ): File? {
-        val hash = cacheKey(sourceBytes)
+        val hash = cacheKey(sourceBytes, layout)
         cachedFileForHash(hash)?.let { return it }
 
         val flight = inFlight.getOrPut(hash) { Mutex() }
@@ -116,7 +137,7 @@ class AlbumArtOutpaintCache(
             flight.withLock {
                 cachedFileForHash(hash)?.let { return@withLock it }
                 val generated = generate(sourceBytes) ?: return@withLock null
-                writeBytesLocked(hash, generated)
+                writeBytesLocked(hash, generated, layout)
             }
         } finally {
             inFlight.remove(hash, flight)
@@ -128,13 +149,14 @@ class AlbumArtOutpaintCache(
         sourceBytes: ByteArray,
         generated: ByteArray,
         markAsFlux: Boolean = true,
+        layout: OutpaintPadLayout = MusicPlayerOutpaint.padsForSourceBytes(sourceBytes),
     ): File? {
         if (generated.isEmpty()) return null
-        val hash = cacheKey(sourceBytes)
+        val hash = cacheKey(sourceBytes, layout)
         val flight = inFlight.getOrPut(hash) { Mutex() }
         return try {
             flight.withLock {
-                writeBytesLocked(hash, generated)?.also {
+                writeBytesLocked(hash, generated, layout)?.also {
                     if (markAsFlux) fluxMarkerFor(hash).createNewFile()
                 }
             }
@@ -144,14 +166,18 @@ class AlbumArtOutpaintCache(
     }
 
     /** Drop a bad Flux (or local) pad so the next warm can regenerate. */
-    suspend fun invalidate(sourceBytes: ByteArray) {
-        val hash = cacheKey(sourceBytes)
+    suspend fun invalidate(
+        sourceBytes: ByteArray,
+        layout: OutpaintPadLayout = MusicPlayerOutpaint.padsForSourceBytes(sourceBytes),
+    ) {
+        val hash = cacheKey(sourceBytes, layout)
         val flight = inFlight.getOrPut(hash) { Mutex() }
         try {
             flight.withLock {
                 dirMutex.withLock {
                     fileFor(hash).delete()
                     fluxMarkerFor(hash).delete()
+                    padsMarkerFor(hash).delete()
                 }
             }
         } finally {
@@ -159,7 +185,11 @@ class AlbumArtOutpaintCache(
         }
     }
 
-    private suspend fun writeBytesLocked(hash: String, generated: ByteArray): File? {
+    private suspend fun writeBytesLocked(
+        hash: String,
+        generated: ByteArray,
+        layout: OutpaintPadLayout,
+    ): File? {
         if (generated.isEmpty()) return null
         return dirMutex.withLock {
             directory.mkdirs()
@@ -170,6 +200,7 @@ class AlbumArtOutpaintCache(
                 target.writeBytes(generated)
                 tmp.delete()
             }
+            padsMarkerFor(hash).writeText(layout.headerPad())
             enforceLimitsLocked()
             target.takeIf { it.isFile && it.length() > 0L }
         }
@@ -184,8 +215,15 @@ class AlbumArtOutpaintCache(
 
     private fun fluxMarkerFor(hash: String): File = File(directory, "$hash.flux")
 
-    private fun cacheKey(sourceBytes: ByteArray): String =
-        sha256Hex(cacheVersion.toByteArray(Charsets.UTF_8) + sourceBytes)
+    private fun padsMarkerFor(hash: String): File = File(directory, "$hash.pads")
+
+    private fun cacheKey(sourceBytes: ByteArray, layout: OutpaintPadLayout): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update(cacheVersion.toByteArray(Charsets.UTF_8))
+        digest.update(layout.layoutTag())
+        digest.update(sourceBytes)
+        return digest.digest().joinToString("") { b -> "%02x".format(b) }
+    }
 
     private fun enforceLimitsLocked() {
         val files = directory.listFiles { f -> f.isFile && f.name.endsWith(".jpg") }
@@ -199,7 +237,7 @@ class AlbumArtOutpaintCache(
             val hash = oldest.name.removeSuffix(".jpg")
             oldest.delete()
             File(directory, "$hash.flux").delete()
-            // Orphan .ref aliases are harmless; leave them (small).
+            File(directory, "$hash.pads").delete()
         }
     }
 

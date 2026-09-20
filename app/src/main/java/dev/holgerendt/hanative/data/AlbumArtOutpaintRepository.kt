@@ -1,6 +1,7 @@
 package dev.holgerendt.hanative.data
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -98,18 +99,41 @@ class AlbumArtOutpaintRepository(
         }
         for (ref in refs) {
             val source = fetchCoverBytes(ref) ?: continue
-            val hit = cache.cachedFile(source) ?: continue
+            val layout = MusicPlayerOutpaint.padsForSourceBytes(source)
+            val hit = cache.cachedFile(source, layout) ?: continue
             cache.bindCoverRef(ref, source)
             for (other in refs) {
                 if (other == ref) continue
                 val otherSource = fetchCoverBytes(other) ?: continue
-                if (cache.cachedFile(otherSource)?.absolutePath == hit.absolutePath) {
+                val otherLayout = MusicPlayerOutpaint.padsForSourceBytes(otherSource)
+                if (cache.cachedFile(otherSource, otherLayout)?.absolutePath == hit.absolutePath) {
                     cache.bindCoverRef(other, otherSource)
                 }
             }
             return hit
         }
         return null
+    }
+
+    /**
+     * Cover placement inside a cached pad (from `.pads` sidecar, or derived from
+     * image bounds + player canvas).
+     */
+    suspend fun peekOutpaintLayout(coverRefs: Collection<String?>): OutpaintCoverLayout? {
+        val file = peekOutpaintedFile(coverRefs) ?: return null
+        val pads = cache.readPadsForFile(file)
+        val bounds = withContext(Dispatchers.IO) {
+            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.absolutePath, opts)
+            opts.outWidth to opts.outHeight
+        }
+        val (w, h) = bounds
+        if (w <= 0 || h <= 0) return null
+        return if (pads != null) {
+            outpaintCoverLayout(w, h, pads.padLeft, pads.padTop, pads.padRight, pads.padBottom)
+        } else {
+            outpaintCoverLayout(w, h)
+        }
     }
 
     /** True when the cached pad was written by Flux (`.flux` sidecar), not a local edge pad. */
@@ -123,7 +147,8 @@ class AlbumArtOutpaintRepository(
         if (refs.any { cache.isFluxCompleteForCoverRef(it) }) return true
         for (ref in refs) {
             val source = fetchCoverBytes(ref) ?: continue
-            if (cache.isFluxComplete(source) && cache.cachedFile(source) != null) {
+            val layout = MusicPlayerOutpaint.padsForSourceBytes(source)
+            if (cache.isFluxComplete(source, layout) && cache.cachedFile(source, layout) != null) {
                 cache.bindCoverRef(ref, source)
                 return true
             }
@@ -144,10 +169,18 @@ class AlbumArtOutpaintRepository(
             android.util.Log.w(TAG, "ensureLocalPad fetch miss cover=${coverRef.take(96)}")
             return null
         }
-        val local = cache.cachedFile(source)
+        val layout = MusicPlayerOutpaint.padsForSourceBytes(source)
+        val local = cache.cachedFile(source, layout)
             ?: cache.cachedFileForCoverRef(coverRef)
-            ?: cache.getOrEnqueue(source) { bytes ->
-                AlbumArtLocalOutpaint.padFromEdges(bytes)
+            ?: cache.getOrEnqueue(source, layout = layout) { bytes ->
+                val pads = MusicPlayerOutpaint.padsForSourceBytes(bytes)
+                AlbumArtLocalOutpaint.padFromEdges(
+                    bytes,
+                    padLeft = pads.padLeft,
+                    padTop = pads.padTop,
+                    padRight = pads.padRight,
+                    padBottom = pads.padBottom,
+                )
             }
             ?: return null
         cache.bindCoverRef(coverRef, source)
@@ -175,7 +208,7 @@ class AlbumArtOutpaintRepository(
     suspend fun getOrGenerate(
         sourceBytes: ByteArray,
         generate: suspend (ByteArray) -> ByteArray?,
-    ): File? = cache.getOrEnqueue(sourceBytes, generate)
+    ): File? = cache.getOrEnqueue(sourceBytes, generate = generate)
 
     fun peekCached(sourceBytes: ByteArray): File? = cache.cachedFile(sourceBytes)
 
@@ -255,8 +288,10 @@ class AlbumArtOutpaintRepository(
                 return stableHit
             }
         }
-        val existing = cache.cachedFile(source)
-        if (existing != null && isFluxPadSettled(source, existing)) {
+        val layout = MusicPlayerOutpaint.padsForSourceBytes(source)
+        val canvas = MusicPlayerOutpaint.canvasForSourceBytes(source)
+        val existing = cache.cachedFile(source, layout)
+        if (existing != null && isFluxPadSettled(source, existing, layout)) {
             val settledBytes = withContext(Dispatchers.IO) {
                 runCatching { existing.readBytes() }.getOrNull()
             }
@@ -269,14 +304,21 @@ class AlbumArtOutpaintRepository(
                 cache.bindCoverRef(coverRef, source)
                 return existing
             }
-            cache.invalidate(source)
+            cache.invalidate(source, layout)
         }
         // Prefer an already-warmed local pad under the stable id over regenerating.
         val stableLocal = cache.cachedFileForCoverRef(coverRef)
-        val local = cache.cachedFile(source)
+        val local = cache.cachedFile(source, layout)
             ?: stableLocal
-            ?: cache.getOrEnqueue(source) { bytes ->
-                AlbumArtLocalOutpaint.padFromEdges(bytes)
+            ?: cache.getOrEnqueue(source, layout = layout) { bytes ->
+                val pads = MusicPlayerOutpaint.padsForSourceBytes(bytes)
+                AlbumArtLocalOutpaint.padFromEdges(
+                    bytes,
+                    padLeft = pads.padLeft,
+                    padTop = pads.padTop,
+                    padRight = pads.padRight,
+                    padBottom = pads.padBottom,
+                )
             }
             ?: return null
         cache.bindCoverRef(coverRef, source)
@@ -297,21 +339,29 @@ class AlbumArtOutpaintRepository(
         }
         if (isRetryCooling(coverRef)) return local
         // Prefer an already-ready Flux pad on mediagen (other clients / prior POST).
-        val cachedRemote = runCatching { mediagen.getCached(mediagenBase, source) }.getOrNull()
+        val cachedRemote = runCatching {
+            mediagen.getCached(mediagenBase, source, layout)
+        }.getOrNull()
             ?.takeIf { it.bytes.isNotEmpty() }
         if (cachedRemote != null && shouldAcceptMediagenPad(cachedRemote, source)) {
             fluxAttemptedRefs.add(coverRef)
             retryAfterMs.remove(coverRef)
             android.util.Log.i(TAG, "mediagen cache hit source=${cachedRemote.source} cover=${coverRef.take(96)}")
-            return cache.replace(source, cachedRemote.bytes, markAsFlux = true)?.also {
+            val pads = cachedRemote.layout ?: layout
+            return cache.replace(source, cachedRemote.bytes, markAsFlux = true, layout = pads)?.also {
                 cache.bindCoverRef(coverRef, source)
             } ?: local
         }
         // Only mark Flux attempted after an accepted Flux pad. A Local response
         // (stale mediagen cache / rejected fill) must retry — otherwise the wall
         // freezes on soft-enlarge forever.
-        android.util.Log.i(TAG, "mediagen POST cover=${coverRef.take(96)} base=$mediagenBase")
-        val result = runCatching { mediagen.outpaint(mediagenBase, source) }.getOrNull()
+        android.util.Log.i(
+            TAG,
+            "mediagen POST cover=${coverRef.take(96)} base=$mediagenBase canvas=${canvas?.let { "${it.outWidth}x${it.outHeight}@${it.x},${it.y}" }}",
+        )
+        val result = runCatching {
+            mediagen.outpaint(mediagenBase, source, canvas = canvas)
+        }.getOrNull()
             ?.takeIf { it.bytes.isNotEmpty() }
         if (result == null) {
             android.util.Log.w(TAG, "mediagen miss/fail cover=${coverRef.take(96)}")
@@ -322,7 +372,8 @@ class AlbumArtOutpaintRepository(
         if (shouldAcceptMediagenPad(result, source)) {
             fluxAttemptedRefs.add(coverRef)
             retryAfterMs.remove(coverRef)
-            return cache.replace(source, result.bytes, markAsFlux = true)?.also {
+            val pads = result.layout ?: layout
+            return cache.replace(source, result.bytes, markAsFlux = true, layout = pads)?.also {
                 cache.bindCoverRef(coverRef, source)
             } ?: local
         }
@@ -351,11 +402,15 @@ class AlbumArtOutpaintRepository(
     }
 
     /** True when the on-disk pad should not be regenerated (Flux only). */
-    private fun isFluxPadSettled(source: ByteArray, cached: File): Boolean {
+    private fun isFluxPadSettled(
+        source: ByteArray,
+        cached: File,
+        layout: OutpaintPadLayout = MusicPlayerOutpaint.padsForSourceBytes(source),
+    ): Boolean {
         // Only the `.flux` sidecar means a generative upgrade landed. Local edge
         // pads are textured enough to look "done" and used to freeze upgrades.
         if (!cached.isFile || cached.length() <= 0L) return false
-        return cache.isFluxComplete(source)
+        return cache.isFluxComplete(source, layout)
     }
 
     private suspend fun hasUncachedWork(plan: OutpaintTargets): Boolean =
@@ -385,7 +440,10 @@ class AlbumArtOutpaintRepository(
             return true
         }
         val source = fetchCoverBytes(coverRef) ?: return false
-        val cached = cache.cachedFile(source) ?: cache.cachedFileForCoverRef(coverRef) ?: return false
+        val layout = MusicPlayerOutpaint.padsForSourceBytes(source)
+        val cached = cache.cachedFile(source, layout)
+            ?: cache.cachedFileForCoverRef(coverRef)
+            ?: return false
         if (AlbumArtLocalOutpaint.hasUniformEdges(source)) {
             warmRefs.add(coverRef)
             fluxAttemptedRefs.add(coverRef)
@@ -399,7 +457,7 @@ class AlbumArtOutpaintRepository(
             cache.bindCoverRef(coverRef, source)
             return true
         }
-        if (isFluxPadSettled(source, cached) || cache.isFluxCompleteForCoverRef(coverRef)) {
+        if (isFluxPadSettled(source, cached, layout) || cache.isFluxCompleteForCoverRef(coverRef)) {
             warmRefs.add(coverRef)
             fluxAttemptedRefs.add(coverRef)
             cache.bindCoverRef(coverRef, source)

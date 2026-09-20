@@ -1,5 +1,7 @@
 package dev.holgerendt.hanative.data
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -13,6 +15,8 @@ import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
@@ -28,14 +32,15 @@ data class MediagenOutpaintResult(
     val bytes: ByteArray,
     val source: MediagenOutpaintSource,
     val mediaHash: String? = null,
+    val layout: OutpaintPadLayout? = null,
 )
 
 /**
  * Thin LAN client for mediagen outpaint.
  *
- * Cache hits / uniform local-only pads return JPEG immediately (`200`).
- * Pictorial Flux jobs return `202` with `{status, hash, retry_after_s}`; this
- * client polls `GET /v1/image/outpaint/{hash}` until ready or [pollTimeoutMs].
+ * Posts the music-player canvas (`out_width`/`out_height`/`x`/`y`) so Flux places
+ * the unscaled cover where the UI draws it. Cache hits return JPEG immediately
+ * (`200`); Flux jobs return `202` and this client polls until ready.
  */
 class MediagenOutpaintClient(
     private val http: OkHttpClient = defaultClient(),
@@ -44,33 +49,51 @@ class MediagenOutpaintClient(
 ) {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    suspend fun outpaint(baseUrl: String, sourceBytes: ByteArray): MediagenOutpaintResult? =
+    suspend fun outpaint(
+        baseUrl: String,
+        sourceBytes: ByteArray,
+        canvas: OutpaintCanvasSpec? = MusicPlayerOutpaint.canvasForSourceBytes(sourceBytes),
+    ): MediagenOutpaintResult? =
         withContext(Dispatchers.IO) {
             val base = baseUrl.trim().trimEnd('/')
             if (base.isBlank() || sourceBytes.isEmpty()) return@withContext null
             val host = NetworkGuard.hostOf(base) ?: return@withContext null
             if (!NetworkGuard.isPrivateHost(host)) return@withContext null
 
-            val body = MultipartBody.Builder()
+            val layout = canvas?.let { spec ->
+                val (w, h) = MusicPlayerOutpaint.sourceSize(sourceBytes) ?: return@let null
+                spec.toPads(w, h)
+            } ?: MusicPlayerOutpaint.padsForSourceBytes(sourceBytes)
+
+            val bodyBuilder = MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
                 .addFormDataPart(
                     "image",
                     "album_cover.jpg",
                     sourceBytes.toRequestBody("image/jpeg".toMediaType()),
                 )
-                .build()
+            if (canvas != null) {
+                bodyBuilder
+                    .addFormDataPart("out_width", canvas.outWidth.toString())
+                    .addFormDataPart("out_height", canvas.outHeight.toString())
+                    .addFormDataPart("x", canvas.x.toString())
+                    .addFormDataPart("y", canvas.y.toString())
+            }
             val request = Request.Builder()
                 .url("$base/v1/image/outpaint")
-                .post(body)
+                .post(bodyBuilder.build())
                 .build()
             val response = runCatching { http.newCall(request).execute() }.getOrNull()
                 ?: return@withContext null
             response.use { resp ->
                 when (resp.code) {
-                    200 -> parseReady(resp)
+                    200 -> parseReady(resp, fallbackLayout = layout)
                     202 -> {
-                        val generating = parseGenerating(resp, fallbackHash = mediaHash(sourceBytes))
-                        pollUntilReady(base, generating.hash)
+                        val generating = parseGenerating(
+                            resp,
+                            fallbackHash = mediaHash(sourceBytes, layout),
+                        )
+                        pollUntilReady(base, generating.hash, fallbackLayout = layout)
                     }
                     else -> null
                 }
@@ -78,30 +101,37 @@ class MediagenOutpaintClient(
         }
 
     /**
-     * Cache-only probe. Uses the same versioned hash identity as mediagen
-     * ([OutpaintPads.OUTPAINT_CACHE_VERSION]). Returns null while generating.
+     * Cache-only probe. Hash includes layout (same identity as mediagen v7+).
      */
-    suspend fun getCached(baseUrl: String, sourceBytes: ByteArray): MediagenOutpaintResult? =
+    suspend fun getCached(
+        baseUrl: String,
+        sourceBytes: ByteArray,
+        layout: OutpaintPadLayout = MusicPlayerOutpaint.padsForSourceBytes(sourceBytes),
+    ): MediagenOutpaintResult? =
         withContext(Dispatchers.IO) {
             val base = baseUrl.trim().trimEnd('/')
             if (base.isBlank() || sourceBytes.isEmpty()) return@withContext null
             val host = NetworkGuard.hostOf(base) ?: return@withContext null
             if (!NetworkGuard.isPrivateHost(host)) return@withContext null
-            val hash = mediaHash(sourceBytes)
-            when (val outcome = fetchByHash(base, hash)) {
+            val hash = mediaHash(sourceBytes, layout)
+            when (val outcome = fetchByHash(base, hash, fallbackLayout = layout)) {
                 is FetchOutcome.Ready -> outcome.result
                 else -> null
             }
         }
 
-    private suspend fun pollUntilReady(base: String, hash: String): MediagenOutpaintResult? {
+    private suspend fun pollUntilReady(
+        base: String,
+        hash: String,
+        fallbackLayout: OutpaintPadLayout,
+    ): MediagenOutpaintResult? {
         val deadline = System.currentTimeMillis() + pollTimeoutMs
         var consecutiveErrors = 0
         while (System.currentTimeMillis() < deadline) {
             coroutineContext.ensureActive()
             val remaining = deadline - System.currentTimeMillis()
             if (remaining <= 0L) break
-            when (val outcome = fetchByHash(base, hash)) {
+            when (val outcome = fetchByHash(base, hash, fallbackLayout)) {
                 is FetchOutcome.Ready -> return outcome.result
                 is FetchOutcome.Generating -> {
                     consecutiveErrors = 0
@@ -109,13 +139,11 @@ class MediagenOutpaintClient(
                     delay(waitMs.coerceAtMost(remaining))
                 }
                 FetchOutcome.Missing -> {
-                    // Job may not be visible yet right after 202 — keep polling.
                     consecutiveErrors = 0
                     delay(defaultRetryAfterMs.coerceAtMost(remaining))
                 }
                 FetchOutcome.Error -> {
                     consecutiveErrors++
-                    // One flaky GET used to abort the whole Flux wait; tolerate blips.
                     if (consecutiveErrors >= 8) return null
                     delay(defaultRetryAfterMs.coerceAtMost(remaining))
                 }
@@ -124,7 +152,11 @@ class MediagenOutpaintClient(
         return null
     }
 
-    private fun fetchByHash(base: String, hash: String): FetchOutcome {
+    private fun fetchByHash(
+        base: String,
+        hash: String,
+        fallbackLayout: OutpaintPadLayout,
+    ): FetchOutcome {
         val request = Request.Builder()
             .url("$base/v1/image/outpaint/$hash")
             .get()
@@ -134,7 +166,7 @@ class MediagenOutpaintClient(
         return response.use { resp ->
             when (resp.code) {
                 200 -> {
-                    val ready = parseReady(resp) ?: return@use FetchOutcome.Error
+                    val ready = parseReady(resp, fallbackLayout) ?: return@use FetchOutcome.Error
                     FetchOutcome.Ready(ready)
                 }
                 202 -> {
@@ -150,13 +182,17 @@ class MediagenOutpaintClient(
         }
     }
 
-    private fun parseReady(resp: okhttp3.Response): MediagenOutpaintResult? {
+    private fun parseReady(
+        resp: okhttp3.Response,
+        fallbackLayout: OutpaintPadLayout,
+    ): MediagenOutpaintResult? {
         if (!resp.isSuccessful) return null
         val bytes = resp.body?.bytes()?.takeIf { it.isNotEmpty() } ?: return null
         return MediagenOutpaintResult(
             bytes = bytes,
             source = parseSource(resp.header(HEADER_SOURCE)),
             mediaHash = resp.header(HEADER_HASH)?.trim()?.takeIf { it.isNotEmpty() },
+            layout = OutpaintPadLayout.parseHeader(resp.header(HEADER_PAD)) ?: fallbackLayout,
         )
     }
 
@@ -200,18 +236,66 @@ class MediagenOutpaintClient(
         const val HEADER_SOURCE = "X-Outpaint-Source"
         const val HEADER_HASH = "X-Media-Hash"
         const val HEADER_STATUS = "X-Outpaint-Status"
+        const val HEADER_PAD = "X-Outpaint-Pad"
+        const val HEADER_SIZE = "X-Outpaint-Size"
         /** Overall deadline for Flux generation + polls (match mediagen poll timeout). */
         const val POLL_TIMEOUT_MS = 180_000L
         const val DEFAULT_RETRY_AFTER_MS = 5_000L
         /** Per-request HTTP timeouts — polls are short; overall wait is [POLL_TIMEOUT_MS]. */
         const val REQUEST_TIMEOUT_SECONDS = 30L
 
-        /** Same as mediagen: sha256(cache_version UTF-8 || source_bytes). */
-        fun mediaHash(sourceBytes: ByteArray): String {
+        /**
+         * Same as mediagen: sha256(version || pads:L,T,R,B\0 || fingerprint).
+         * Fingerprint prefers decoded RGB (`canon4`); falls back to raw bytes.
+         */
+        fun mediaHash(
+            sourceBytes: ByteArray,
+            layout: OutpaintPadLayout = MusicPlayerOutpaint.padsForSourceBytes(sourceBytes),
+            cacheVersion: String = OutpaintPads.OUTPAINT_CACHE_VERSION,
+        ): String {
             val digest = MessageDigest.getInstance("SHA-256")
-            digest.update(OutpaintPads.OUTPAINT_CACHE_VERSION.toByteArray(Charsets.UTF_8))
-            digest.update(sourceBytes)
+            digest.update(cacheVersion.toByteArray(Charsets.UTF_8))
+            digest.update(layout.layoutTag())
+            val canonical = canonicalizeRgb(sourceBytes)
+            if (canonical != null) {
+                digest.update("canon4\u0000".toByteArray(Charsets.UTF_8))
+                digest.update(canonical)
+            } else {
+                digest.update("raw\u0000".toByteArray(Charsets.UTF_8))
+                digest.update(sourceBytes)
+            }
             return digest.digest().joinToString("") { b -> "%02x".format(b) }
+        }
+
+        /** Big-endian WxH + RGB bytes — matches mediagen `canonicalize_image_bytes`. */
+        fun canonicalizeRgb(sourceBytes: ByteArray): ByteArray? {
+            if (sourceBytes.isEmpty()) return null
+            return try {
+                val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
+                val bitmap = BitmapFactory.decodeByteArray(sourceBytes, 0, sourceBytes.size, opts)
+                    ?: return null
+                try {
+                    val w = bitmap.width
+                    val h = bitmap.height
+                    if (w < 1 || h < 1) return null
+                    val pixels = IntArray(w * h)
+                    bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+                    val rgb = ByteArray(8 + w * h * 3)
+                    ByteBuffer.wrap(rgb, 0, 8).order(ByteOrder.BIG_ENDIAN).putInt(w).putInt(h)
+                    var i = 8
+                    for (p in pixels) {
+                        rgb[i++] = ((p ushr 16) and 0xff).toByte()
+                        rgb[i++] = ((p ushr 8) and 0xff).toByte()
+                        rgb[i++] = (p and 0xff).toByte()
+                    }
+                    rgb
+                } finally {
+                    bitmap.recycle()
+                }
+            } catch (_: Throwable) {
+                // JVM unit tests do not mock BitmapFactory — fall back to raw hash.
+                null
+            }
         }
 
         fun parseSource(raw: String?): MediagenOutpaintSource =
@@ -227,7 +311,6 @@ class MediagenOutpaintClient(
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .writeTimeout(60, TimeUnit.SECONDS)
-                // Per-request only (POST or one poll). Overall Flux wait is [POLL_TIMEOUT_MS].
                 .callTimeout(60, TimeUnit.SECONDS)
                 .build()
     }

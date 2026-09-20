@@ -1,6 +1,5 @@
 package dev.holgerendt.hanative.ui
 
-import android.graphics.BitmapFactory
 import android.os.Build
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
@@ -39,68 +38,22 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import dev.holgerendt.hanative.data.OutpaintCoverLayout
-import dev.holgerendt.hanative.data.outpaintCoverLayout
 import dev.holgerendt.hanative.ui.theme.CardLight
 import java.io.File
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
 
-/** Shared hero metrics so SoftAtmosphere and the sharp cover share one geometry. */
+/** Shared hero metrics for the interim (pre-Flux) centered cover. */
 internal object MusicOutpaintHeroMetrics {
     val StageHeight = 220.dp
     val CoverSize = 196.dp
 }
 
 /**
- * Where the pad sits in the card so its baked-in cover region matches the
- * floating sharp cover.
- *
- * The pad spans the full card width (so the outpaint is not a letterboxed
- * island). Cover size is derived from that width via [OutpaintCoverLayout]
- * fractions so seams stay continuous.
- */
-internal data class AlignedOutpaintGeom(
-    val padLeft: Dp,
-    val padTop: Dp,
-    val padWidth: Dp,
-    val padHeight: Dp,
-    val coverLeft: Dp,
-    val coverTop: Dp,
-    val coverSize: Dp,
-)
-
-internal fun alignedOutpaintGeom(
-    cardWidth: Dp,
-    layout: OutpaintCoverLayout,
-    stageHeight: Dp = MusicOutpaintHeroMetrics.StageHeight,
-): AlignedOutpaintGeom {
-    // Full-bleed horizontally — matches the player card width.
-    val padWidth = cardWidth
-    val padHeight = padWidth / layout.outAspectRatio
-    val coverSize = padWidth * layout.coverWidthFrac
-    val coverLeft = padWidth * layout.coverLeftFrac
-    // Keep the cover band centered in the hero stage (clamped if oversized).
-    val coverTop = ((stageHeight - coverSize) / 2).let { if (it < 0.dp) 0.dp else it }
-    val padLeft = 0.dp
-    val padTop = coverTop - padHeight * layout.coverTopFrac
-    return AlignedOutpaintGeom(
-        padLeft = padLeft,
-        padTop = padTop,
-        padWidth = padWidth,
-        padHeight = padHeight,
-        coverLeft = coverLeft,
-        coverTop = coverTop,
-        coverSize = coverSize,
-    )
-}
-
-/**
  * Atmosphere / hero art behind Phase 6 music UI.
  *
- * Soft enlarge fills the card until a pad is cached; then that pad (local or
- * Flux) fills the full card background. Flux pads are laid out so the baked-in
- * cover region lines up with [AlbumOutpaintHero]'s sharp cover.
+ * Soft enlarge fills the card until a pad is cached; Flux pads are generated at
+ * the music-player canvas size with the cover already placed, then drawn
+ * FillBounds so the floating cover sits on the baked-in region.
  */
 @Composable
 fun OutpaintedAlbumBackdrop(
@@ -128,8 +81,8 @@ fun OutpaintedAlbumBackdrop(
 }
 
 /**
- * Full-width album hero: hovering sharp cover on aligned outpaint when ready,
- * otherwise a centered cover (parent may still draw soft atmosphere).
+ * Full-card album hero: sharp cover on the pad's baked-in region when Flux is
+ * ready; otherwise a centered cover in the top stage.
  */
 @Composable
 fun AlbumOutpaintHero(
@@ -146,70 +99,42 @@ fun AlbumOutpaintHero(
             .filter { it.isNotEmpty() }
             .distinct()
     }
-    var outpaintFile by remember(coverRefs) { mutableStateOf<File?>(null) }
     var layout by remember(coverRefs) { mutableStateOf<OutpaintCoverLayout?>(null) }
-    var fileStamp by remember(coverRefs) { mutableStateOf(0L) }
     var fluxComplete by remember(coverRefs) { mutableStateOf(false) }
     val resolvedStage = stageHeight ?: MusicOutpaintHeroMetrics.StageHeight
 
     LaunchedEffect(coverRefs, ui.mediagenUrl) {
-        outpaintFile = null
         layout = null
-        fileStamp = 0L
         fluxComplete = false
         if (coverRefs.isEmpty()) return@LaunchedEffect
         viewModel.scheduleAlbumArtOutpaintPrefetch(currentCoverOverride = coverRefs.first())
         runCatching { viewModel.albumArtOutpaint.ensureLocalPad(coverRefs.first()) }
-        var lastStamp = 0L
         while (true) {
-            val hit = runCatching {
-                viewModel.albumArtOutpaint.peekOutpaintedFile(coverRefs)
-            }.getOrNull()
             val fluxDone = runCatching {
                 viewModel.albumArtOutpaint.peekFluxComplete(coverRefs)
             }.getOrDefault(false)
             fluxComplete = fluxDone
-            if (hit != null) {
-                val stamp = hit.length() xor hit.lastModified()
-                if (stamp != lastStamp) {
-                    lastStamp = stamp
-                    val bounds = withContext(Dispatchers.IO) {
-                        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                        BitmapFactory.decodeFile(hit.absolutePath, opts)
-                        opts.outWidth to opts.outHeight
-                    }
-                    val nextLayout = outpaintCoverLayout(bounds.first, bounds.second)
-                    if (nextLayout != null) {
-                        outpaintFile = hit
-                        layout = nextLayout
-                        fileStamp = stamp
-                    }
-                }
+            if (fluxDone) {
+                layout = runCatching {
+                    viewModel.albumArtOutpaint.peekOutpaintLayout(coverRefs)
+                }.getOrNull()
             }
             delay(if (fluxDone) 30_000L else 2_000L)
         }
     }
 
     Crossfade(
-        targetState = if (fluxComplete && outpaintFile != null && layout != null) {
-            Triple(outpaintFile, layout, fileStamp)
-        } else {
-            Triple(null, null, 0L)
-        },
-        modifier = modifier.fillMaxWidth(),
+        targetState = if (fluxComplete && layout != null) layout else null,
+        modifier = modifier.fillMaxSize(),
         label = "album-outpaint-hero",
-    ) { (file, geo, _) ->
-        if (file != null && geo != null) {
-            // SoftAtmosphere already draws the full-bleed aligned pad — hero is cover only.
-            AlignedCoverOnly(
+    ) { geo ->
+        if (geo != null) {
+            PlayerAlignedCover(
                 layout = geo,
                 coverPath = coverPath,
                 viewModel = viewModel,
-                stageHeight = resolvedStage,
             )
         } else {
-            // Local edge pads look blocky under a floating cover — keep the soft
-            // enlarge + centered art until Flux actually lands.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -238,28 +163,22 @@ fun AlbumOutpaintHero(
 }
 
 @Composable
-private fun AlignedCoverOnly(
+private fun PlayerAlignedCover(
     layout: OutpaintCoverLayout,
     coverPath: String?,
     viewModel: HaViewModel,
-    stageHeight: Dp,
 ) {
     val coverShape = RoundedCornerShape(22.dp)
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(stageHeight),
-    ) {
-        val geom = alignedOutpaintGeom(
-            cardWidth = maxWidth,
-            layout = layout,
-            stageHeight = stageHeight,
-        )
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val coverW = maxWidth * layout.coverWidthFrac
+        val coverH = maxHeight * layout.coverHeightFrac
+        val coverLeft = maxWidth * layout.coverLeftFrac
+        val coverTop = maxHeight * layout.coverTopFrac
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .offset(x = geom.coverLeft, y = geom.coverTop)
-                .size(geom.coverSize)
+                .offset(x = coverLeft, y = coverTop)
+                .size(coverW, coverH)
                 .shadow(
                     elevation = 28.dp,
                     shape = coverShape,
@@ -301,7 +220,6 @@ private fun BoxScope.SoftAtmosphereLayer(
     var coverUrl by remember(coverPath, viewModel.client.currentBaseUrl) { mutableStateOf<String?>(null) }
     var padFile by remember(coverRefs) { mutableStateOf<File?>(null) }
     var padStamp by remember(coverRefs) { mutableStateOf(0L) }
-    var padLayout by remember(coverRefs) { mutableStateOf<OutpaintCoverLayout?>(null) }
     var fluxComplete by remember(coverRefs) { mutableStateOf(false) }
 
     LaunchedEffect(coverPath, viewModel.client.currentBaseUrl, ui.mediagenUrl) {
@@ -312,10 +230,8 @@ private fun BoxScope.SoftAtmosphereLayer(
     LaunchedEffect(coverRefs, ui.mediagenUrl) {
         padFile = null
         padStamp = 0L
-        padLayout = null
         fluxComplete = false
         if (coverRefs.isEmpty()) return@LaunchedEffect
-        // Build a local pad immediately so soft-enlarge is not stuck waiting on the worker.
         val primary = coverRefs.first()
         val local = runCatching {
             viewModel.albumArtOutpaint.ensureLocalPad(primary)
@@ -323,13 +239,7 @@ private fun BoxScope.SoftAtmosphereLayer(
         if (local != null) {
             padFile = local
             padStamp = local.length() xor local.lastModified()
-            padLayout = withContext(Dispatchers.IO) {
-                val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeFile(local.absolutePath, opts)
-                outpaintCoverLayout(opts.outWidth, opts.outHeight)
-            }
         }
-        // Bind alternates so later peeks hit the same pad.
         for (ref in coverRefs.drop(1)) {
             runCatching { viewModel.albumArtOutpaint.ensureLocalPad(ref) }
         }
@@ -348,11 +258,6 @@ private fun BoxScope.SoftAtmosphereLayer(
                     lastStamp = stamp
                     padFile = hit
                     padStamp = stamp
-                    padLayout = withContext(Dispatchers.IO) {
-                        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                        BitmapFactory.decodeFile(hit.absolutePath, opts)
-                        outpaintCoverLayout(opts.outWidth, opts.outHeight)
-                    }
                 }
             }
             delay(if (fluxDone) 30_000L else 2_000L)
@@ -360,20 +265,40 @@ private fun BoxScope.SoftAtmosphereLayer(
     }
 
     val outpaint = padFile
-    val layout = padLayout
-    if (outpaint != null && fluxComplete && layout != null && !vivid) {
-        // Full-card Flux pad: scale so the baked-in cover matches the hero cover,
-        // then enlarge around that cover center until the pad covers the whole card.
-        FullBleedAlignedOutpaint(
-            outpaint = outpaint,
-            padStamp = padStamp,
-            layout = layout,
-            loader = loader,
+    if (outpaint != null && fluxComplete && !vivid) {
+        // Player-sized Flux pad: FillBounds so baked-in cover region maps 1:1 to the card.
+        AsyncImage(
+            model = ImageRequest.Builder(context)
+                .data(outpaint)
+                .memoryCacheKey("outpaint-player-${outpaint.name}-$padStamp")
+                .diskCacheKey("outpaint-player-${outpaint.name}-$padStamp")
+                .crossfade(false)
+                .build(),
+            contentDescription = null,
+            imageLoader = loader,
+            contentScale = ContentScale.FillBounds,
+            colorFilter = desaturateFilter(0.92f),
+            modifier = Modifier
+                .matchParentSize()
+                .graphicsLayer { alpha = 0.94f },
+        )
+        Box(
+            Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        colorStops = arrayOf(
+                            0.00f to CardLight.copy(alpha = 0.06f),
+                            0.45f to CardLight.copy(alpha = 0.10f),
+                            0.72f to CardLight.copy(alpha = 0.28f),
+                            1.00f to CardLight.copy(alpha = 0.42f),
+                        ),
+                    ),
+                ),
         )
         return
     }
     if (outpaint != null) {
-        // Local / TV vivid: Crop fill is fine — no hovering cover to align with.
         AsyncImage(
             model = ImageRequest.Builder(context)
                 .data(outpaint)
@@ -431,82 +356,6 @@ private fun BoxScope.SoftAtmosphereLayer(
             .then(softBlurFallback())
             .then(if (vivid) Modifier else Modifier.fadeSoftAtmosphere()),
     )
-}
-
-/**
- * Draws the Flux pad across the whole card so the baked-in cover region sits
- * exactly under the sharp hero cover (same size and position).
- *
- * Exact cover-matched scale keeps scene seams continuous at the cover edge. A
- * soft Crop underpaint fills any card edges the aligned pad does not reach.
- */
-@Composable
-private fun BoxScope.FullBleedAlignedOutpaint(
-    outpaint: File,
-    padStamp: Long,
-    layout: OutpaintCoverLayout,
-    loader: coil.ImageLoader,
-) {
-    val context = LocalContext.current
-    BoxWithConstraints(modifier = Modifier.matchParentSize()) {
-        val geom = alignedOutpaintGeom(cardWidth = maxWidth, layout = layout)
-
-        AsyncImage(
-            model = ImageRequest.Builder(context)
-                .data(outpaint)
-                .memoryCacheKey("outpaint-under-${outpaint.name}-$padStamp")
-                .diskCacheKey("outpaint-under-${outpaint.name}-$padStamp")
-                .crossfade(false)
-                .build(),
-            contentDescription = null,
-            imageLoader = loader,
-            contentScale = ContentScale.Crop,
-            colorFilter = desaturateFilter(0.7f),
-            modifier = Modifier
-                .matchParentSize()
-                .graphicsLayer { alpha = 0.5f }
-                .then(softBlurFallback()),
-        )
-
-        AsyncImage(
-            model = ImageRequest.Builder(context)
-                .data(outpaint)
-                .memoryCacheKey("outpaint-fullbleed-${outpaint.name}-$padStamp")
-                .diskCacheKey("outpaint-fullbleed-${outpaint.name}-$padStamp")
-                .crossfade(false)
-                .build(),
-            contentDescription = null,
-            imageLoader = loader,
-            contentScale = ContentScale.FillBounds,
-            colorFilter = desaturateFilter(0.92f),
-            modifier = Modifier
-                .offset(x = geom.padLeft, y = geom.padTop)
-                .size(width = geom.padWidth, height = geom.padHeight)
-                .graphicsLayer { alpha = 0.94f },
-        )
-
-        Box(
-            modifier = Modifier
-                .offset(x = geom.coverLeft, y = geom.coverTop)
-                .size(geom.coverSize)
-                .background(Color.Black.copy(alpha = 0.35f)),
-        )
-
-        Box(
-            Modifier
-                .matchParentSize()
-                .background(
-                    Brush.verticalGradient(
-                        colorStops = arrayOf(
-                            0.00f to CardLight.copy(alpha = 0.06f),
-                            0.45f to CardLight.copy(alpha = 0.10f),
-                            0.78f to CardLight.copy(alpha = 0.26f),
-                            1.00f to CardLight.copy(alpha = 0.40f),
-                        ),
-                    ),
-                ),
-        )
-    }
 }
 
 private fun softBlurFallback(): Modifier =

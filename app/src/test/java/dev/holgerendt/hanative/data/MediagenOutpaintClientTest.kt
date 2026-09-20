@@ -69,6 +69,37 @@ class MediagenOutpaintClientTest {
     }
 
     @Test
+    fun outpaintPostsCanvasWhenSourceDecodable() = runBlocking {
+        // Minimal valid 1x1 PNG so MusicPlayerOutpaint can measure source size.
+        val png = byteArrayOf(
+            0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+            0x08, 0x02, 0x00, 0x00, 0x00, 0x90.toByte(), 0x77, 0x53,
+            0xDE.toByte(), 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
+            0x54, 0x08, 0xD7.toByte(), 0x63, 0xF8.toByte(), 0xFF.toByte(), 0xFF.toByte(),
+            0xFF.toByte(), 0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05,
+            0xFE.toByte(), 0x02, 0xFE.toByte(), 0x00, 0x00, 0x00, 0x00,
+            0x49, 0x45, 0x4E, 0x44, 0xAE.toByte(), 0x42, 0x60, 0x82.toByte(),
+        )
+        server.enqueue(
+            MockResponse()
+                .setHeader(MediagenOutpaintClient.HEADER_SOURCE, "flux")
+                .setHeader(MediagenOutpaintClient.HEADER_PAD, "0,0,1,1")
+                .setBody(Buffer().write(byteArrayOf(1, 2, 3))),
+        )
+        val canvas = OutpaintCanvasSpec(outWidth = 64, outHeight = 80, x = 8, y = 4)
+        client().outpaint("http://127.0.0.1:${server.port}", png, canvas = canvas)
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body.contains("name=\"out_width\""))
+        assertTrue(body.contains("64"))
+        assertTrue(body.contains("name=\"out_height\""))
+        assertTrue(body.contains("80"))
+        assertTrue(body.contains("name=\"x\""))
+        assertTrue(body.contains("name=\"y\""))
+    }
+
+    @Test
     fun outpaintParsesLocalSource() = runBlocking {
         server.enqueue(
             MockResponse()
@@ -187,42 +218,46 @@ class MediagenOutpaintClientTest {
     }
 
     @Test
-    fun mediaHashMatchesConcatVersionAndBytes() {
-        val a = MediagenOutpaintClient.mediaHash(byteArrayOf(1, 2, 3))
-        val b = MediagenOutpaintClient.mediaHash(byteArrayOf(1, 2, 3))
+    fun mediaHashIncludesLayoutTag() {
+        val source = byteArrayOf(1, 2, 3)
+        val a = MediagenOutpaintClient.mediaHash(source, OutpaintPadLayout(1, 2, 3, 4))
+        val b = MediagenOutpaintClient.mediaHash(source, OutpaintPadLayout(1, 2, 3, 4))
+        val c = MediagenOutpaintClient.mediaHash(source, OutpaintPadLayout(9, 2, 3, 4))
         assertEquals(a, b)
         assertEquals(64, a.length)
-        // Must not insert a separator byte (matches mediagen sha256(version||bytes)).
-        val other = MediagenOutpaintClient.mediaHash(byteArrayOf(1, 2, 3, 0))
-        assertTrue(a != other)
+        assertTrue(a != c)
     }
 
     @Test
     fun getCachedHitsVersionedPath() = runBlocking {
         val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xD9.toByte())
         val source = byteArrayOf(4, 5, 6)
-        val hash = MediagenOutpaintClient.mediaHash(source)
+        val layout = OutpaintPadLayout.defaults()
+        val hash = MediagenOutpaintClient.mediaHash(source, layout)
         server.enqueue(
             MockResponse()
                 .setHeader(MediagenOutpaintClient.HEADER_SOURCE, "local")
                 .setHeader(MediagenOutpaintClient.HEADER_HASH, hash)
+                .setHeader(MediagenOutpaintClient.HEADER_PAD, layout.headerPad())
                 .setBody(Buffer().write(jpeg)),
         )
-        val result = client().getCached("http://127.0.0.1:${server.port}", source)
+        val result = client().getCached("http://127.0.0.1:${server.port}", source, layout)
         assertNotNull(result)
         assertEquals("/v1/image/outpaint/$hash", server.takeRequest().path)
+        assertEquals(layout, result!!.layout)
     }
 
     @Test
     fun getCachedReturnsNullWhileGenerating() = runBlocking {
         val source = byteArrayOf(7, 8, 9)
-        val hash = MediagenOutpaintClient.mediaHash(source)
+        val layout = OutpaintPadLayout.defaults()
+        val hash = MediagenOutpaintClient.mediaHash(source, layout)
         server.enqueue(
             MockResponse()
                 .setResponseCode(202)
                 .setHeader(MediagenOutpaintClient.HEADER_HASH, hash)
                 .setBody("""{"status":"generating","hash":"$hash","retry_after_s":5}"""),
         )
-        assertNull(client().getCached("http://127.0.0.1:${server.port}", source))
+        assertNull(client().getCached("http://127.0.0.1:${server.port}", source, layout))
     }
 }
