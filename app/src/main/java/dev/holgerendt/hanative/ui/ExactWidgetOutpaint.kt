@@ -89,10 +89,10 @@ internal fun ExactWidgetOutpaint(
                         brush = Brush.verticalGradient(
                             colorStops = arrayOf(
                                 0.00f to Color.Transparent,
-                                0.10f to CardLight.copy(alpha = 0.78f),
-                                0.28f to CardLight.copy(alpha = 0.94f),
-                                0.55f to CardLight,
-                                1.00f to CardLight,
+                                0.10f to CardLight.copy(alpha = 0.58f),
+                                0.28f to CardLight.copy(alpha = 0.80f),
+                                0.55f to CardLight.copy(alpha = 0.92f),
+                                1.00f to CardLight.copy(alpha = 0.96f),
                             ),
                             startY = fadeStart,
                             endY = fadeEnd,

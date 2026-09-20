@@ -2,6 +2,7 @@ package dev.holgerendt.hanative.ui
 
 import android.os.Build
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -114,13 +115,19 @@ fun AlbumOutpaintHero(
             .height(resolvedStage),
         contentAlignment = Alignment.Center,
     ) {
+        val coverShape = RoundedCornerShape(22.dp)
         val coverModifier = Modifier
             .size(MusicOutpaintHeroMetrics.CoverSize)
             .then(if (exact != null) Modifier.onGloballyPositioned { exact.coverCoordinates = it; exact.measure() } else Modifier)
-            .shadow(10.dp, RoundedCornerShape(22.dp), clip = false,
-                ambientColor = Color.Black.copy(alpha = 0.15f),
-                spotColor = Color.Black.copy(alpha = 0.25f))
-            .clip(RoundedCornerShape(22.dp))
+            .shadow(
+                elevation = 16.dp,
+                shape = coverShape,
+                clip = false,
+                ambientColor = Color.Black.copy(alpha = 0.22f),
+                spotColor = Color.Black.copy(alpha = 0.40f),
+            )
+            .clip(coverShape)
+            .border(1.25.dp, Color.White.copy(alpha = 0.5f), coverShape)
         if (exact != null && exact.cover != null) {
             Box(coverModifier.drawWithContent {
                 drawImage(exact.cover!!.asImageBitmap())
@@ -231,11 +238,11 @@ private fun BoxScope.SoftAtmosphereLayer(
                 .background(
                     Brush.verticalGradient(
                         colorStops = arrayOf(
-                            0.00f to CardLight.copy(alpha = 0.08f),
-                            0.40f to CardLight.copy(alpha = 0.16f),
-                            0.58f to CardLight.copy(alpha = 0.55f),
-                            0.78f to CardLight.copy(alpha = 0.90f),
-                            1.00f to CardLight,
+                            0.00f to CardLight.copy(alpha = 0.06f),
+                            0.40f to CardLight.copy(alpha = 0.12f),
+                            0.58f to CardLight.copy(alpha = 0.42f),
+                            0.78f to CardLight.copy(alpha = 0.78f),
+                            1.00f to CardLight.copy(alpha = 0.94f),
                         ),
                     ),
                 ),
@@ -330,10 +337,10 @@ private fun Modifier.fadeSoftAtmosphere(): Modifier = drawWithContent {
     drawRect(
         brush = Brush.verticalGradient(
             colorStops = arrayOf(
-                0.00f to card.copy(alpha = 0.18f),
-                0.45f to card.copy(alpha = 0.38f),
-                0.70f to card.copy(alpha = 0.78f),
-                1.00f to card,
+                0.00f to card.copy(alpha = 0.14f),
+                0.45f to card.copy(alpha = 0.30f),
+                0.70f to card.copy(alpha = 0.65f),
+                1.00f to card.copy(alpha = 0.90f),
             ),
         ),
     )
@@ -346,10 +353,10 @@ private fun Modifier.fadeLocalAtmosphere(): Modifier = drawWithContent {
     drawRect(
         brush = Brush.verticalGradient(
             colorStops = arrayOf(
-                0.00f to card.copy(alpha = 0.12f),
-                0.50f to card.copy(alpha = 0.28f),
-                0.75f to card.copy(alpha = 0.72f),
-                1.00f to card.copy(alpha = 0.94f),
+                0.00f to card.copy(alpha = 0.10f),
+                0.50f to card.copy(alpha = 0.22f),
+                0.75f to card.copy(alpha = 0.58f),
+                1.00f to card.copy(alpha = 0.86f),
             ),
         ),
     )
