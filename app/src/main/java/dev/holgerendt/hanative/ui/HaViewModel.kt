@@ -142,6 +142,8 @@ data class UiState(
     val showSetup: Boolean = true,
     val drawerOpen: Boolean = false,
     val popupHash: String? = null,
+    /** Tab title requested by the navigate action that opened [popupHash]. */
+    val popupTab: String? = null,
     val weatherPopupContext: WeatherPopupContext? = null,
     val moreInfoId: String? = null,
     val mediaPreview: MediaPreview? = null,
@@ -1454,7 +1456,7 @@ class HaViewModel(
         _ui.value = _ui.value.copy(drawerOpen = open)
     }
 
-    fun openPopup(hash: String?) {
+    fun openPopup(hash: String?, tab: String? = null) {
         // Entrance keeps cameras on the home screen; doorbell/kiosk "camera"
         // commands should just wake the panel instead of opening a sheet.
         if (PanelConfig.IS_ENTRANCE && hash == KioskCommands.CAMERA_POPUP) {
@@ -1469,6 +1471,7 @@ class HaViewModel(
         }
         _ui.value = _ui.value.copy(
             popupHash = hash,
+            popupTab = tab,
             drawerOpen = false,
             weatherPopupContext = null,
         )
@@ -1486,6 +1489,7 @@ class HaViewModel(
     ) {
         _ui.value = _ui.value.copy(
             popupHash = "#weather",
+            popupTab = null,
             drawerOpen = false,
             weatherPopupContext = WeatherPopupContext(focusDate, entityId, initialTab),
         )
@@ -1496,7 +1500,7 @@ class HaViewModel(
         roomPopupDismissJob?.cancel()
         roomPopupDismissJob = null
         closeMusicWall()
-        _ui.value = _ui.value.copy(popupHash = null, weatherPopupContext = null)
+        _ui.value = _ui.value.copy(popupHash = null, popupTab = null, weatherPopupContext = null)
     }
 
     fun isRoomPopup(hash: String?): Boolean {
@@ -2543,7 +2547,7 @@ class HaViewModel(
         val entity = action.entity ?: fallbackEntity
         when (action.type) {
             "menu_toggle" -> setDrawer(!_ui.value.drawerOpen)
-            "navigate" -> openPopup(action.hash)
+            "navigate" -> openPopup(action.hash, action.tab)
             "more_info" -> openMoreInfo(entity)
             "toggle" -> entity?.let { toggleEntity(it) }
             "vent_tilt_toggle" -> entity?.let { id ->

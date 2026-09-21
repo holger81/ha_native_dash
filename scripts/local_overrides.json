@@ -559,7 +559,8 @@
         "layout": "icon|state",
         "tap": {
           "type": "navigate",
-          "hash": "#power"
+          "hash": "#power",
+          "tab": "Battery"
         },
         "visibility": {
           "kind": "state_in",
@@ -571,6 +572,32 @@
         "state": {
           "kind": "text",
           "entity": "sensor.battery_runtime_remaining"
+        },
+        "emphasize_unlocked": false,
+        "accent": "dark"
+      }
+    },
+    {
+      "match_entity": "sensor.envoy_202234122877_current_net_power_consumption",
+      "chip": {
+        "type": "status_chip",
+        "name": null,
+        "icon": "mdi:transmission-tower",
+        "entity": "sensor.envoy_202234122877_current_net_power_consumption",
+        "layout": "icon|state",
+        "tap": {
+          "type": "navigate",
+          "hash": "#power",
+          "tab": "Consumption"
+        },
+        "visibility": {
+          "kind": "always"
+        },
+        "state": {
+          "kind": "number",
+          "entity": "sensor.envoy_202234122877_current_net_power_consumption",
+          "decimals": 2,
+          "suffix": "kW"
         },
         "emphasize_unlocked": false,
         "accent": "dark"

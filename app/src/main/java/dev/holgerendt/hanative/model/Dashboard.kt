@@ -140,6 +140,8 @@ data class ActionNode(
     val type: String? = null,
     val service: String? = null,
     val hash: String? = null,
+    /** Popup tab title to select after navigate, matched case-insensitively. */
+    val tab: String? = null,
     val entity: String? = null,
     @SerialName("entity_id") val entityId: JsonElement? = null,
     val data: JsonObject? = null,

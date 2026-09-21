@@ -87,6 +87,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
@@ -3312,11 +3314,32 @@ fun EnergyDateBar(modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * 1-based [defaultTab] (simple-tabs) unless a navigate action named a tab title.
+ * Title matching survives inserted tabs (Live Draw, Battery) that would shift a stored index.
+ */
+internal fun tabIndexForRequest(
+    tabCount: Int,
+    defaultTab: Int?,
+    requestedTitle: String?,
+    titles: List<String?>,
+): Int {
+    val last = (tabCount - 1).coerceAtLeast(0)
+    val fallback = (defaultTab ?: 1).let { if (it > 0) it - 1 else 0 }.coerceIn(0, last)
+    if (requestedTitle.isNullOrBlank() || tabCount == 0) return fallback
+    val match = titles.indexOfFirst { it.equals(requestedTitle, ignoreCase = true) }
+    return if (match >= 0) match else fallback
+}
+
 @Composable
 fun TabsWidget(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
-    val initial = (widget.defaultTab ?: 1).let { if (it > 0) it - 1 else 0 }.coerceIn(0, (widget.tabs.size - 1).coerceAtLeast(0))
-    var selected by remember { mutableIntStateOf(initial) }
+    val requestedTab by remember(viewModel) {
+        viewModel.ui.map { it.popupTab }.distinctUntilChanged()
+    }.collectAsState(initial = viewModel.ui.value.popupTab)
+    val titles = widget.tabs.map { it.title }
+    val initial = tabIndexForRequest(widget.tabs.size, widget.defaultTab, requestedTab, titles)
+    var selected by remember(requestedTab, titles) { mutableIntStateOf(initial) }
     val activeBrush = TabActiveBrush
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(
