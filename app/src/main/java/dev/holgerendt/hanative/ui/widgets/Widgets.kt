@@ -79,6 +79,9 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
@@ -117,6 +120,7 @@ import dev.holgerendt.hanative.ui.LoadingSpinner
 import dev.holgerendt.hanative.ui.MdiIcon
 import dev.holgerendt.hanative.ui.MediaPreview
 import dev.holgerendt.hanative.ui.PinGateDialog
+import dev.holgerendt.hanative.ui.batteryRuntimeEstimates
 import dev.holgerendt.hanative.ui.brightnessPct
 import dev.holgerendt.hanative.ui.format
 import dev.holgerendt.hanative.ui.formatState
@@ -169,6 +173,8 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
@@ -188,6 +194,13 @@ private val MONTH_FORMAT = DateTimeFormatter.ofPattern("MMMM")
 private val WEEKDAY_FORMAT = DateTimeFormatter.ofPattern("EEEE")
 private val TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm")
 private val MONTH_DAY_FORMAT = DateTimeFormatter.ofPattern("MMM d")
+private val HOUR_MARKER_FORMAT = DateTimeFormatter.ofPattern("h a", Locale.US)
+
+private val EnergyStatsTypes = setOf(
+    "energy_sources_table",
+    "energy_solar_consumed_gauge",
+    "energy_self_sufficiency_gauge",
+)
 
 private val BatteryRuntimeEntities = listOf(
     "binary_sensor.envoy_battery_discharging",
@@ -257,14 +270,18 @@ fun WidgetItem(
             widget.cards.forEach { WidgetItem(it, viewModel, Modifier.weight(1f)) }
         }
         "grid" -> {
-            val columns = widget.columnCount()
-            Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                widget.cards.chunked(columns).forEach { row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        row.forEach { child ->
-                            WidgetItem(child, viewModel, Modifier.weight(1f))
+            if (widget.cards.isNotEmpty() && widget.cards.all { it.type in EnergyStatsTypes }) {
+                EnergyStats(viewModel, modifier)
+            } else {
+                val columns = widget.columnCount()
+                Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    widget.cards.chunked(columns).forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            row.forEach { child ->
+                                WidgetItem(child, viewModel, Modifier.weight(1f))
+                            }
+                            repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
                         }
-                        repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
                     }
                 }
             }
@@ -2269,14 +2286,14 @@ fun HistoryChart(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier 
     }
     Column(
         modifier = modifier
-            .height(220.dp)
+            .height(248.dp)
             .clip(CardShape)
             .background(overlay.card)
             .clickable { entity?.let { viewModel.openMoreInfo(it) } }
             .padding(16.dp),
     ) {
         Text(widget.name ?: widget.series.firstOrNull()?.name ?: "kWh", color = overlay.muted, fontSize = 14.sp)
-        Sparkline(points, Modifier.fillMaxSize(), HistoryGraph)
+        Sparkline(points, Modifier.fillMaxSize(), HistoryGraph, overlay.muted, showTimeMarkers = true)
     }
 }
 
@@ -2291,6 +2308,11 @@ fun BatteryRuntimePanel(viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val load = states.number("sensor.housepanel_total_consumption_house_consumption_1h_mean", 0, " W")
     val stored = states.number("input_number.battery_energy_helper", 2, " kWh", 0.001)
     val reserve = states.number("sensor.envoy_202234122877_reserve_battery_energy", 0, " Wh")
+    val estimates = batteryRuntimeEstimates(
+        storedWh = states["input_number.battery_energy_helper"]?.state?.toDoubleOrNull() ?: Double.NaN,
+        reserveWh = states["sensor.envoy_202234122877_reserve_battery_energy"]?.state?.toDoubleOrNull() ?: Double.NaN,
+        loadW = states["sensor.housepanel_total_consumption_house_consumption_1h_mean"]?.state?.toDoubleOrNull() ?: Double.NaN,
+    )
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -2313,13 +2335,35 @@ fun BatteryRuntimePanel(viewModel: HaViewModel, modifier: Modifier = Modifier) {
                 Text("Not discharging right now.", color = overlay.muted, fontSize = 14.sp)
                 return@Column
             }
-            Text(
-                text = runtime.ifBlank { "—" },
-                color = overlay.text,
-                fontSize = 40.sp,
-                fontWeight = FontWeight.Light,
-            )
-            Text("Estimated runtime at current load", color = overlay.muted, fontSize = 13.sp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = runtime.ifBlank { "—" },
+                        color = overlay.text,
+                        fontSize = 40.sp,
+                        fontWeight = FontWeight.Light,
+                    )
+                    Text("Estimated runtime at current load", color = overlay.muted, fontSize = 13.sp)
+                }
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        "Reserve runtime  ${estimates?.reserve ?: "—"}",
+                        color = overlay.text,
+                        fontSize = 16.sp,
+                    )
+                    Text(
+                        "Total runtime  ${estimates?.total ?: "—"}",
+                        color = overlay.text,
+                        fontSize = 16.sp,
+                    )
+                }
+            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 RuntimeStatTile("Load (1h avg)", load, Modifier.weight(1f))
                 RuntimeStatTile("Stored", stored, Modifier.weight(1f))
@@ -2344,7 +2388,7 @@ private fun BatterySocChart(viewModel: HaViewModel, modifier: Modifier = Modifie
     val socText = entity?.state?.toDoubleOrNull()?.let { "${it.roundToInt()}%" } ?: "—"
     Column(
         modifier = modifier
-            .height(200.dp)
+            .height(228.dp)
             .clip(CardShape)
             .background(overlay.card)
             .clickable { viewModel.openMoreInfo(BatterySocEntity) }
@@ -2367,7 +2411,7 @@ private fun BatterySocChart(viewModel: HaViewModel, modifier: Modifier = Modifie
                 Text("Loading charge history…", color = overlay.muted, fontSize = 13.sp)
             }
         } else {
-            Sparkline(points, Modifier.fillMaxSize(), HistoryGraph)
+            Sparkline(points, Modifier.fillMaxSize(), HistoryGraph, overlay.muted, showTimeMarkers = true)
         }
     }
 }
@@ -3325,7 +3369,15 @@ private fun SensorValueText(value: String, color: Color, size: androidx.compose.
 }
 
 @Composable
-fun Sparkline(points: List<Pair<Long, Double>>, modifier: Modifier, color: Color) {
+fun Sparkline(
+    points: List<Pair<Long, Double>>,
+    modifier: Modifier,
+    color: Color,
+    labelColor: Color = color,
+    showTimeMarkers: Boolean = false,
+) {
+    val textMeasurer = rememberTextMeasurer()
+    val labelStyle = TextStyle(color = labelColor, fontSize = 11.sp)
     Canvas(modifier) {
         if (points.size < 2) return@Canvas
         var min = points.minOf { it.second }
@@ -3343,6 +3395,9 @@ fun Sparkline(points: List<Pair<Long, Double>>, modifier: Modifier, color: Color
         val tMax = points.maxOf { it.first }
         val tSpan = (tMax - tMin).takeIf { it > 0 }
         val pts = if (tSpan != null) points.sortedBy { it.first } else points
+        val markers = if (showTimeMarkers && tSpan != null) sparklineHourMarkers(tMin, tMax) else emptyList()
+        val labelGutter = if (markers.isEmpty()) 0f else 16.dp.toPx()
+        val plotH = (size.height - labelGutter).coerceAtLeast(1f)
 
         val linePath = Path()
         val fillPath = Path()
@@ -3353,7 +3408,7 @@ fun Sparkline(points: List<Pair<Long, Double>>, modifier: Modifier, color: Color
             } else {
                 size.width * index / (pts.size - 1).toFloat()
             }
-            val y = (size.height - ((point.second - min) / span * size.height).toFloat()).coerceIn(0f, size.height)
+            val y = (plotH - ((point.second - min) / span * plotH).toFloat()).coerceIn(0f, plotH)
             if (index == 0) {
                 linePath.moveTo(x, y)
                 fillPath.moveTo(x, y)
@@ -3362,11 +3417,23 @@ fun Sparkline(points: List<Pair<Long, Double>>, modifier: Modifier, color: Color
                 fillPath.lineTo(x, y)
             }
         }
-        fillPath.lineTo(size.width, size.height)
-        fillPath.lineTo(0f, size.height)
+        val endX = size.width
+        fillPath.lineTo(endX, plotH)
+        fillPath.lineTo(0f, plotH)
         fillPath.close()
 
         drawPath(fillPath, color.copy(alpha = 0.35f), style = Fill)
+        if (tSpan != null) {
+            markers.forEach { time ->
+                val x = ((time - tMin).toDouble() / tSpan * size.width).toFloat().coerceIn(0f, size.width)
+                drawLine(
+                    color = labelColor.copy(alpha = 0.45f),
+                    start = Offset(x, 0f),
+                    end = Offset(x, plotH),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            }
+        }
         drawPath(
             linePath,
             color,
@@ -3376,7 +3443,46 @@ fun Sparkline(points: List<Pair<Long, Double>>, modifier: Modifier, color: Color
                 join = StrokeJoin.Round,
             ),
         )
+
+        if (tSpan != null) {
+            markers.forEach { time ->
+                val zoneTime = Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault())
+                val layout = textMeasurer.measure(zoneTime.format(HOUR_MARKER_FORMAT), labelStyle)
+                val x = ((time - tMin).toDouble() / tSpan * size.width).toFloat() - layout.size.width / 2f
+                drawText(
+                    textLayoutResult = layout,
+                    topLeft = Offset(
+                        x.coerceIn(0f, (size.width - layout.size.width).coerceAtLeast(0f)),
+                        size.height - layout.size.height,
+                    ),
+                )
+            }
+        }
     }
+}
+
+/** A few clock-hour marks across a history window so chart peaks can be read. */
+internal fun sparklineHourMarkers(tMin: Long, tMax: Long, zone: ZoneId = ZoneId.systemDefault()): List<Long> {
+    if (tMax <= tMin) return emptyList()
+    val start = Instant.ofEpochMilli(tMin).atZone(zone)
+    val end = Instant.ofEpochMilli(tMax).atZone(zone)
+    val spanHours = java.time.Duration.between(start, end).toHours().coerceAtLeast(1)
+    val stepHours = when {
+        spanHours >= 18 -> 6L
+        spanHours >= 8 -> 3L
+        else -> 1L
+    }
+    var cursor = start.truncatedTo(ChronoUnit.HOURS)
+    val remainder = cursor.hour % stepHours.toInt()
+    if (remainder != 0) cursor = cursor.plusHours(stepHours - remainder)
+    if (cursor.toInstant().toEpochMilli() < tMin) cursor = cursor.plusHours(stepHours)
+    val out = ArrayList<Long>(6)
+    while (!cursor.isAfter(end) && out.size < 6) {
+        val ms = cursor.toInstant().toEpochMilli()
+        if (ms in tMin..tMax) out += ms
+        cursor = cursor.plusHours(stepHours)
+    }
+    return out
 }
 
 @Composable

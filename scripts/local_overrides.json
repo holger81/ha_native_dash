@@ -891,51 +891,6 @@
           {
             "type": "battery_runtime",
             "title": "battery-runtime"
-          },
-          {
-            "type": "gap",
-            "height": 12
-          },
-          {
-            "type": "grid",
-            "columns": 2,
-            "cards": [
-              {
-                "name": "Load (1h avg)",
-                "icon": "mdi:home-lightning-bolt",
-                "entity": "sensor.housepanel_total_consumption_house_consumption_1h_mean",
-                "background": "var(--popupBG)",
-                "type": "sensor_big",
-                "label": null,
-                "state": {
-                  "kind": "number",
-                  "entity": "sensor.housepanel_total_consumption_house_consumption_1h_mean",
-                  "decimals": 0,
-                  "suffix": " W"
-                },
-                "tap": {
-                  "type": "more_info"
-                }
-              },
-              {
-                "name": "Stored",
-                "icon": "mdi:home-battery-outline",
-                "entity": "input_number.battery_energy_helper",
-                "background": "var(--popupBG)",
-                "type": "sensor_big",
-                "label": null,
-                "state": {
-                  "kind": "number",
-                  "entity": "input_number.battery_energy_helper",
-                  "scale": 0.001,
-                  "decimals": 2,
-                  "suffix": " kWh"
-                },
-                "tap": {
-                  "type": "more_info"
-                }
-              }
-            ]
           }
         ]
       },

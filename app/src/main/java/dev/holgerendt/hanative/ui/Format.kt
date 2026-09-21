@@ -23,6 +23,44 @@ fun Map<String, EntityState>.number(id: String?, decimals: Int = 1, suffix: Stri
     return value.format(decimals, suffix)
 }
 
+/**
+ * "6h 40m" style used by sensor.battery_runtime_remaining.
+ * Hours are truncated; leftover minutes are rounded, with a 60-minute carry.
+ */
+fun formatRuntimeHours(hours: Double): String {
+    if (!hours.isFinite() || hours < 0.0) return "—"
+    var h = hours.toInt()
+    var m = ((hours - h) * 60.0).roundToInt()
+    if (m >= 60) {
+        h += m / 60
+        m %= 60
+    }
+    return when {
+        h > 0 && m > 0 -> "${h}h ${m}m"
+        h > 0 -> "${h}h"
+        else -> "${m}m"
+    }
+}
+
+data class BatteryRuntimeEstimates(val reserve: String, val total: String)
+
+/**
+ * Same load basis as sensor.battery_runtime_remaining: Wh / W, and unknown
+ * when the 1h-mean load is under 100 W.
+ *
+ * Stored (battery_energy_helper) is available energy and already includes
+ * reserve. The headline sensor is (stored − reserve) / load. Reserve runtime
+ * is reserve / load. Total runtime is stored / load — time to empty the pack,
+ * including the reserve — not (stored + reserve), which would double-count.
+ */
+fun batteryRuntimeEstimates(storedWh: Double, reserveWh: Double, loadW: Double): BatteryRuntimeEstimates? {
+    if (!storedWh.isFinite() || !reserveWh.isFinite() || !loadW.isFinite() || loadW < 100.0) return null
+    return BatteryRuntimeEstimates(
+        reserve = formatRuntimeHours(reserveWh.coerceAtLeast(0.0) / loadW),
+        total = formatRuntimeHours(storedWh.coerceAtLeast(0.0) / loadW),
+    )
+}
+
 fun Map<String, EntityState>.tempHum(display: DisplayNode?): String {
     if (display == null) return "—"
     val climate = getState(display.climateEntity)
