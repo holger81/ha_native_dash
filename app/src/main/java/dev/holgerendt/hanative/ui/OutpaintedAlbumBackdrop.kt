@@ -132,20 +132,20 @@ fun AlbumOutpaintHero(
             Box(
                 Modifier
                     .size(MusicOutpaintHeroMetrics.CoverSize)
-                    .offset(y = 3.dp)
-                    .blur(16.dp)
-                    .background(Color.Black.copy(alpha = 0.36f), coverShape),
+                    .offset(y = 7.dp)
+                    .blur(26.dp)
+                    .background(Color.Black.copy(alpha = 0.50f), coverShape),
             )
         }
         val coverModifier = Modifier
             .size(MusicOutpaintHeroMetrics.CoverSize)
             .then(if (exact != null) Modifier.onGloballyPositioned { exact.coverCoordinates = it; exact.measure() } else Modifier)
             .shadow(
-                elevation = 22.dp,
+                elevation = 32.dp,
                 shape = coverShape,
                 clip = false,
-                ambientColor = Color.Black.copy(alpha = 0.30f),
-                spotColor = Color.Black.copy(alpha = 0.52f),
+                ambientColor = Color.Black.copy(alpha = 0.42f),
+                spotColor = Color.Black.copy(alpha = 0.70f),
             )
             .clip(coverShape)
             .border(1.25.dp, Color.White.copy(alpha = 0.55f), coverShape)
