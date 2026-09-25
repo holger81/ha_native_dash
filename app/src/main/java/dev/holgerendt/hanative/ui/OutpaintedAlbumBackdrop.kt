@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -124,18 +125,30 @@ fun AlbumOutpaintHero(
         contentAlignment = Alignment.Center,
     ) {
         val coverShape = RoundedCornerShape(MusicOutpaintHeroMetrics.CoverCornerRadius)
+        // Soft contact cushion behind the cover so it reads as a raised tile over the
+        // ExactWidget stamp / outpaint pad. Same size & center as the measured cover —
+        // only drawn offset — so pad geometry stays pixel-aligned.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Box(
+                Modifier
+                    .size(MusicOutpaintHeroMetrics.CoverSize)
+                    .offset(y = 3.dp)
+                    .blur(16.dp)
+                    .background(Color.Black.copy(alpha = 0.36f), coverShape),
+            )
+        }
         val coverModifier = Modifier
             .size(MusicOutpaintHeroMetrics.CoverSize)
             .then(if (exact != null) Modifier.onGloballyPositioned { exact.coverCoordinates = it; exact.measure() } else Modifier)
             .shadow(
-                elevation = 16.dp,
+                elevation = 22.dp,
                 shape = coverShape,
                 clip = false,
-                ambientColor = Color.Black.copy(alpha = 0.22f),
-                spotColor = Color.Black.copy(alpha = 0.40f),
+                ambientColor = Color.Black.copy(alpha = 0.30f),
+                spotColor = Color.Black.copy(alpha = 0.52f),
             )
             .clip(coverShape)
-            .border(1.25.dp, Color.White.copy(alpha = 0.5f), coverShape)
+            .border(1.25.dp, Color.White.copy(alpha = 0.55f), coverShape)
         if (exact != null && exact.cover != null) {
             val coverBmp = exact.cover!!
             Box(coverModifier.drawWithContent {
