@@ -215,6 +215,7 @@ private fun BoxScope.SoftAtmosphereLayer(
     val outpaint = padFile
     if (outpaint != null && fluxComplete && !vivid) {
         // Compact / non-hero surfaces: decorative full-bleed pad (aspect may not match cover).
+        // Slight overscan crops Flux-invented white photo-frame rims under the card clip.
         AsyncImage(
             model = ImageRequest.Builder(context)
                 .data(outpaint)
@@ -228,7 +229,11 @@ private fun BoxScope.SoftAtmosphereLayer(
             colorFilter = desaturateFilter(0.92f),
             modifier = Modifier
                 .matchParentSize()
-                .graphicsLayer { alpha = 0.94f },
+                .graphicsLayer {
+                    alpha = 0.94f
+                    scaleX = OUTPAINT_EDGE_OVERSCAN
+                    scaleY = OUTPAINT_EDGE_OVERSCAN
+                },
         )
         // Near-transparent wash so Flux outpaint shows through; text glow carries readability.
         Box(
@@ -273,6 +278,10 @@ private fun BoxScope.SoftAtmosphereLayer(
                         vivid -> 0.85f
                         fluxComplete -> 0.78f
                         else -> 0.82f
+                    }
+                    if (fluxComplete) {
+                        scaleX = OUTPAINT_EDGE_OVERSCAN
+                        scaleY = OUTPAINT_EDGE_OVERSCAN
                     }
                 }
                 .then(if (fluxComplete || vivid) Modifier else softBlurFallback())

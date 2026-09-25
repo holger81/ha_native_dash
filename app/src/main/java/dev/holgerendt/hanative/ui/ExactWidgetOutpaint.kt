@@ -12,12 +12,22 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import dev.holgerendt.hanative.data.WidgetOutpaintGeometry
 import dev.holgerendt.hanative.ui.theme.CardLight
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
+
+/**
+ * Flux Fill often invents a distressed white photo/Polaroid frame in the outer
+ * pad pixels. ExactWidgetOutpaint draws 1:1, so that frame reads as an inset
+ * under the card clip. Slight overscan crops the baked rim while keeping the
+ * sharp hero cover pinned (scale around cover center).
+ */
+internal const val OUTPAINT_EDGE_OVERSCAN = 1.07f
 
 internal class ExactWidgetArt {
     var rootCoordinates: LayoutCoordinates? = null
@@ -79,7 +89,29 @@ internal fun ExactWidgetOutpaint(
                 val bitmap = background
                 // A layout change drops the old canvas instead of stretching it during a frame.
                 if (bitmap != null && bitmap.width == size.width.roundToInt() && bitmap.height == size.height.roundToInt()) {
-                    drawImage(bitmap.asImageBitmap())
+                    val overscan = OUTPAINT_EDGE_OVERSCAN
+                    val dstW = (size.width * overscan).roundToInt()
+                    val dstH = (size.height * overscan).roundToInt()
+                    val geo = geometry
+                    val dstOffset = if (geo != null) {
+                        // Pin the cover center so the sharp hero stays registered.
+                        val cx = geo.coverX + geo.coverWidth / 2f
+                        val cy = geo.coverY + geo.coverHeight / 2f
+                        IntOffset(
+                            (cx * (1f - overscan)).roundToInt(),
+                            (cy * (1f - overscan)).roundToInt(),
+                        )
+                    } else {
+                        IntOffset(
+                            ((size.width - dstW) / 2f).roundToInt(),
+                            ((size.height - dstH) / 2f).roundToInt(),
+                        )
+                    }
+                    drawImage(
+                        image = bitmap.asImageBitmap(),
+                        dstOffset = dstOffset,
+                        dstSize = IntSize(dstW, dstH),
+                    )
                     // Near-transparent wash under the hero — outpaint stays dominant;
                     // metadata readability comes from soft white text glow, not a solid band.
                     val fadeStart = geometry?.let { (it.coverY + it.coverHeight).toFloat() } ?: size.height
