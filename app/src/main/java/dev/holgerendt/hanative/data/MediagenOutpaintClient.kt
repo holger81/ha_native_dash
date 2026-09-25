@@ -238,8 +238,12 @@ class MediagenOutpaintClient(
         const val HEADER_STATUS = "X-Outpaint-Status"
         const val HEADER_PAD = "X-Outpaint-Pad"
         const val HEADER_SIZE = "X-Outpaint-Size"
-        /** Overall deadline for Flux generation + polls (match mediagen poll timeout). */
-        const val POLL_TIMEOUT_MS = 180_000L
+        /**
+         * Overall deadline for Flux generation + polls.
+         * Flux Fill model load + first pad often exceeds 3 minutes on the household GPU;
+         * keep above mediagen's Comfy poll budget so the client does not abandon early.
+         */
+        const val POLL_TIMEOUT_MS = 300_000L
         const val DEFAULT_RETRY_AFTER_MS = 5_000L
         /** Per-request HTTP timeouts — polls are short; overall wait is [POLL_TIMEOUT_MS]. */
         const val REQUEST_TIMEOUT_SECONDS = 30L

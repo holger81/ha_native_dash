@@ -23,7 +23,8 @@ object OutpaintPads {
      * Bump when pad geometry or generative prompt identity changes so stale
      * cache files are not reused. Must stay in sync with mediagen.
      */
-    const val OUTPAINT_CACHE_VERSION = "empty-prompt-feather10-layout-v7"
+    /** Must match mediagen `OUTPAINT_CACHE_VERSION` (deployed: layout-v8). */
+    const val OUTPAINT_CACHE_VERSION = "no-text-prompt-feather10-layout-v8"
 }
 
 /**
