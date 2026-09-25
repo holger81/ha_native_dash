@@ -7,13 +7,13 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import dev.holgerendt.hanative.data.WidgetOutpaintGeometry
 import dev.holgerendt.hanative.ui.theme.CardLight
 import kotlinx.coroutines.Dispatchers
@@ -23,9 +23,11 @@ import kotlin.math.roundToInt
 
 /**
  * Flux Fill often invents a distressed white photo/Polaroid frame in the outer
- * pad pixels. ExactWidgetOutpaint draws 1:1, so that frame reads as an inset
- * under the card clip. Slight overscan crops the baked rim while keeping the
- * sharp hero cover pinned (scale around cover center).
+ * pad pixels. SoftAtmosphere (decorative, no sharp hero) may scale by this
+ * factor under the card clip to hide that rim.
+ *
+ * ExactWidgetOutpaint must stay 1:1: scaling around the cover center enlarges
+ * the stamped album past the Compose white frame so subjects bleed into the pad.
  */
 internal const val OUTPAINT_EDGE_OVERSCAN = 1.07f
 
@@ -89,29 +91,46 @@ internal fun ExactWidgetOutpaint(
                 val bitmap = background
                 // A layout change drops the old canvas instead of stretching it during a frame.
                 if (bitmap != null && bitmap.width == size.width.roundToInt() && bitmap.height == size.height.roundToInt()) {
-                    val overscan = OUTPAINT_EDGE_OVERSCAN
-                    val dstW = (size.width * overscan).roundToInt()
-                    val dstH = (size.height * overscan).roundToInt()
+                    // Pixel-exact: stamped cover aligns with AlbumOutpaintHero's framed box.
+                    drawImage(bitmap.asImageBitmap())
+                    // Rounded hero clip leaves transparent corners over the square stamp.
+                    // Paint those wedges with nearby pad pixels so album art cannot peek
+                    // past the white frame.
                     val geo = geometry
-                    val dstOffset = if (geo != null) {
-                        // Pin the cover center so the sharp hero stays registered.
-                        val cx = geo.coverX + geo.coverWidth / 2f
-                        val cy = geo.coverY + geo.coverHeight / 2f
-                        IntOffset(
-                            (cx * (1f - overscan)).roundToInt(),
-                            (cy * (1f - overscan)).roundToInt(),
-                        )
-                    } else {
-                        IntOffset(
-                            ((size.width - dstW) / 2f).roundToInt(),
-                            ((size.height - dstH) / 2f).roundToInt(),
-                        )
+                    if (geo != null) {
+                        val r = MusicOutpaintHeroMetrics.coverCornerRadiusPx(geo.coverWidth)
+                        if (r > 0f) {
+                            val x0 = geo.coverX
+                            val y0 = geo.coverY
+                            val x1 = geo.coverX + geo.coverWidth
+                            val y1 = geo.coverY + geo.coverHeight
+                            fun sample(x: Int, y: Int): Color {
+                                val px = x.coerceIn(0, bitmap.width - 1)
+                                val py = y.coerceIn(0, bitmap.height - 1)
+                                return Color(bitmap.getPixel(px, py))
+                            }
+                            drawRect(
+                                color = sample(x0 - 1, y0 - 1),
+                                topLeft = Offset(x0.toFloat(), y0.toFloat()),
+                                size = Size(r, r),
+                            )
+                            drawRect(
+                                color = sample(x1, y0 - 1),
+                                topLeft = Offset(x1 - r, y0.toFloat()),
+                                size = Size(r, r),
+                            )
+                            drawRect(
+                                color = sample(x0 - 1, y1),
+                                topLeft = Offset(x0.toFloat(), y1 - r),
+                                size = Size(r, r),
+                            )
+                            drawRect(
+                                color = sample(x1, y1),
+                                topLeft = Offset(x1 - r, y1 - r),
+                                size = Size(r, r),
+                            )
+                        }
                     }
-                    drawImage(
-                        image = bitmap.asImageBitmap(),
-                        dstOffset = dstOffset,
-                        dstSize = IntSize(dstW, dstH),
-                    )
                     // Near-transparent wash under the hero — outpaint stays dominant;
                     // metadata readability comes from soft white text glow, not a solid band.
                     val fadeStart = geometry?.let { (it.coverY + it.coverHeight).toFloat() } ?: size.height

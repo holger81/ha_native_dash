@@ -229,6 +229,59 @@ class AlbumArtLocalOutpaintTest {
     }
 
     @Test
+    fun extremeBottomDriftStillAcceptedWhenMarginsAreTextured() {
+        // ExactWidget chrome pads (eee372 / Long Blue Light): Flux bottom can be
+        // ~100 RGB from the cover rim while side margins stay painterly. Hard-reject
+        // on extreme mean alone froze the local gray pad despite mediagen FLUX done.
+        val padL = 40
+        val padT = 4
+        val padR = 40
+        val padB = 48
+        val coverW = 48
+        val coverH = 48
+        val outW = coverW + padL + padR
+        val outH = coverH + padT + padB
+        val cover = argb(50, 50, 52)
+        val lightBottom = argb(220, 218, 214)
+        val pixels = IntArray(outW * outH) { idx ->
+            val x = idx % outW
+            val y = idx / outW
+            val inCover = x in padL until (outW - padR) && y in padT until (outH - padB)
+            when {
+                inCover -> cover
+                y >= outH - padB -> argb(
+                    ((lightBottom ushr 16 and 0xFF) + ((x * 5 + y) % 24) - 12).coerceIn(0, 255),
+                    ((lightBottom ushr 8 and 0xFF) + ((x * 3 + y * 2) % 24) - 12).coerceIn(0, 255),
+                    ((lightBottom and 0xFF) + ((x + y * 7) % 24) - 12).coerceIn(0, 255),
+                )
+                else -> argb(
+                    (80 + (x * 17 + y * 13) % 100).coerceIn(0, 255),
+                    (70 + (x * 7 + y * 29) % 100).coerceIn(0, 255),
+                    (60 + (x * 3 + y * 41) % 100).coerceIn(0, 255),
+                )
+            }
+        }
+        assertTrue(
+            "painterly margins must not look like a local solid pad",
+            !AlbumArtLocalOutpaint.looksLikeLocalSolidPadPixels(outW, outH, pixels, padL, padT, padR, padB),
+        )
+        val padSides = AlbumArtLocalOutpaint.SideMeans(
+            left = argb(120, 110, 100),
+            top = argb(55, 55, 56),
+            right = argb(115, 105, 95),
+            bottom = lightBottom,
+        )
+        val coverSides = AlbumArtLocalOutpaint.SideMeans(
+            left = cover, top = cover, right = cover, bottom = cover,
+        )
+        val d = AlbumArtLocalOutpaint.padMismatchDistance(padSides, coverSides)
+        assertTrue(
+            "bottom chrome invent exceeds extreme threshold, was $d",
+            d > AlbumArtLocalOutpaint.MAX_PAD_MISMATCH_EXTREME,
+        )
+    }
+
+    @Test
     fun rimMeanKeepsDarkCoversDarkWithoutSnapping() {
         val w = 40
         val h = 40

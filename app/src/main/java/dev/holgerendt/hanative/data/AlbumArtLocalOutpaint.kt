@@ -284,7 +284,11 @@ object AlbumArtLocalOutpaint {
         val distance = padMismatchDistance(paddedBytes, sourceBytes, padLeft, padTop, padRight, padBottom)
             ?: return false
         if (distance <= MAX_PAD_MISMATCH) return false
-        if (distance > MAX_PAD_MISMATCH_EXTREME) return true
+        // Extreme mean drift alone is not enough: ExactWidget bottom pads are large
+        // chrome zones where Flux often goes lighter than the cover rim while the
+        // side margins stay textured. Reject only flat invents (and seams above).
+        // Otherwise the tablet keeps polling mediagen Flux hits and never replaces
+        // the local gray edge pad — admin shows FLUX done while the card stays soft.
         return looksLikeLocalSolidPad(paddedBytes, padLeft, padTop, padRight, padBottom)
     }
 
@@ -595,8 +599,9 @@ object AlbumArtLocalOutpaint {
     const val MAX_PAD_MISMATCH = 45.0
 
     /**
-     * Beyond this, reject even textured fills (cream/gray invents). Between
-     * [MAX_PAD_MISMATCH] and this, only flat invents / seams are rejected.
+     * Historical extreme invent threshold. [shouldRejectFluxPad] no longer
+     * hard-rejects on this alone (textured Flux with a light bottom chrome pad
+     * used to stick forever on the local gray pad). Kept for tests / metrics.
      */
     const val MAX_PAD_MISMATCH_EXTREME = 85.0
 

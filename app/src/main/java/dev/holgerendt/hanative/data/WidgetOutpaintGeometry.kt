@@ -4,7 +4,9 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Rect
+import android.graphics.RectF
 import java.io.ByteArrayOutputStream
 
 /** Physical pixels measured by Compose, shared by generation and the 1:1 renderer. */
@@ -44,7 +46,12 @@ data class WidgetOutpaintGeometry(
         return result.png().also { source.recycle(); result.recycle() }
     }
 
-    /** Restore the untouched source after generation; never resize the returned canvas. */
+    /**
+     * Restore the untouched source after generation; never resize the returned canvas.
+     *
+     * Stamp uses the same corner radius fraction as the AlbumOutpaintHero frame so
+     * square cover corners do not sit in the pad behind the rounded white border.
+     */
     fun restoreCover(bytes: ByteArray, source: ByteArray): ByteArray {
         require(accepts(bytes, null))
         val background = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
@@ -52,8 +59,35 @@ data class WidgetOutpaintGeometry(
         val cover = BitmapFactory.decodeByteArray(source, 0, source.size)
         result.density = Bitmap.DENSITY_NONE
         cover.density = Bitmap.DENSITY_NONE
-        Canvas(result).drawBitmap(cover, coverX.toFloat(), coverY.toFloat(), null)
+        val canvas = Canvas(result)
+        val radius = coverWidth * COVER_CORNER_RADIUS_FRAC
+        if (radius > 0f) {
+            val path = Path().apply {
+                addRoundRect(
+                    RectF(
+                        coverX.toFloat(),
+                        coverY.toFloat(),
+                        (coverX + coverWidth).toFloat(),
+                        (coverY + coverHeight).toFloat(),
+                    ),
+                    radius,
+                    radius,
+                    Path.Direction.CW,
+                )
+            }
+            canvas.save()
+            canvas.clipPath(path)
+            canvas.drawBitmap(cover, coverX.toFloat(), coverY.toFloat(), null)
+            canvas.restore()
+        } else {
+            canvas.drawBitmap(cover, coverX.toFloat(), coverY.toFloat(), null)
+        }
         return result.png().also { background.recycle(); result.recycle(); cover.recycle() }
+    }
+
+    companion object {
+        /** 22.dp / 196.dp — matches AlbumOutpaintHero cover shape. */
+        const val COVER_CORNER_RADIUS_FRAC = 22f / 196f
     }
 }
 

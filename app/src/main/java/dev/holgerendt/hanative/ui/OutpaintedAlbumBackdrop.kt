@@ -32,17 +32,25 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import dev.holgerendt.hanative.ui.theme.CardLight
 import java.io.File
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 /** Shared hero metrics: cover position/size is identical with or without outpaint. */
 internal object MusicOutpaintHeroMetrics {
     val StageHeight = 220.dp
     val CoverSize = 196.dp
+    /** Must match [AlbumOutpaintHero] clip / border and ExactWidgetOutpaint corner masks. */
+    val CoverCornerRadius = 22.dp
+
+    /** Pixel radius for a cover that is [coverWidthPx] wide (scales with measured hero). */
+    fun coverCornerRadiusPx(coverWidthPx: Int): Float =
+        coverWidthPx * (CoverCornerRadius.value / CoverSize.value)
 }
 
 /**
@@ -115,7 +123,7 @@ fun AlbumOutpaintHero(
             .height(resolvedStage),
         contentAlignment = Alignment.Center,
     ) {
-        val coverShape = RoundedCornerShape(22.dp)
+        val coverShape = RoundedCornerShape(MusicOutpaintHeroMetrics.CoverCornerRadius)
         val coverModifier = Modifier
             .size(MusicOutpaintHeroMetrics.CoverSize)
             .then(if (exact != null) Modifier.onGloballyPositioned { exact.coverCoordinates = it; exact.measure() } else Modifier)
@@ -129,8 +137,16 @@ fun AlbumOutpaintHero(
             .clip(coverShape)
             .border(1.25.dp, Color.White.copy(alpha = 0.5f), coverShape)
         if (exact != null && exact.cover != null) {
+            val coverBmp = exact.cover!!
             Box(coverModifier.drawWithContent {
-                drawImage(exact.cover!!.asImageBitmap())
+                // Fill the clipped frame exactly — never draw past the white border shape.
+                drawImage(
+                    image = coverBmp.asImageBitmap(),
+                    dstSize = IntSize(
+                        size.width.roundToInt(),
+                        size.height.roundToInt(),
+                    ),
+                )
             })
         } else {
             MusicCover(path = coverPath, viewModel = viewModel, modifier = coverModifier,
@@ -216,6 +232,7 @@ private fun BoxScope.SoftAtmosphereLayer(
     if (outpaint != null && fluxComplete && !vivid) {
         // Compact / non-hero surfaces: decorative full-bleed pad (aspect may not match cover).
         // Slight overscan crops Flux-invented white photo-frame rims under the card clip.
+        // (Hero ExactWidgetOutpaint stays 1:1 so the stamped album cannot spill past its frame.)
         AsyncImage(
             model = ImageRequest.Builder(context)
                 .data(outpaint)
