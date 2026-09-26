@@ -31,4 +31,14 @@ class WidgetOutpaintGeometryTest {
     fun refusesCoverOutsideWidget() {
         WidgetOutpaintGeometry(520, 400, 400, 12, 196, 196)
     }
+
+    @Test
+    fun coverCornerRadiusMatchesHeroFractionEvenOnThinTopChrome() {
+        // ExactWidget FullMusicCard often has ~12px top chrome — radius must still
+        // be the 22/196 hero fraction so ear punch covers the square stamp tips.
+        val geo = WidgetOutpaintGeometry(520, 400, 162, 12, 196, 196)
+        val radius = geo.coverWidth * WidgetOutpaintGeometry.COVER_CORNER_RADIUS_FRAC
+        assertEquals(22f, radius, 0.01f)
+        assertTrue(geo.coverY < radius)
+    }
 }

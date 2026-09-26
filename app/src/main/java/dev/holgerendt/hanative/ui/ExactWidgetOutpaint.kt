@@ -7,13 +7,23 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import dev.holgerendt.hanative.data.WidgetOutpaintGeometry
 import dev.holgerendt.hanative.ui.theme.CardLight
 import kotlinx.coroutines.Dispatchers
@@ -91,44 +101,16 @@ internal fun ExactWidgetOutpaint(
                 val bitmap = background
                 // A layout change drops the old canvas instead of stretching it during a frame.
                 if (bitmap != null && bitmap.width == size.width.roundToInt() && bitmap.height == size.height.roundToInt()) {
+                    val img = bitmap.asImageBitmap()
                     // Pixel-exact: stamped cover aligns with AlbumOutpaintHero's framed box.
-                    drawImage(bitmap.asImageBitmap())
-                    // Rounded hero clip leaves transparent corners over the square stamp.
-                    // Paint those wedges with nearby pad pixels so album art cannot peek
-                    // past the white frame.
+                    drawImage(img)
                     val geo = geometry
                     if (geo != null) {
-                        val r = MusicOutpaintHeroMetrics.coverCornerRadiusPx(geo.coverWidth)
-                        if (r > 0f) {
-                            val x0 = geo.coverX
-                            val y0 = geo.coverY
-                            val x1 = geo.coverX + geo.coverWidth
-                            val y1 = geo.coverY + geo.coverHeight
-                            fun sample(x: Int, y: Int): Color {
-                                val px = x.coerceIn(0, bitmap.width - 1)
-                                val py = y.coerceIn(0, bitmap.height - 1)
-                                return Color(bitmap.getPixel(px, py))
-                            }
-                            drawRect(
-                                color = sample(x0 - 1, y0 - 1),
-                                topLeft = Offset(x0.toFloat(), y0.toFloat()),
-                                size = Size(r, r),
-                            )
-                            drawRect(
-                                color = sample(x1, y0 - 1),
-                                topLeft = Offset(x1 - r, y0.toFloat()),
-                                size = Size(r, r),
-                            )
-                            drawRect(
-                                color = sample(x0 - 1, y1),
-                                topLeft = Offset(x0.toFloat(), y1 - r),
-                                size = Size(r, r),
-                            )
-                            drawRect(
-                                color = sample(x1, y1),
-                                topLeft = Offset(x1 - r, y1 - r),
-                                size = Size(r, r),
-                            )
+                        // Over-punch slightly past the white frame so AA fringes cannot
+                        // leave square stamp ears outside the curve.
+                        val r = MusicOutpaintHeroMetrics.coverCornerRadiusPx(geo.coverWidth) + 1.5f
+                        if (r > 0.5f) {
+                            paintExactWidgetCoverChrome(img, geo, r)
                         }
                     }
                     // Near-transparent wash under the hero — outpaint stays dominant;
@@ -151,5 +133,112 @@ internal fun ExactWidgetOutpaint(
                 }
                 drawContent()
             }) { content() }
+    }
+}
+
+/**
+ * Hide square stamp corners that peek past the rounded hero, then paint a
+ * contact shadow *into* the pad so lift reads on busy Flux art (Material
+ * elevation alone vanishes on identical stamp pixels).
+ *
+ * Solid single-pixel corner fills were worse than nothing: sampling dark hair
+ * just outside the stamp and painting r×r blocks recreated triangular "ears".
+ * Stretch pad edge strips into the wedges instead, then darken with a soft
+ * round contact ring (no square silhouette).
+ */
+internal fun DrawScope.paintExactWidgetCoverChrome(
+    pad: ImageBitmap,
+    geo: WidgetOutpaintGeometry,
+    radius: Float,
+) {
+    val x0 = geo.coverX.toFloat()
+    val y0 = geo.coverY.toFloat()
+    val x1 = (geo.coverX + geo.coverWidth).toFloat()
+    val y1 = (geo.coverY + geo.coverHeight).toFloat()
+    val coverRect = Rect(x0, y0, x1, y1)
+    val corner = CornerRadius(radius, radius)
+
+    val earPath = Path().apply {
+        fillType = PathFillType.EvenOdd
+        addRect(coverRect)
+        addRoundRect(RoundRect(coverRect, corner))
+    }
+    val ri = radius.roundToInt().coerceAtLeast(1)
+    val padW = pad.width
+    val padH = pad.height
+    clipPath(earPath) {
+        // Stretch true pad strips (outside the stamp) into the ear wedges so
+        // thin top/side chrome still covers square stamp corners.
+        if (geo.coverY > 0) {
+            val th = geo.coverY.coerceAtMost(ri).coerceAtLeast(1)
+            drawImage(
+                image = pad,
+                srcOffset = IntOffset(geo.coverX.coerceIn(0, padW - 1), 0),
+                srcSize = IntSize(geo.coverWidth.coerceAtMost(padW - geo.coverX), th),
+                dstOffset = IntOffset(geo.coverX, geo.coverY),
+                dstSize = IntSize(geo.coverWidth, ri),
+            )
+        }
+        if (geo.coverX > 0) {
+            val lw = geo.coverX.coerceAtMost(ri).coerceAtLeast(1)
+            drawImage(
+                image = pad,
+                srcOffset = IntOffset(0, geo.coverY.coerceIn(0, padH - 1)),
+                srcSize = IntSize(lw, geo.coverHeight.coerceAtMost(padH - geo.coverY)),
+                dstOffset = IntOffset(geo.coverX, geo.coverY),
+                dstSize = IntSize(ri, geo.coverHeight),
+            )
+        }
+        val rightPad = (padW - geo.coverX - geo.coverWidth).coerceAtLeast(0)
+        if (rightPad > 0) {
+            val rw = rightPad.coerceAtMost(ri).coerceAtLeast(1)
+            val srcX = (geo.coverX + geo.coverWidth).coerceIn(0, padW - 1)
+            drawImage(
+                image = pad,
+                srcOffset = IntOffset(srcX, geo.coverY.coerceIn(0, padH - 1)),
+                srcSize = IntSize(rw.coerceAtMost(padW - srcX), geo.coverHeight.coerceAtMost(padH - geo.coverY)),
+                dstOffset = IntOffset(geo.coverX + geo.coverWidth - ri, geo.coverY),
+                dstSize = IntSize(ri, geo.coverHeight),
+            )
+        }
+        val bottomPad = (padH - geo.coverY - geo.coverHeight).coerceAtLeast(0)
+        if (bottomPad > 0) {
+            val bh = bottomPad.coerceAtMost(ri).coerceAtLeast(1)
+            val srcY = (geo.coverY + geo.coverHeight).coerceIn(0, padH - 1)
+            drawImage(
+                image = pad,
+                srcOffset = IntOffset(geo.coverX.coerceIn(0, padW - 1), srcY),
+                srcSize = IntSize(geo.coverWidth.coerceAtMost(padW - geo.coverX), bh.coerceAtMost(padH - srcY)),
+                dstOffset = IntOffset(geo.coverX, geo.coverY + geo.coverHeight - ri),
+                dstSize = IntSize(geo.coverWidth, ri),
+            )
+        }
+    }
+
+    // Soft dark ring only outside the rounded cover — round silhouette so the
+    // ear wedges never read as a 90° stamp corner, and lift stays visible on
+    // busy / identical Flux pixels where Material elevation disappears.
+    val outsideHero = Path().apply {
+        fillType = PathFillType.EvenOdd
+        addRect(Rect(Offset.Zero, size))
+        addRoundRect(RoundRect(coverRect, corner))
+    }
+    clipPath(outsideHero) {
+        val layers = listOf(
+            2f to 0.48f,
+            5f to 0.34f,
+            11f to 0.22f,
+            22f to 0.12f,
+            38f to 0.06f,
+        )
+        for ((expand, alpha) in layers) {
+            val drop = expand * 0.55f
+            drawRoundRect(
+                color = Color.Black.copy(alpha = alpha),
+                topLeft = Offset(x0 - expand, y0 - expand + drop),
+                size = Size(x1 - x0 + 2f * expand, y1 - y0 + 2f * expand),
+                cornerRadius = CornerRadius(radius + expand, radius + expand),
+            )
+        }
     }
 }
