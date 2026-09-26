@@ -1345,6 +1345,30 @@ private fun MediagenUrlCard(viewModel: HaViewModel) {
             color = if (ui.mediagenUrl.isBlank()) Color(0xFFFF8A80) else Color(0xFFC5E1A5),
             fontSize = 13.sp,
         )
+        if (ui.mediagenUrl.isNotBlank()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text("Reject bad Flux pads", color = overlay.text, fontSize = 16.sp)
+                    Text(
+                        "Off (default): show mediagen Flux as returned. On: keep the local edge pad when Flux has hard seams or invented mats.",
+                        color = overlay.muted,
+                        fontSize = 13.sp,
+                    )
+                }
+                Switch(
+                    checked = ui.fluxPadRejectEnabled,
+                    onCheckedChange = viewModel::setFluxPadRejectEnabled,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.Black,
+                        checkedTrackColor = ActiveYellow,
+                    ),
+                )
+            }
+        }
         OutlinedTextField(
             value = urlText,
             onValueChange = {

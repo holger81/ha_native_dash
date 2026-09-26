@@ -42,6 +42,7 @@ class AlbumArtOutpaintRepository(
     private val mediagen: MediagenOutpaintClient = MediagenOutpaintClient(),
     private val imageHttp: OkHttpClient = imageFetchClient(),
     private val widgetGeometry: WidgetOutpaintGeometry? = null,
+    private val fluxPadRejectEnabled: () -> Boolean = { false },
 ) {
     private var exactSession: AlbumArtOutpaintRepository? = null
     private val preparedSources = ConcurrentHashMap<String, ByteArray>()
@@ -54,7 +55,7 @@ class AlbumArtOutpaintRepository(
         return AlbumArtOutpaintRepository(
             context, haClient, mediagenUrl, scope,
             AlbumArtOutpaintCache(File(RecoverableFiles.outpaintCacheDir(context), "exact-v1-${geometry.key}"), useCoverAliases = false),
-            mediagen, imageHttp, geometry,
+            mediagen, imageHttp, geometry, fluxPadRejectEnabled,
         ).also {
             exactSession = it
             val plan = targets.get()
@@ -78,6 +79,11 @@ class AlbumArtOutpaintRepository(
     private val failedRefs = ConcurrentHashMap.newKeySet<String>()
     /** Pictorial covers that already received a Flux upgrade attempt this process. */
     private val fluxAttemptedRefs = ConcurrentHashMap.newKeySet<String>()
+    /**
+     * Covers whose mediagen Flux pad was rejected once and purged so Comfy can
+     * regenerate. A second reject keeps the local pad (no purge loop).
+     */
+    private val fluxPurgeAttemptedRefs = ConcurrentHashMap.newKeySet<String>()
     /** Cover refs waiting out a transient fetch/mediagen miss before retry. */
     private val retryAfterMs = ConcurrentHashMap<String, Long>()
 
@@ -400,6 +406,10 @@ class AlbumArtOutpaintRepository(
                 cache.bindCoverRef(coverRef, source, sourcePads(source))
             } ?: local
         }
+        // Sealed Flux that fails seam/invent checks: purge once so Comfy can retry.
+        if (cachedRemote != null && cachedRemote.source == MediagenOutpaintSource.Flux) {
+            return handleRejectedFlux(mediagenBase, coverRef, cachedRemote, local)
+        }
         // Only mark Flux attempted after an accepted Flux pad, or after mediagen
         // confirms a settled local (no Comfy re-queue). Transient Local without
         // settle still retries — otherwise a race would freeze soft-enlarge forever.
@@ -425,6 +435,9 @@ class AlbumArtOutpaintRepository(
                 cache.bindCoverRef(coverRef, source, sourcePads(source))
             } ?: local
         }
+        if (result.source == MediagenOutpaintSource.Flux) {
+            return handleRejectedFlux(mediagenBase, coverRef, result, local)
+        }
         // Settled local from mediagen: store for atmosphere, stop re-POSTing.
         if (result.source == MediagenOutpaintSource.Local &&
             (widgetGeometry == null || widgetGeometry.accepts(result.bytes, result.layout))) {
@@ -447,10 +460,54 @@ class AlbumArtOutpaintRepository(
         return local
     }
 
+    /**
+     * Drop a bad sealed Flux pad from mediagen once, then keep local after a
+     * second reject so we never hammer the same hard-seam JPEG forever.
+     */
+    private suspend fun handleRejectedFlux(
+        mediagenBase: String,
+        coverRef: String,
+        result: MediagenOutpaintResult,
+        local: File?,
+    ): File? {
+        val hash = result.mediaHash?.trim()?.lowercase()
+        if (hash != null && hash.length == 64 && fluxPurgeAttemptedRefs.add(coverRef)) {
+            android.util.Log.w(
+                TAG,
+                "rejected Flux pad; purging mediagen hash=${hash.take(12)} cover=${coverRef.take(96)}",
+            )
+            val purged = runCatching { mediagen.deleteCached(mediagenBase, hash) }.getOrDefault(false)
+            android.util.Log.i(TAG, "mediagen purge hash=${hash.take(12)} ok=$purged")
+            scheduleRetry(coverRef, MEDIAGEN_RETRY_MS)
+            return local
+        }
+        android.util.Log.w(
+            TAG,
+            "rejected Flux pad; keeping local after purge attempt cover=${coverRef.take(96)}",
+        )
+        fluxAttemptedRefs.add(coverRef)
+        retryAfterMs.remove(coverRef)
+        return local
+    }
+
     private fun rejectPad(bytes: ByteArray, source: ByteArray): Boolean {
+        if (!fluxPadRejectEnabled()) return false
         val pads = sourcePads(source)
         return AlbumArtLocalOutpaint.shouldRejectFluxPad(bytes, source,
             pads.padLeft, pads.padTop, pads.padRight, pads.padBottom)
+    }
+
+    /**
+     * Clear per-process Flux reject / warm bookkeeping so covers can accept a
+     * mediagen Flux pad again (e.g. after turning the reject gate off).
+     */
+    fun clearFluxRejectState() {
+        fluxAttemptedRefs.clear()
+        fluxPurgeAttemptedRefs.clear()
+        warmRefs.clear()
+        retryAfterMs.clear()
+        exactSession?.clearFluxRejectState()
+        kickWorker()
     }
 
     /** True when mediagen bytes should replace the on-device local pad and mark `.flux`. */

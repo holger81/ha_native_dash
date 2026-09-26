@@ -120,6 +120,29 @@ class MediagenOutpaintClient(
             }
         }
 
+    /**
+     * Drop a sealed Flux cache entry (and `.done`) so the next POST can re-run Comfy.
+     * Used when the tablet rejects a hard-seam / invented-mat pad that mediagen
+     * still serves as a Flux hit (quality gate off).
+     */
+    suspend fun deleteCached(baseUrl: String, mediaHash: String): Boolean =
+        withContext(Dispatchers.IO) {
+            val base = baseUrl.trim().trimEnd('/')
+            val hash = mediaHash.trim().lowercase()
+            if (base.isBlank() || hash.length != 64 || hash.any { it !in "0123456789abcdef" }) {
+                return@withContext false
+            }
+            val host = NetworkGuard.hostOf(base) ?: return@withContext false
+            if (!NetworkGuard.isPrivateHost(host)) return@withContext false
+            val request = Request.Builder()
+                .url("$base/admin/api/entries/$hash")
+                .delete()
+                .build()
+            val response = runCatching { http.newCall(request).execute() }.getOrNull()
+                ?: return@withContext false
+            response.use { it.isSuccessful }
+        }
+
     private suspend fun pollUntilReady(
         base: String,
         hash: String,

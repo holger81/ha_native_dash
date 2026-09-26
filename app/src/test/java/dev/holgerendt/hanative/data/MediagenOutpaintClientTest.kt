@@ -264,4 +264,20 @@ class MediagenOutpaintClientTest {
         )
         assertNull(client().getCached("http://127.0.0.1:${server.port}", source, layout))
     }
+
+    @Test
+    fun deleteCachedHitsAdminEntriesPath() = runBlocking {
+        val hash = "a".repeat(64)
+        server.enqueue(MockResponse().setBody("""{"ok":true,"hash":"$hash","removed":true}"""))
+        assertTrue(client().deleteCached("http://127.0.0.1:${server.port}", hash))
+        val request = server.takeRequest()
+        assertEquals("DELETE", request.method)
+        assertEquals("/admin/api/entries/$hash", request.path)
+    }
+
+    @Test
+    fun deleteCachedRejectsInvalidHashWithoutRequest() = runBlocking {
+        assertTrue(!client().deleteCached("http://127.0.0.1:${server.port}", "not-a-hash"))
+        assertEquals(0, server.requestCount)
+    }
 }

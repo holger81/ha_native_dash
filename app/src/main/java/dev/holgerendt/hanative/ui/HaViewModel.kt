@@ -162,6 +162,11 @@ data class UiState(
     val go2rtcUrl: String = "",
     /** Blank disables mediagen album-art outpainting. */
     val mediagenUrl: String = "",
+    /**
+     * When true, reject hard-seam / invented-mat Flux pads and keep the local
+     * edge pad. Default false — show mediagen Flux as returned.
+     */
+    val fluxPadRejectEnabled: Boolean = false,
 )
 
 data class MediaPreview(
@@ -182,6 +187,7 @@ class HaViewModel(
         context = app,
         haClient = client,
         mediagenUrl = { credentials.mediagenUrl },
+        fluxPadRejectEnabled = { credentials.fluxPadRejectEnabled },
         scope = viewModelScope,
     )
 
@@ -317,6 +323,7 @@ class HaViewModel(
             displayIlluminanceEntity = credentials.displayIlluminanceEntity,
             go2rtcUrl = credentials.go2rtcUrl,
             mediagenUrl = credentials.mediagenUrl,
+            fluxPadRejectEnabled = credentials.fluxPadRejectEnabled,
         )
         client.onKioskEvent = { params ->
             if (KioskCommands.panelAllowed(params)) {
@@ -1685,6 +1692,13 @@ class HaViewModel(
         credentials.mediagenUrl = trimmed
         _ui.value = _ui.value.copy(mediagenUrl = credentials.mediagenUrl)
         return Result.success(Unit)
+    }
+
+    fun setFluxPadRejectEnabled(enabled: Boolean) {
+        credentials.fluxPadRejectEnabled = enabled
+        _ui.value = _ui.value.copy(fluxPadRejectEnabled = enabled)
+        // Turning reject off: allow covers previously stuck on local pad to accept Flux.
+        if (!enabled) albumArtOutpaint.clearFluxRejectState()
     }
 
     fun sleepScreen(commandDisplay: Boolean = true) {

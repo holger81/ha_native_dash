@@ -84,6 +84,16 @@ class CredentialsStore(context: Context) {
             persist()
         }
 
+    /**
+     * When true, the tablet runs [AlbumArtLocalOutpaint.shouldRejectFluxPad] and may keep
+     * a local edge pad even when mediagen returned Flux. Default off — accept Flux as-is.
+     */
+    var fluxPadRejectEnabled: Boolean = prefs.getBoolean(KEY_FLUX_PAD_REJECT, false)
+        set(value) {
+            field = value
+            persist()
+        }
+
     /** Null means default (all light.* except screen/segment/led); empty means none. */
     var monitoredLightEntities: List<String>? = readMonitoredLightsPref()
         set(value) {
@@ -300,6 +310,7 @@ class CredentialsStore(context: Context) {
             .putString(KEY_TOKEN, token)
             .putString(KEY_GO2RTC_URL, go2rtcUrl)
             .putString(KEY_MEDIAGEN_URL, mediagenUrl)
+            .putBoolean(KEY_FLUX_PAD_REJECT, fluxPadRejectEnabled)
             .putString(KEY_PIN, managementPin)
             .putInt(KEY_TIMEOUT_SECONDS, screenTimeoutSeconds)
             .putString(KEY_DISPLAY_OFF, displayOffEntity)
@@ -341,6 +352,7 @@ class CredentialsStore(context: Context) {
             put("ha_token", accessToken)
             put("go2rtc_url", go2rtcUrl)
             put("mediagen_url", mediagenUrl)
+            put("flux_pad_reject", fluxPadRejectEnabled)
             put("management_pin", pin)
             put("screen_timeout_seconds", screenTimeoutSeconds)
             if (displayOffEntity.isNotBlank()) put("display_off_entity", displayOffEntity)
@@ -420,6 +432,9 @@ class CredentialsStore(context: Context) {
             val url = obj.optString("mediagen_url").trim().trimEnd('/')
                 .ifBlank { obj.optString("comfyui_url").trim().trimEnd('/') }
             if (url.isNotBlank()) mediagenUrl = url
+        }
+        if (obj.has("flux_pad_reject")) {
+            fluxPadRejectEnabled = obj.optBoolean("flux_pad_reject", false)
         }
         if (token.isBlank()) {
             val value = obj.optString("ha_token").trim()
@@ -501,6 +516,7 @@ class CredentialsStore(context: Context) {
         private const val KEY_GO2RTC_URL = "go2rtc_url"
         private const val KEY_MEDIAGEN_URL = "mediagen_url"
         private const val KEY_MEDIAGEN_DISABLED = "mediagen_disabled"
+        private const val KEY_FLUX_PAD_REJECT = "flux_pad_reject"
         private const val KEY_COMFYUI_URL_LEGACY = "comfyui_url"
         /** Household mediagen when the pref was never set (or only stored blank by older builds). */
         const val DEFAULT_MEDIAGEN_URL = "http://192.168.10.31:18090"
