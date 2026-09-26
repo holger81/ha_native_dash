@@ -355,7 +355,7 @@
                   "type": "light_slider",
                   "name": "Ceiling Light",
                   "icon": "mdi:light-recessed",
-                  "entity": "light.jonathans_room_lights"
+                  "entity": "light.ceiling"
                 },
                 {
                   "type": "light_toggle",
@@ -721,13 +721,13 @@
     "number.secondary_living_room_switch_mmwave_width_maximum_right",
     "number.secondary_living_room_switch_mmwave_depth_minimum_near",
     "number.secondary_living_room_switch_mmwave_depth_maximum_far",
+    "light.ceiling",
     "light.dining_room_lights_ceiling",
     "light.emilias_bedroom_lights",
     "light.emilias_wallflower",
     "light.entertainment",
     "light.entrance_light_ceiling",
     "light.guest_bedroom_main_lights",
-    "light.jonathans_room_lights",
     "light.kitchen_cabinet_lights",
     "light.kitchen_light",
     "light.living_room_lights_ceiling",
