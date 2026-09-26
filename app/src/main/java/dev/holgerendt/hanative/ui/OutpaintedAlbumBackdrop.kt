@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -19,18 +20,25 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
@@ -125,45 +133,97 @@ fun AlbumOutpaintHero(
         contentAlignment = Alignment.Center,
     ) {
         val coverShape = RoundedCornerShape(MusicOutpaintHeroMetrics.CoverCornerRadius)
-        // Soft contact cushion behind the cover so it reads as a raised tile over the
-        // ExactWidget stamp / outpaint pad. Same size & center as the measured cover —
-        // only drawn offset — so pad geometry stays pixel-aligned.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        // Contact cushions sit behind the measured cover. Offsets never change the
+        // source rectangle ExactWidget registers for the stamp — only the draw.
+        val supportsBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+        if (supportsBlur) {
             Box(
                 Modifier
                     .size(MusicOutpaintHeroMetrics.CoverSize)
-                    .offset(y = 7.dp)
-                    .blur(26.dp)
-                    .background(Color.Black.copy(alpha = 0.50f), coverShape),
+                    .offset(y = 16.dp)
+                    .blur(40.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+                    .background(Color.Black.copy(alpha = 0.48f), coverShape),
+            )
+            Box(
+                Modifier
+                    .size(MusicOutpaintHeroMetrics.CoverSize)
+                    .offset(y = 5.dp)
+                    .blur(10.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+                    .background(Color.Black.copy(alpha = 0.36f), coverShape),
+            )
+        } else {
+            Box(
+                Modifier
+                    .size(MusicOutpaintHeroMetrics.CoverSize)
+                    .offset(y = 12.dp)
+                    .background(Color.Black.copy(alpha = 0.40f), coverShape),
             )
         }
-        val coverModifier = Modifier
-            .size(MusicOutpaintHeroMetrics.CoverSize)
-            .then(if (exact != null) Modifier.onGloballyPositioned { exact.coverCoordinates = it; exact.measure() } else Modifier)
-            .shadow(
-                elevation = 32.dp,
-                shape = coverShape,
-                clip = false,
-                ambientColor = Color.Black.copy(alpha = 0.42f),
-                spotColor = Color.Black.copy(alpha = 0.70f),
-            )
-            .clip(coverShape)
-            .border(1.25.dp, Color.White.copy(alpha = 0.55f), coverShape)
-        if (exact != null && exact.cover != null) {
-            val coverBmp = exact.cover!!
-            Box(coverModifier.drawWithContent {
-                // Fill the clipped frame exactly — never draw past the white border shape.
-                drawImage(
-                    image = coverBmp.asImageBitmap(),
-                    dstSize = IntSize(
-                        size.width.roundToInt(),
-                        size.height.roundToInt(),
-                    ),
+        // Outer shell: layout + measure + elevation. clip=false so the soft
+        // penumbra is not truncated at the cover edge.
+        Box(
+            Modifier
+                .size(MusicOutpaintHeroMetrics.CoverSize)
+                .then(
+                    if (exact != null) {
+                        Modifier.onGloballyPositioned {
+                            exact.coverCoordinates = it
+                            exact.measure()
+                        }
+                    } else {
+                        Modifier
+                    },
                 )
-            })
-        } else {
-            MusicCover(path = coverPath, viewModel = viewModel, modifier = coverModifier,
-                spinnerSize = 28.dp, fallbackIconSize = 64.dp)
+                .shadow(
+                    elevation = 44.dp,
+                    shape = coverShape,
+                    clip = false,
+                    ambientColor = Color.Black.copy(alpha = 0.55f),
+                    spotColor = Color.Black.copy(alpha = 0.82f),
+                ),
+        ) {
+            // Inner frame: clip is a separate child layer so square bitmap /
+            // AsyncImage pixels cannot bleed past the rounded white border.
+            // (shadow(clip=false) + same-chain clip was leaving ExactWidget
+            // drawImage corners unclipped over the outpaint stamp.)
+            val frame = Modifier
+                .fillMaxSize()
+                .clip(coverShape)
+                .border(1.25.dp, Color.White.copy(alpha = 0.55f), coverShape)
+            if (exact != null && exact.cover != null) {
+                val coverBmp = exact.cover!!
+                Box(
+                    frame.drawWithContent {
+                        val radius = MusicOutpaintHeroMetrics.CoverCornerRadius.toPx()
+                        clipPath(
+                            Path().apply {
+                                addRoundRect(
+                                    RoundRect(
+                                        rect = Rect(Offset.Zero, size),
+                                        cornerRadius = CornerRadius(radius, radius),
+                                    ),
+                                )
+                            },
+                        ) {
+                            drawImage(
+                                image = coverBmp.asImageBitmap(),
+                                dstSize = IntSize(
+                                    size.width.roundToInt(),
+                                    size.height.roundToInt(),
+                                ),
+                            )
+                        }
+                    },
+                )
+            } else {
+                MusicCover(
+                    path = coverPath,
+                    viewModel = viewModel,
+                    modifier = frame,
+                    spinnerSize = 28.dp,
+                    fallbackIconSize = 64.dp,
+                )
+            }
         }
     }
 }
