@@ -47,6 +47,9 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 
+private val TIME_FORMAT_HH_MM = DateTimeFormatter.ofPattern("HH:mm")
+private val TIME_FORMAT_H_MM = DateTimeFormatter.ofPattern("H:mm")
+
 @Composable
 fun EditCalendarEventDialog(
     viewModel: HaViewModel,
@@ -202,10 +205,10 @@ private fun AddCalendarEventForm(
         mutableStateOf(initialDate.format(DateTimeFormatter.ISO_LOCAL_DATE))
     }
     var startTimeText by remember(initialStartTime) {
-        mutableStateOf(initialStartTime?.format(DateTimeFormatter.ofPattern("HH:mm")) ?: "09:00")
+        mutableStateOf(initialStartTime?.format(TIME_FORMAT_HH_MM) ?: "09:00")
     }
     var endTimeText by remember(initialEndTime) {
-        mutableStateOf(initialEndTime?.format(DateTimeFormatter.ofPattern("HH:mm")) ?: "10:00")
+        mutableStateOf(initialEndTime?.format(TIME_FORMAT_HH_MM) ?: "10:00")
     }
     var allDay by remember(initialAllDay) { mutableStateOf(initialAllDay) }
     var selectedCalendar by remember(calendars, lockedCalendarId) {
@@ -388,8 +391,8 @@ private fun parseTime(raw: String): LocalTime? {
     if (text.isBlank()) return null
     return try {
         when {
-            text.count { it == ':' } == 1 -> LocalTime.parse(text, DateTimeFormatter.ofPattern("H:mm"))
-            else -> LocalTime.parse(text, DateTimeFormatter.ofPattern("HH:mm"))
+            text.count { it == ':' } == 1 -> LocalTime.parse(text, TIME_FORMAT_H_MM)
+            else -> LocalTime.parse(text, TIME_FORMAT_HH_MM)
         }
     } catch (_: DateTimeParseException) {
         null
