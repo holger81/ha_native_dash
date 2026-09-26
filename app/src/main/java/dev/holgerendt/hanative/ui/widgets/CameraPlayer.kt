@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -35,7 +34,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.Player
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import dev.holgerendt.hanative.R
@@ -219,14 +217,16 @@ private fun LiveCameraSurface(
 ) {
     val live by remember(widget) { viewModel.liveCamera(widget) }.collectAsState()
     LaunchedEffect(widget) { viewModel.startLiveCamera(widget) }
-    var surfaceReady by remember(widget) { mutableStateOf(false) }
     val player = live.player
     val still = live.bitmap
-    val showStill = still != null && (player == null || !live.videoReady || !surfaceReady)
-    LaunchedEffect(player, live.videoReady, surfaceReady, still) {
+    // Poster only until the hub reports live video. Gating on a per-compose
+    // surfaceReady flag left a stale JPEG (often minutes old — jpeg polling
+    // stops once HLS is warm) covering the PlayerView on every popup open.
+    val showStill = still != null && (player == null || !live.videoReady)
+    LaunchedEffect(player, live.videoReady, still) {
         onStatusChange?.invoke(
             when {
-                player != null && live.videoReady && surfaceReady -> "Live"
+                player != null && live.videoReady -> "Live"
                 player != null || still != null -> "Reconnecting"
                 else -> "Connecting"
             },
@@ -288,19 +288,6 @@ private fun LiveCameraSurface(
             LoadingSpinner(color = ChipOnDark)
         }
         if (showOverlayTitle) CameraTitle(widget.name)
-    }
-    DisposableEffect(player) {
-        surfaceReady = false
-        if (player == null) {
-            return@DisposableEffect onDispose { }
-        }
-        val listener = object : Player.Listener {
-            override fun onRenderedFirstFrame() {
-                surfaceReady = true
-            }
-        }
-        player.addListener(listener)
-        onDispose { player.removeListener(listener) }
     }
 }
 

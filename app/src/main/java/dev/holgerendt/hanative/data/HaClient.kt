@@ -1325,12 +1325,19 @@ class HaClient {
         }
     }
 
-    suspend fun cameraSnapshot(entityId: String): ByteArray? = withContext(Dispatchers.IO) {
-        cachedSnapshot(entityId)?.let { return@withContext it }
-        val fresh = fetchCameraSnapshot(entityId) ?: return@withContext null
-        putSnapshot(entityId, fresh)
-        fresh
-    }
+    /**
+     * @param forceRefresh skip the in-process TTL cache (e.g. more-info / visible poll).
+     * Prefetch and home-card polls keep using the cache to avoid hammering camera_proxy.
+     */
+    suspend fun cameraSnapshot(entityId: String, forceRefresh: Boolean = false): ByteArray? =
+        withContext(Dispatchers.IO) {
+            if (!forceRefresh) {
+                cachedSnapshot(entityId)?.let { return@withContext it }
+            }
+            val fresh = fetchCameraSnapshot(entityId) ?: return@withContext null
+            putSnapshot(entityId, fresh)
+            fresh
+        }
 
     /** Prefetch stills so the camera popup can show a poster immediately. */
     suspend fun prefetchCameraSnapshots(entityIds: Collection<String>) {

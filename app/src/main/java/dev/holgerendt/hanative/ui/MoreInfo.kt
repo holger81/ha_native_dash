@@ -575,15 +575,20 @@ private fun CameraSnapshot(entityId: String, viewModel: HaViewModel) {
     var bytes by remember(entityId) { mutableStateOf<ByteArray?>(null) }
     var loaded by remember(entityId) { mutableStateOf(false) }
     LaunchedEffect(entityId, viewModel.client.currentBaseUrl) {
-        bytes = try {
-            viewModel.client.cameraSnapshot(entityId)
-                ?: viewModel.entity(entityId)?.entityPicture?.let { viewModel.client.authenticatedBytes(it) }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            null
+        // Bypass the 30s HaClient poster cache and keep refreshing while the sheet is open.
+        while (true) {
+            val next = try {
+                viewModel.client.cameraSnapshot(entityId, forceRefresh = true)
+                    ?: viewModel.entity(entityId)?.entityPicture?.let { viewModel.client.authenticatedBytes(it) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+            if (next != null) bytes = next
+            loaded = true
+            delay(5_000)
         }
-        loaded = true
     }
     val bitmap = remember(bytes) { bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
     when {
