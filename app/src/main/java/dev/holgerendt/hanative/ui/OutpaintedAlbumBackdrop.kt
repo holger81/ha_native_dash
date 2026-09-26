@@ -133,45 +133,25 @@ fun AlbumOutpaintHero(
         contentAlignment = Alignment.Center,
     ) {
         val coverShape = RoundedCornerShape(MusicOutpaintHeroMetrics.CoverCornerRadius)
-        // Contact cushions sit behind the measured cover. Offsets never change the
-        // source rectangle ExactWidget registers for the stamp — only the draw.
-        // ExactWidget also paints a contact ring into the pad; these cushions add
-        // a second, softer lift that reads even when pad pixels match the hero.
+        // Soft blurred cushions behind the measured cover. Offsets never change
+        // the source rectangle ExactWidget registers for the stamp — only the draw.
+        // ExactWidget paints the primary soft contact shadow into the pad; keep
+        // these as a single smooth penumbra (stacked hard layers band on device).
         val supportsBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
         if (supportsBlur) {
             Box(
                 Modifier
                     .size(MusicOutpaintHeroMetrics.CoverSize)
-                    .offset(y = 20.dp)
-                    .blur(48.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
-                    .background(Color.Black.copy(alpha = 0.62f), coverShape),
-            )
-            Box(
-                Modifier
-                    .size(MusicOutpaintHeroMetrics.CoverSize)
-                    .offset(y = 7.dp)
-                    .blur(14.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
-                    .background(Color.Black.copy(alpha = 0.50f), coverShape),
-            )
-            Box(
-                Modifier
-                    .size(MusicOutpaintHeroMetrics.CoverSize)
-                    .offset(y = 2.dp)
-                    .blur(4.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
-                    .background(Color.Black.copy(alpha = 0.28f), coverShape),
+                    .offset(y = 14.dp)
+                    .blur(36.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+                    .background(Color.Black.copy(alpha = 0.45f), coverShape),
             )
         } else {
             Box(
                 Modifier
                     .size(MusicOutpaintHeroMetrics.CoverSize)
-                    .offset(y = 14.dp)
-                    .background(Color.Black.copy(alpha = 0.55f), coverShape),
-            )
-            Box(
-                Modifier
-                    .size(MusicOutpaintHeroMetrics.CoverSize)
-                    .offset(y = 4.dp)
-                    .background(Color.Black.copy(alpha = 0.32f), coverShape),
+                    .offset(y = 10.dp)
+                    .background(Color.Black.copy(alpha = 0.40f), coverShape),
             )
         }
         // Outer shell: layout + measure + elevation. clip=false so the soft
@@ -190,11 +170,11 @@ fun AlbumOutpaintHero(
                     },
                 )
                 .shadow(
-                    elevation = 52.dp,
+                    elevation = 28.dp,
                     shape = coverShape,
                     clip = false,
-                    ambientColor = Color.Black.copy(alpha = 0.70f),
-                    spotColor = Color.Black.copy(alpha = 0.90f),
+                    ambientColor = Color.Black.copy(alpha = 0.45f),
+                    spotColor = Color.Black.copy(alpha = 0.55f),
                 ),
         ) {
             // Inner frame: clip is a separate child layer so square bitmap /

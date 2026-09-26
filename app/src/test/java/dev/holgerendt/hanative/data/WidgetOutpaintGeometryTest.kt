@@ -40,5 +40,18 @@ class WidgetOutpaintGeometryTest {
         val radius = geo.coverWidth * WidgetOutpaintGeometry.COVER_CORNER_RADIUS_FRAC
         assertEquals(22f, radius, 0.01f)
         assertTrue(geo.coverY < radius)
+        // Outside-corner sample for TL still exists (left × top chrome).
+        assertTrue(geo.coverX > 0)
+        assertTrue(geo.coverY > 0)
+        // BR outside-corner sample exists (right × bottom chrome).
+        assertTrue(geo.pads.padRight > 0)
+        assertTrue(geo.pads.padBottom > 0)
+    }
+
+    @Test
+    fun heroCornerRadiusPxScalesWithMeasuredCoverWidth() {
+        // Density-independent: 392px cover (2× 196.dp) → 44px radius (2× 22.dp).
+        assertEquals(44f, 392f * WidgetOutpaintGeometry.COVER_CORNER_RADIUS_FRAC, 0.01f)
+        assertEquals(22f / 196f, WidgetOutpaintGeometry.COVER_CORNER_RADIUS_FRAC, 0.0001f)
     }
 }

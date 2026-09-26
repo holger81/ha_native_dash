@@ -2,6 +2,8 @@ package dev.holgerendt.hanative.ui
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BlurMaskFilter
+import android.os.Build
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.runtime.*
@@ -19,7 +21,10 @@ import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.IntOffset
@@ -102,16 +107,32 @@ internal fun ExactWidgetOutpaint(
                 // A layout change drops the old canvas instead of stretching it during a frame.
                 if (bitmap != null && bitmap.width == size.width.roundToInt() && bitmap.height == size.height.roundToInt()) {
                     val img = bitmap.asImageBitmap()
-                    // Pixel-exact: stamped cover aligns with AlbumOutpaintHero's framed box.
-                    drawImage(img)
                     val geo = geometry
                     if (geo != null) {
-                        // Over-punch slightly past the white frame so AA fringes cannot
-                        // leave square stamp ears outside the curve.
-                        val r = MusicOutpaintHeroMetrics.coverCornerRadiusPx(geo.coverWidth) + 1.5f
+                        // Never blit the square stamp: AlbumOutpaintHero draws the
+                        // rounded cover. Drawing stamp pixels lets 90° tips peek past
+                        // the white frame (and dark hair reads as square "ears").
+                        val coverRect = Rect(
+                            geo.coverX.toFloat(),
+                            geo.coverY.toFloat(),
+                            (geo.coverX + geo.coverWidth).toFloat(),
+                            (geo.coverY + geo.coverHeight).toFloat(),
+                        )
+                        val outsideStamp = Path().apply {
+                            fillType = PathFillType.EvenOdd
+                            addRect(Rect(Offset.Zero, size))
+                            addRect(coverRect)
+                        }
+                        clipPath(outsideStamp) {
+                            drawImage(img)
+                        }
+                        // Exact hero outer radius (white border sits on this curve).
+                        val r = MusicOutpaintHeroMetrics.coverCornerRadiusPx(geo.coverWidth)
                         if (r > 0.5f) {
                             paintExactWidgetCoverChrome(img, geo, r)
                         }
+                    } else {
+                        drawImage(img)
                     }
                     // Near-transparent wash under the hero — outpaint stays dominant;
                     // metadata readability comes from soft white text glow, not a solid band.
@@ -137,14 +158,12 @@ internal fun ExactWidgetOutpaint(
 }
 
 /**
- * Hide square stamp corners that peek past the rounded hero, then paint a
- * contact shadow *into* the pad so lift reads on busy Flux art (Material
- * elevation alone vanishes on identical stamp pixels).
+ * Fill square−round ear wedges with true outside-corner pad chrome, then paint a
+ * soft gradient contact shadow into the pad so lift reads on busy Flux art
+ * (Material elevation alone vanishes on identical stamp pixels).
  *
- * Solid single-pixel corner fills were worse than nothing: sampling dark hair
- * just outside the stamp and painting r×r blocks recreated triangular "ears".
- * Stretch pad edge strips into the wedges instead, then darken with a soft
- * round contact ring (no square silhouette).
+ * Edge-strip stretches sampled dark hair next to the stamp and recreated square
+ * ears; corner patches from the pad *outside* the cover match the visible backdrop.
  */
 internal fun DrawScope.paintExactWidgetCoverChrome(
     pad: ImageBitmap,
@@ -164,81 +183,224 @@ internal fun DrawScope.paintExactWidgetCoverChrome(
         addRoundRect(RoundRect(coverRect, corner))
     }
     val ri = radius.roundToInt().coerceAtLeast(1)
-    val padW = pad.width
-    val padH = pad.height
     clipPath(earPath) {
-        // Stretch true pad strips (outside the stamp) into the ear wedges so
-        // thin top/side chrome still covers square stamp corners.
-        if (geo.coverY > 0) {
-            val th = geo.coverY.coerceAtMost(ri).coerceAtLeast(1)
-            drawImage(
-                image = pad,
-                srcOffset = IntOffset(geo.coverX.coerceIn(0, padW - 1), 0),
-                srcSize = IntSize(geo.coverWidth.coerceAtMost(padW - geo.coverX), th),
-                dstOffset = IntOffset(geo.coverX, geo.coverY),
-                dstSize = IntSize(geo.coverWidth, ri),
-            )
-        }
-        if (geo.coverX > 0) {
-            val lw = geo.coverX.coerceAtMost(ri).coerceAtLeast(1)
-            drawImage(
-                image = pad,
-                srcOffset = IntOffset(0, geo.coverY.coerceIn(0, padH - 1)),
-                srcSize = IntSize(lw, geo.coverHeight.coerceAtMost(padH - geo.coverY)),
-                dstOffset = IntOffset(geo.coverX, geo.coverY),
-                dstSize = IntSize(ri, geo.coverHeight),
-            )
-        }
-        val rightPad = (padW - geo.coverX - geo.coverWidth).coerceAtLeast(0)
-        if (rightPad > 0) {
-            val rw = rightPad.coerceAtMost(ri).coerceAtLeast(1)
-            val srcX = (geo.coverX + geo.coverWidth).coerceIn(0, padW - 1)
-            drawImage(
-                image = pad,
-                srcOffset = IntOffset(srcX, geo.coverY.coerceIn(0, padH - 1)),
-                srcSize = IntSize(rw.coerceAtMost(padW - srcX), geo.coverHeight.coerceAtMost(padH - geo.coverY)),
-                dstOffset = IntOffset(geo.coverX + geo.coverWidth - ri, geo.coverY),
-                dstSize = IntSize(ri, geo.coverHeight),
-            )
-        }
-        val bottomPad = (padH - geo.coverY - geo.coverHeight).coerceAtLeast(0)
-        if (bottomPad > 0) {
-            val bh = bottomPad.coerceAtMost(ri).coerceAtLeast(1)
-            val srcY = (geo.coverY + geo.coverHeight).coerceIn(0, padH - 1)
-            drawImage(
-                image = pad,
-                srcOffset = IntOffset(geo.coverX.coerceIn(0, padW - 1), srcY),
-                srcSize = IntSize(geo.coverWidth.coerceAtMost(padW - geo.coverX), bh.coerceAtMost(padH - srcY)),
-                dstOffset = IntOffset(geo.coverX, geo.coverY + geo.coverHeight - ri),
-                dstSize = IntSize(geo.coverWidth, ri),
-            )
-        }
+        fillCoverCornerEarsFromPad(pad, geo, ri)
     }
 
-    // Soft dark ring only outside the rounded cover — round silhouette so the
-    // ear wedges never read as a 90° stamp corner, and lift stays visible on
-    // busy / identical Flux pixels where Material elevation disappears.
+    // Soft dark falloff only outside the rounded cover — round silhouette, no
+    // stepped filled rings (those read as concentric contour bands on device).
     val outsideHero = Path().apply {
         fillType = PathFillType.EvenOdd
         addRect(Rect(Offset.Zero, size))
         addRoundRect(RoundRect(coverRect, corner))
     }
     clipPath(outsideHero) {
-        val layers = listOf(
-            2f to 0.48f,
-            5f to 0.34f,
-            11f to 0.22f,
-            22f to 0.12f,
-            38f to 0.06f,
+        paintSoftContactShadow(x0, y0, x1, y1, radius)
+    }
+}
+
+/**
+ * Four corner wedges only (square − roundrect). Sample the pad block diagonally
+ * outside each corner so Flux/hair at the stamp rim never paints the ear.
+ */
+private fun DrawScope.fillCoverCornerEarsFromPad(
+    pad: ImageBitmap,
+    geo: WidgetOutpaintGeometry,
+    ri: Int,
+) {
+    val padW = pad.width
+    val padH = pad.height
+    val cx = geo.coverX
+    val cy = geo.coverY
+    val cw = geo.coverWidth
+    val ch = geo.coverHeight
+    val rightPad = (padW - cx - cw).coerceAtLeast(0)
+    val bottomPad = (padH - cy - ch).coerceAtLeast(0)
+
+    // TL — northwest of cover.
+    if (cx > 0 && cy > 0) {
+        val srcW = cx.coerceAtMost(ri).coerceAtLeast(1)
+        val srcH = cy.coerceAtMost(ri).coerceAtLeast(1)
+        drawImage(
+            image = pad,
+            srcOffset = IntOffset(cx - srcW, cy - srcH),
+            srcSize = IntSize(srcW, srcH),
+            dstOffset = IntOffset(cx, cy),
+            dstSize = IntSize(ri, ri),
         )
-        for ((expand, alpha) in layers) {
-            val drop = expand * 0.55f
-            drawRoundRect(
-                color = Color.Black.copy(alpha = alpha),
-                topLeft = Offset(x0 - expand, y0 - expand + drop),
-                size = Size(x1 - x0 + 2f * expand, y1 - y0 + 2f * expand),
-                cornerRadius = CornerRadius(radius + expand, radius + expand),
+    } else if (cy > 0) {
+        val srcH = cy.coerceAtMost(ri).coerceAtLeast(1)
+        drawImage(
+            image = pad,
+            srcOffset = IntOffset(cx.coerceIn(0, padW - 1), 0),
+            srcSize = IntSize(cw.coerceAtMost(padW - cx).coerceAtLeast(1), srcH),
+            dstOffset = IntOffset(cx, cy),
+            dstSize = IntSize(ri.coerceAtMost(cw), ri),
+        )
+    } else if (cx > 0) {
+        val srcW = cx.coerceAtMost(ri).coerceAtLeast(1)
+        drawImage(
+            image = pad,
+            srcOffset = IntOffset(0, cy.coerceIn(0, padH - 1)),
+            srcSize = IntSize(srcW, ch.coerceAtMost(padH - cy).coerceAtLeast(1)),
+            dstOffset = IntOffset(cx, cy),
+            dstSize = IntSize(ri, ri.coerceAtMost(ch)),
+        )
+    }
+
+    // TR — northeast of cover.
+    if (rightPad > 0 && cy > 0) {
+        val srcW = rightPad.coerceAtMost(ri).coerceAtLeast(1)
+        val srcH = cy.coerceAtMost(ri).coerceAtLeast(1)
+        drawImage(
+            image = pad,
+            srcOffset = IntOffset(cx + cw, cy - srcH),
+            srcSize = IntSize(srcW.coerceAtMost(padW - cx - cw), srcH),
+            dstOffset = IntOffset(cx + cw - ri, cy),
+            dstSize = IntSize(ri, ri),
+        )
+    } else if (cy > 0) {
+        val srcH = cy.coerceAtMost(ri).coerceAtLeast(1)
+        drawImage(
+            image = pad,
+            srcOffset = IntOffset(cx.coerceIn(0, padW - 1), 0),
+            srcSize = IntSize(cw.coerceAtMost(padW - cx).coerceAtLeast(1), srcH),
+            dstOffset = IntOffset(cx + cw - ri, cy),
+            dstSize = IntSize(ri.coerceAtMost(cw), ri),
+        )
+    } else if (rightPad > 0) {
+        val srcW = rightPad.coerceAtMost(ri).coerceAtLeast(1)
+        drawImage(
+            image = pad,
+            srcOffset = IntOffset(cx + cw, cy.coerceIn(0, padH - 1)),
+            srcSize = IntSize(srcW.coerceAtMost(padW - cx - cw), ch.coerceAtMost(padH - cy).coerceAtLeast(1)),
+            dstOffset = IntOffset(cx + cw - ri, cy),
+            dstSize = IntSize(ri, ri.coerceAtMost(ch)),
+        )
+    }
+
+    // BL — southwest of cover.
+    if (cx > 0 && bottomPad > 0) {
+        val srcW = cx.coerceAtMost(ri).coerceAtLeast(1)
+        val srcH = bottomPad.coerceAtMost(ri).coerceAtLeast(1)
+        drawImage(
+            image = pad,
+            srcOffset = IntOffset(cx - srcW, cy + ch),
+            srcSize = IntSize(srcW, srcH.coerceAtMost(padH - cy - ch)),
+            dstOffset = IntOffset(cx, cy + ch - ri),
+            dstSize = IntSize(ri, ri),
+        )
+    } else if (bottomPad > 0) {
+        val srcH = bottomPad.coerceAtMost(ri).coerceAtLeast(1)
+        drawImage(
+            image = pad,
+            srcOffset = IntOffset(cx.coerceIn(0, padW - 1), cy + ch),
+            srcSize = IntSize(cw.coerceAtMost(padW - cx).coerceAtLeast(1), srcH.coerceAtMost(padH - cy - ch)),
+            dstOffset = IntOffset(cx, cy + ch - ri),
+            dstSize = IntSize(ri.coerceAtMost(cw), ri),
+        )
+    } else if (cx > 0) {
+        val srcW = cx.coerceAtMost(ri).coerceAtLeast(1)
+        drawImage(
+            image = pad,
+            srcOffset = IntOffset(0, cy.coerceIn(0, padH - 1)),
+            srcSize = IntSize(srcW, ch.coerceAtMost(padH - cy).coerceAtLeast(1)),
+            dstOffset = IntOffset(cx, cy + ch - ri),
+            dstSize = IntSize(ri, ri.coerceAtMost(ch)),
+        )
+    }
+
+    // BR — southeast of cover.
+    if (rightPad > 0 && bottomPad > 0) {
+        val srcW = rightPad.coerceAtMost(ri).coerceAtLeast(1)
+        val srcH = bottomPad.coerceAtMost(ri).coerceAtLeast(1)
+        drawImage(
+            image = pad,
+            srcOffset = IntOffset(cx + cw, cy + ch),
+            srcSize = IntSize(
+                srcW.coerceAtMost(padW - cx - cw),
+                srcH.coerceAtMost(padH - cy - ch),
+            ),
+            dstOffset = IntOffset(cx + cw - ri, cy + ch - ri),
+            dstSize = IntSize(ri, ri),
+        )
+    } else if (bottomPad > 0) {
+        val srcH = bottomPad.coerceAtMost(ri).coerceAtLeast(1)
+        drawImage(
+            image = pad,
+            srcOffset = IntOffset(cx.coerceIn(0, padW - 1), cy + ch),
+            srcSize = IntSize(cw.coerceAtMost(padW - cx).coerceAtLeast(1), srcH.coerceAtMost(padH - cy - ch)),
+            dstOffset = IntOffset(cx + cw - ri, cy + ch - ri),
+            dstSize = IntSize(ri.coerceAtMost(cw), ri),
+        )
+    } else if (rightPad > 0) {
+        val srcW = rightPad.coerceAtMost(ri).coerceAtLeast(1)
+        drawImage(
+            image = pad,
+            srcOffset = IntOffset(cx + cw, cy.coerceIn(0, padH - 1)),
+            srcSize = IntSize(srcW.coerceAtMost(padW - cx - cw), ch.coerceAtMost(padH - cy).coerceAtLeast(1)),
+            dstOffset = IntOffset(cx + cw - ri, cy + ch - ri),
+            dstSize = IntSize(ri, ri.coerceAtMost(ch)),
+        )
+    }
+}
+
+/**
+ * Smooth float shadow: BlurMaskFilter penumbra on API 28+ (HW blur supported),
+ * dense stroked rings with quadratic alpha falloff on older devices.
+ */
+private fun DrawScope.paintSoftContactShadow(
+    x0: Float,
+    y0: Float,
+    x1: Float,
+    y1: Float,
+    radius: Float,
+) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        drawIntoCanvas { canvas ->
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+            // Wide soft penumbra — no hard outer contour.
+            paint.color = android.graphics.Color.argb(88, 0, 0, 0)
+            paint.maskFilter = BlurMaskFilter(26f, BlurMaskFilter.Blur.NORMAL)
+            canvas.nativeCanvas.drawRoundRect(
+                x0 - 3f,
+                y0 - 3f + 10f,
+                x1 + 3f,
+                y1 + 3f + 10f,
+                radius + 3f,
+                radius + 3f,
+                paint,
+            )
+            // Tighter umbra near the frame for readable lift on busy Flux.
+            paint.color = android.graphics.Color.argb(64, 0, 0, 0)
+            paint.maskFilter = BlurMaskFilter(9f, BlurMaskFilter.Blur.NORMAL)
+            canvas.nativeCanvas.drawRoundRect(
+                x0 - 0.5f,
+                y0 - 0.5f + 3f,
+                x1 + 0.5f,
+                y1 + 0.5f + 3f,
+                radius + 0.5f,
+                radius + 0.5f,
+                paint,
             )
         }
+        return
+    }
+    val maxExpand = 36f
+    val steps = 36
+    val peakAlpha = 0.38f
+    val stroke = (maxExpand / steps) * 1.45f
+    for (i in 1..steps) {
+        val t = i / steps.toFloat()
+        val expand = maxExpand * t
+        val alpha = peakAlpha * (1f - t) * (1f - t)
+        val drop = expand * 0.45f
+        drawRoundRect(
+            color = Color.Black.copy(alpha = alpha),
+            topLeft = Offset(x0 - expand, y0 - expand + drop),
+            size = Size(x1 - x0 + 2f * expand, y1 - y0 + 2f * expand),
+            cornerRadius = CornerRadius(radius + expand, radius + expand),
+            style = Stroke(width = stroke),
+        )
     }
 }

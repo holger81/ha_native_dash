@@ -89,10 +89,10 @@ data class WidgetOutpaintGeometry(
     }
 
     /**
-     * Overwrite the four square-minus-roundrect wedges by stretching pad strips
-     * from outside the cover stamp (reads [source], writes via [canvas]).
-     * Corner-block blits are unsafe when top/side chrome is thinner than the
-     * radius — they pull stamp hair back into the ear.
+     * Overwrite the four square-minus-roundrect wedges using pad blocks taken
+     * diagonally *outside* each cover corner (reads [source], writes via [canvas]).
+     * Edge-strip stretches sampled dark stamp-adjacent hair and recreated square
+     * ears; outside-corner patches match the visible outpaint chrome.
      */
     internal fun punchCoverCornerEars(canvas: Canvas, source: Bitmap, radius: Float) {
         val ri = radius.roundToInt().coerceAtLeast(1)
@@ -108,45 +108,125 @@ data class WidgetOutpaintGeometry(
             addRoundRect(coverRect, radius, radius, Path.Direction.CW)
         }
         val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+        val rightPad = (source.width - coverX - coverWidth).coerceAtLeast(0)
+        val bottomPad = (source.height - coverY - coverHeight).coerceAtLeast(0)
         canvas.save()
         canvas.clipPath(earPath)
-        if (coverY > 0) {
-            val th = coverY.coerceAtMost(ri).coerceAtLeast(1)
+        // TL
+        if (coverX > 0 && coverY > 0) {
+            val sw = coverX.coerceAtMost(ri).coerceAtLeast(1)
+            val sh = coverY.coerceAtMost(ri).coerceAtLeast(1)
             canvas.drawBitmap(
                 source,
-                Rect(coverX, 0, coverX + coverWidth, th),
-                Rect(coverX, coverY, coverX + coverWidth, coverY + ri),
+                Rect(coverX - sw, coverY - sh, coverX, coverY),
+                Rect(coverX, coverY, coverX + ri, coverY + ri),
+                paint,
+            )
+        } else if (coverY > 0) {
+            val sh = coverY.coerceAtMost(ri).coerceAtLeast(1)
+            canvas.drawBitmap(
+                source,
+                Rect(coverX, 0, coverX + coverWidth, sh),
+                Rect(coverX, coverY, coverX + ri.coerceAtMost(coverWidth), coverY + ri),
+                paint,
+            )
+        } else if (coverX > 0) {
+            val sw = coverX.coerceAtMost(ri).coerceAtLeast(1)
+            canvas.drawBitmap(
+                source,
+                Rect(0, coverY, sw, coverY + coverHeight),
+                Rect(coverX, coverY, coverX + ri, coverY + ri.coerceAtMost(coverHeight)),
                 paint,
             )
         }
-        if (coverX > 0) {
-            val lw = coverX.coerceAtMost(ri).coerceAtLeast(1)
+        // TR
+        if (rightPad > 0 && coverY > 0) {
+            val sw = rightPad.coerceAtMost(ri).coerceAtLeast(1)
+            val sh = coverY.coerceAtMost(ri).coerceAtLeast(1)
             canvas.drawBitmap(
                 source,
-                Rect(0, coverY, lw, coverY + coverHeight),
-                Rect(coverX, coverY, coverX + ri, coverY + coverHeight),
+                Rect(coverX + coverWidth, coverY - sh, coverX + coverWidth + sw, coverY),
+                Rect(coverX + coverWidth - ri, coverY, coverX + coverWidth, coverY + ri),
+                paint,
+            )
+        } else if (coverY > 0) {
+            val sh = coverY.coerceAtMost(ri).coerceAtLeast(1)
+            canvas.drawBitmap(
+                source,
+                Rect(coverX, 0, coverX + coverWidth, sh),
+                Rect(coverX + coverWidth - ri, coverY, coverX + coverWidth, coverY + ri),
+                paint,
+            )
+        } else if (rightPad > 0) {
+            val sw = rightPad.coerceAtMost(ri).coerceAtLeast(1)
+            canvas.drawBitmap(
+                source,
+                Rect(coverX + coverWidth, coverY, coverX + coverWidth + sw, coverY + coverHeight),
+                Rect(coverX + coverWidth - ri, coverY, coverX + coverWidth, coverY + ri.coerceAtMost(coverHeight)),
                 paint,
             )
         }
-        val rightPad = (source.width - coverX - coverWidth).coerceAtLeast(0)
-        if (rightPad > 0) {
-            val rw = rightPad.coerceAtMost(ri).coerceAtLeast(1)
-            val srcX = coverX + coverWidth
+        // BL
+        if (coverX > 0 && bottomPad > 0) {
+            val sw = coverX.coerceAtMost(ri).coerceAtLeast(1)
+            val sh = bottomPad.coerceAtMost(ri).coerceAtLeast(1)
             canvas.drawBitmap(
                 source,
-                Rect(srcX, coverY, srcX + rw, coverY + coverHeight),
-                Rect(coverX + coverWidth - ri, coverY, coverX + coverWidth, coverY + coverHeight),
+                Rect(coverX - sw, coverY + coverHeight, coverX, coverY + coverHeight + sh),
+                Rect(coverX, coverY + coverHeight - ri, coverX + ri, coverY + coverHeight),
+                paint,
+            )
+        } else if (bottomPad > 0) {
+            val sh = bottomPad.coerceAtMost(ri).coerceAtLeast(1)
+            canvas.drawBitmap(
+                source,
+                Rect(coverX, coverY + coverHeight, coverX + coverWidth, coverY + coverHeight + sh),
+                Rect(coverX, coverY + coverHeight - ri, coverX + ri.coerceAtMost(coverWidth), coverY + coverHeight),
+                paint,
+            )
+        } else if (coverX > 0) {
+            val sw = coverX.coerceAtMost(ri).coerceAtLeast(1)
+            canvas.drawBitmap(
+                source,
+                Rect(0, coverY, sw, coverY + coverHeight),
+                Rect(coverX, coverY + coverHeight - ri, coverX + ri, coverY + coverHeight),
                 paint,
             )
         }
-        val bottomPad = (source.height - coverY - coverHeight).coerceAtLeast(0)
-        if (bottomPad > 0) {
-            val bh = bottomPad.coerceAtMost(ri).coerceAtLeast(1)
-            val srcY = coverY + coverHeight
+        // BR
+        if (rightPad > 0 && bottomPad > 0) {
+            val sw = rightPad.coerceAtMost(ri).coerceAtLeast(1)
+            val sh = bottomPad.coerceAtMost(ri).coerceAtLeast(1)
             canvas.drawBitmap(
                 source,
-                Rect(coverX, srcY, coverX + coverWidth, srcY + bh),
-                Rect(coverX, coverY + coverHeight - ri, coverX + coverWidth, coverY + coverHeight),
+                Rect(
+                    coverX + coverWidth,
+                    coverY + coverHeight,
+                    coverX + coverWidth + sw,
+                    coverY + coverHeight + sh,
+                ),
+                Rect(
+                    coverX + coverWidth - ri,
+                    coverY + coverHeight - ri,
+                    coverX + coverWidth,
+                    coverY + coverHeight,
+                ),
+                paint,
+            )
+        } else if (bottomPad > 0) {
+            val sh = bottomPad.coerceAtMost(ri).coerceAtLeast(1)
+            canvas.drawBitmap(
+                source,
+                Rect(coverX, coverY + coverHeight, coverX + coverWidth, coverY + coverHeight + sh),
+                Rect(coverX + coverWidth - ri, coverY + coverHeight - ri, coverX + coverWidth, coverY + coverHeight),
+                paint,
+            )
+        } else if (rightPad > 0) {
+            val sw = rightPad.coerceAtMost(ri).coerceAtLeast(1)
+            canvas.drawBitmap(
+                source,
+                Rect(coverX + coverWidth, coverY, coverX + coverWidth + sw, coverY + coverHeight),
+                Rect(coverX + coverWidth - ri, coverY + coverHeight - ri, coverX + coverWidth, coverY + coverHeight),
                 paint,
             )
         }
