@@ -509,10 +509,18 @@ class HaViewModel(
                 capture.injectSwipe(x0, y0, x1, y1, durationMs)
             },
             kioskStateProvider = {
+                val state = client.connection.value
                 KioskSnapshot(
                     popup = _ui.value.popupHash,
-                    connected = client.connection.value is ConnectionState.Connected,
+                    connected = state is ConnectionState.Connected,
                     screenAsleep = _ui.value.screenAsleep,
+                    connectionLabel = when (state) {
+                        is ConnectionState.Connected -> "Connected"
+                        is ConnectionState.Connecting -> "Connecting"
+                        is ConnectionState.Error -> state.message
+                        is ConnectionState.Disconnected -> "Disconnected"
+                    },
+                    hasToken = credentials.token.isNotBlank(),
                 )
             },
             panelName = PanelConfig.DISPLAY_NAME,

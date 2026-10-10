@@ -320,10 +320,23 @@ class ManagementServer(
 
     private fun handleGetCrash(session: IHTTPSession): Response {
         val crash = CrashLogger.latestCrash
+        val (versionCode, versionName) = appVersionProvider()
+        val snap = kioskStateProvider()
+        val url = savedUrlProvider().trim()
+        // Unauthenticated diagnostic snapshot (no token/PIN): enough to see if the panel is
+        // on the expected APK and whether HA is connected without logging into admin.
         val json = JSONObject()
             .put("ok", true)
             .put("hasCrash", crash != null)
             .put("crash", crash ?: "")
+            .put("versionCode", versionCode)
+            .put("versionName", versionName)
+            .put("connected", snap.connected)
+            .put("connection", snap.connectionLabel)
+            .put("haUrl", url)
+            .put("haUrlConfigured", url.isNotBlank())
+            .put("hasToken", snap.hasToken)
+            .put("panel", KioskCommands.PANEL_ID)
         return json(session, Response.Status.OK, json.toString(2))
     }
 
@@ -931,4 +944,7 @@ data class KioskSnapshot(
     val popup: String?,
     val connected: Boolean,
     val screenAsleep: Boolean,
+    /** Short connection status for admin diagnostics (Connected / Connecting / error text). */
+    val connectionLabel: String = if (connected) "Connected" else "Disconnected",
+    val hasToken: Boolean = false,
 )
