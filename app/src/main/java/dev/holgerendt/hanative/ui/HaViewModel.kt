@@ -454,10 +454,9 @@ class HaViewModel(
             credentials.adoptOrCreatePin { newPin() }
             syncPinToUi()
             if (!credentials.isConfigured) return@launch
-            val state = connection.value
             val shouldConnect = _ui.value.showSetup ||
                 !wasConfigured ||
-                (state !is ConnectionState.Connected && state !is ConnectionState.Connecting)
+                client.needsReconnect()
             if (shouldConnect) connect(credentials.baseUrl, credentials.token)
         }
     }
@@ -596,8 +595,15 @@ class HaViewModel(
             credentials.adoptOrCreatePin { newPin() }
         }
         syncPinToUi()
-        client.connect(trimmedUrl, trimmedToken)
+        // Start the loop before connect so a thrown handshake failure cannot leave us without retries.
         ensureReconnectLoop()
+        try {
+            client.connect(trimmedUrl, trimmedToken)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // retry on next reconnect tick
+        }
         if (result.isFailure) {
             val message = result.exceptionOrNull()?.message ?: "Connection failed"
             _ui.value = _ui.value.copy(
@@ -626,21 +632,19 @@ class HaViewModel(
         reconnectJob = viewModelScope.launch {
             while (true) {
                 delay(4000)
-                val state = client.connection.value
-                if (state is ConnectionState.Disconnected || state is ConnectionState.Error) {
-                    val url = credentials.baseUrl
-                    val token = credentials.token
-                    if (url.isBlank() || token.isBlank()) continue
-                    // A DNS miss while the VLAN was still coming up must not keep the HA host
-                    // pinned as "not private" and fail the guard instead of the network.
-                    NetworkGuard.clearCache()
-                    try {
-                        client.connect(url, token)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (_: Exception) {
-                        // retry on next tick
-                    }
+                if (!client.needsReconnect()) continue
+                val url = credentials.baseUrl
+                val token = credentials.token
+                if (url.isBlank() || token.isBlank()) continue
+                // A DNS miss while the VLAN was still coming up must not keep the HA host
+                // pinned as "not private" and fail the guard instead of the network.
+                NetworkGuard.clearCache()
+                try {
+                    client.connect(url, token)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // retry on next tick
                 }
             }
         }

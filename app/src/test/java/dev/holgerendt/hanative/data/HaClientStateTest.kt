@@ -97,6 +97,62 @@ class HaClientStateTest {
         assertEquals(error, client.connection.value)
     }
 
+    @Test fun closeWhileConnectingLeavesDisconnectedAndNeedsReconnect() {
+        val socket = FakeSocket()
+        installSocket(socket, ConnectionState.Connecting)
+        assertFalse(client.needsReconnect(nowMs = System.currentTimeMillis(), connectingTimeoutMs = 20_000L))
+        client.markSocketClosed(socket, code = 1006, reason = "abnormal")
+        assertEquals(ConnectionState.Disconnected, client.connection.value)
+        assertTrue(client.needsReconnect())
+    }
+
+    @Test fun staleConnectingNeedsReconnectEvenWithLiveSocket() {
+        val socket = FakeSocket()
+        installSocket(socket, ConnectionState.Connecting)
+        val started = HaClient::class.java.getDeclaredField("connectingSinceMs").apply {
+            isAccessible = true
+        }.getLong(client)
+        assertFalse(client.needsReconnect(nowMs = started + 1_000L, connectingTimeoutMs = 20_000L))
+        assertTrue(client.needsReconnect(nowMs = started + 21_000L, connectingTimeoutMs = 20_000L))
+    }
+
+    @Test fun closeWhileConnectedLeavesDisconnected() {
+        val socket = FakeSocket()
+        installSocket(socket, ConnectionState.Connected)
+        client.markSocketClosed(socket)
+        assertEquals(ConnectionState.Disconnected, client.connection.value)
+        assertTrue(client.needsReconnect())
+    }
+
+    @Test fun socketFailureDrainsForecastWaitersWithoutThrowingTwice() {
+        val socket = FakeSocket()
+        installSocket(socket, ConnectionState.Connected)
+        @Suppress("UNCHECKED_CAST")
+        val map = HaClient::class.java.getDeclaredField("forecastSubscriptions").apply {
+            isAccessible = true
+        }.get(client) as java.util.concurrent.ConcurrentHashMap<Int, (List<*>) -> Unit>
+        var calls = 0
+        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+        map[7] = {
+            // Mimic forecastViaSubscribe's one-shot resume; a second invoke must be a no-op.
+            if (settled.compareAndSet(false, true)) calls++
+            else throw IllegalStateException("Already resumed")
+        }
+        client.markSocketClosed(socket)
+        // A second drain (stale close / failure race) must not crash the OkHttp thread.
+        client.markSocketClosed(socket)
+        assertEquals(1, calls)
+        assertTrue(map.isEmpty())
+    }
+
+    private fun installSocket(socket: WebSocket, state: ConnectionState) {
+        HaClient::class.java.getDeclaredField("webSocket").apply { isAccessible = true }.set(client, socket)
+        HaClient::class.java.getDeclaredMethod("setConnection", ConnectionState::class.java).apply {
+            isAccessible = true
+            invoke(client, state)
+        }
+    }
+
     private class FakeSocket : WebSocket {
         var cancelled = false
         override fun request() = Request.Builder().url("http://127.0.0.1").build()

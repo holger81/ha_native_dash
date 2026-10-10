@@ -48,6 +48,7 @@ import java.time.ZonedDateTime
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -175,6 +176,8 @@ class HaClient {
         private const val MASS_COMMAND_MAX_ATTEMPTS = 3
         private const val MASS_COMMAND_RETRY_BASE_MS = 400L
         private const val COMMAND_TIMEOUT_MS = 30_000L
+        /** Handshake / auth must finish within this window or the reconnect loop tears it down. */
+        const val CONNECTING_TIMEOUT_MS = 20_000L
         // Full-resolution stills; keep the map small and let posters refresh instead of
         // pinning every camera ever viewed to its first frame for the process lifetime.
         private const val SNAPSHOT_TTL_MS = 30_000L
@@ -203,6 +206,8 @@ class HaClient {
 
     private val _connection = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val connection: StateFlow<ConnectionState> = _connection
+    /** Wall-clock ms when we entered [ConnectionState.Connecting]; 0 when not connecting. */
+    @Volatile private var connectingSinceMs: Long = 0L
     private val deviceNameCache = ConcurrentHashMap<String, String?>()
     private class SnapshotEntry(val bytes: ByteArray, val expiresAtMs: Long)
     private val snapshotCache = ConcurrentHashMap<String, SnapshotEntry>()
@@ -249,10 +254,10 @@ class HaClient {
             host != null && NetworkGuard.isPrivateHost(host)
         }
         if (!allowed) {
-            _connection.value = ConnectionState.Error(NetworkGuard.hostRejectionReason(host))
+            setConnection(ConnectionState.Error(NetworkGuard.hostRejectionReason(host)))
             return
         }
-        _connection.value = ConnectionState.Connecting
+        setConnection(ConnectionState.Connecting)
         openSocket()
     }
 
@@ -271,7 +276,34 @@ class HaClient {
         while (true) {
             if (!messageChannel.tryReceive().isSuccess) break
         }
-        _connection.value = ConnectionState.Disconnected
+        setConnection(ConnectionState.Disconnected)
+    }
+
+    /**
+     * True when the ViewModel should open a new socket: idle/error, a closed socket left in
+     * Connecting, or a handshake that never reached auth_ok.
+     */
+    fun needsReconnect(
+        nowMs: Long = System.currentTimeMillis(),
+        connectingTimeoutMs: Long = CONNECTING_TIMEOUT_MS,
+    ): Boolean = synchronized(messageLock) {
+        when (val state = _connection.value) {
+            is ConnectionState.Disconnected, is ConnectionState.Error -> true
+            is ConnectionState.Connecting -> {
+                webSocket == null ||
+                    connectingSinceMs == 0L ||
+                    nowMs - connectingSinceMs >= connectingTimeoutMs
+            }
+            is ConnectionState.Connected -> false
+        }
+    }
+
+    private fun setConnection(state: ConnectionState) {
+        _connection.value = state
+        connectingSinceMs = when (state) {
+            is ConnectionState.Connecting -> System.currentTimeMillis()
+            else -> 0L
+        }
     }
 
     /** Terminal teardown: after this the client cannot reconnect. */
@@ -281,10 +313,14 @@ class HaClient {
     }
 
     private fun drainPending(error: Throwable) {
-        pending.values.forEach { it(Result.failure(error)) }
+        // Snapshot + clear first so a concurrent event callback cannot double-invoke the same waiter.
+        // Callbacks must never throw out of OkHttp's thread (that killed the wall process on WS drop).
+        val pendingCallbacks = pending.values.toList()
         pending.clear()
-        forecastSubscriptions.values.forEach { it(emptyList()) }
+        val forecastCallbacks = forecastSubscriptions.values.toList()
         forecastSubscriptions.clear()
+        pendingCallbacks.forEach { cb -> runCatching { cb(Result.failure(error)) } }
+        forecastCallbacks.forEach { cb -> runCatching { cb(emptyList()) } }
     }
 
     private fun openSocket(): Unit = synchronized(messageLock) {
@@ -301,27 +337,38 @@ class HaClient {
                 if (this@HaClient.webSocket !== webSocket) return
                 this@HaClient.webSocket = null
                 drainPending(t)
-                _connection.value = ConnectionState.Error(t.message ?: "WebSocket failed")
+                setConnection(ConnectionState.Error(t.message ?: "WebSocket failed"))
             }
 
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String): Unit = synchronized(messageLock) {
-                if (this@HaClient.webSocket !== webSocket) return
-                this@HaClient.webSocket = null
-                drainPending(IllegalStateException("Connection closed ($code: $reason)"))
-                if (_connection.value is ConnectionState.Connected) {
-                    _connection.value = ConnectionState.Disconnected
-                }
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                // Closing before auth_ok used to leave Connecting forever; the reconnect loop
+                // only retries Disconnected/Error, so the UI stayed on "Connecting…".
+                markSocketClosed(webSocket, code, reason)
             }
         })
         ensureMessageCollector()
     }
+
+    /** Package-visible for tests: active-socket close while Connected or still Connecting. */
+    internal fun markSocketClosed(socket: WebSocket, code: Int = 1000, reason: String = "closed"): Unit =
+        synchronized(messageLock) {
+            if (webSocket !== socket) return
+            webSocket = null
+            drainPending(IllegalStateException("Connection closed ($code: $reason)"))
+            when (_connection.value) {
+                is ConnectionState.Connected, is ConnectionState.Connecting -> {
+                    setConnection(ConnectionState.Disconnected)
+                }
+                else -> Unit
+            }
+        }
 
     internal fun enqueueMessage(socket: WebSocket, text: String): Unit = synchronized(messageLock) {
         if (socket !== webSocket) return
         if (messageChannel.trySend(socket to text).isFailure) {
             disconnect()
             socket.cancel()
-            _connection.value = ConnectionState.Error("WebSocket backlog exceeded; reconnecting")
+            setConnection(ConnectionState.Error("WebSocket backlog exceeded; reconnecting"))
         }
     }
 
@@ -349,7 +396,7 @@ class HaClient {
                 })
             }
             "auth_ok" -> {
-                _connection.value = ConnectionState.Connected
+                setConnection(ConnectionState.Connected)
                 send(buildJsonObject {
                     put("id", nextId.getAndIncrement())
                     put("type", "subscribe_events")
@@ -376,7 +423,7 @@ class HaClient {
                 webSocket?.close(4001, "auth_invalid")
                 webSocket = null
                 drainPending(IllegalStateException("Invalid access token"))
-                _connection.value = ConnectionState.Error("Invalid access token")
+                setConnection(ConnectionState.Error("Invalid access token"))
             }
             "result" -> {
                 val id = obj["id"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: return
@@ -384,19 +431,21 @@ class HaClient {
                 val forecastCallback = forecastSubscriptions[id]
                 if (forecastCallback != null) {
                     if (!success) {
-                        forecastSubscriptions.remove(id)
-                        forecastCallback(emptyList())
+                        forecastSubscriptions.remove(id)?.let { cb ->
+                            runCatching { cb(emptyList()) }
+                        }
                     }
+                    // success: wait for the forecast event (same subscription id)
                     return
                 }
                 val callback = pending.remove(id)
                 if (callback != null) {
                     if (success) {
-                        callback(Result.success(obj["result"] ?: JsonNull))
+                        runCatching { callback(Result.success(obj["result"] ?: JsonNull)) }
                     } else {
                         val message = obj["error"]?.jsonObject?.get("message")
                             ?.jsonPrimitive?.contentOrNull ?: "Command failed"
-                        callback(Result.failure(IllegalStateException(message)))
+                        runCatching { callback(Result.failure(IllegalStateException(message))) }
                     }
                 } else if (id == initialStatesRequestId) {
                     initialStatesRequestId = null
@@ -409,7 +458,7 @@ class HaClient {
                 if (forecastCallback != null) {
                     val event = obj["event"]?.jsonObject
                     val forecast = (event?.get("forecast") as? JsonArray)?.mapNotNull { it as? JsonObject } ?: emptyList()
-                    forecastCallback(forecast)
+                    runCatching { forecastCallback(forecast) }
                     unsubscribe(subscriptionId)
                     return
                 }
@@ -517,21 +566,27 @@ class HaClient {
         val id = nextId.getAndIncrement()
         val result = withTimeoutOrNull(COMMAND_TIMEOUT_MS) {
             suspendCancellableCoroutine<JsonElement> { cont ->
-                pending[id] = { r ->
+                val settled = AtomicBoolean(false)
+                fun settle(r: Result<JsonElement>) {
+                    if (!settled.compareAndSet(false, true)) return
+                    pending.remove(id)
                     r.fold(
                         onSuccess = { cont.resume(it) },
                         onFailure = { cont.resumeWithException(it) },
                     )
                 }
+                pending[id] = { settle(it) }
                 val payload = buildJsonObject {
                     put("id", id)
                     builder(id)
                 }
                 if (webSocket?.send(payload.toString()) != true) {
-                    pending.remove(id)
-                    cont.resumeWithException(IllegalStateException("Not connected"))
+                    settle(Result.failure(IllegalStateException("Not connected")))
                 }
-                cont.invokeOnCancellation { pending.remove(id) }
+                cont.invokeOnCancellation {
+                    settled.set(true)
+                    pending.remove(id)
+                }
             }
         }
         return result ?: throw IllegalStateException("Command timed out after ${COMMAND_TIMEOUT_MS}ms")
@@ -1816,10 +1871,18 @@ class HaClient {
         if (webSocket == null) return emptyList()
         val id = nextId.getAndIncrement()
         return suspendCancellableCoroutine { cont ->
-            forecastSubscriptions[id] = { forecast ->
+            // One-shot: forecast event and drainPending/onFailure can race on the same waiter.
+            val settled = AtomicBoolean(false)
+            fun settle(forecast: List<JsonObject>) {
+                if (!settled.compareAndSet(false, true)) return
+                forecastSubscriptions.remove(id)
                 cont.resume(forecast)
             }
-            cont.invokeOnCancellation { forecastSubscriptions.remove(id) }
+            forecastSubscriptions[id] = { settle(it) }
+            cont.invokeOnCancellation {
+                settled.set(true)
+                forecastSubscriptions.remove(id)
+            }
             val sent = webSocket?.send(
                 buildJsonObject {
                     put("id", id)
@@ -1828,10 +1891,7 @@ class HaClient {
                     put("forecast_type", forecastType)
                 }.toString(),
             ) == true
-            if (!sent) {
-                forecastSubscriptions.remove(id)
-                cont.resume(emptyList())
-            }
+            if (!sent) settle(emptyList())
         }
     }
 
