@@ -76,6 +76,23 @@ object NetworkGuard {
         chain.proceed(chain.request())
     }
 
+    /**
+     * OkHttp-facing DNS for LAN-only clients: only ever hands out addresses that
+     * passed the private check. The interceptor validates hostnames, so without
+     * this a rebinding DNS record could pass the check and then have the socket
+     * connect to a freshly-rotated public IP; pinning resolution here closes
+     * that window for both HTTP and WebSocket.
+     */
+    val dns: Dns = object : Dns {
+        override fun lookup(hostname: String): List<InetAddress> {
+            val addresses = resolveAddresses(hostname.normalizeHost()).filter(::isPrivateInetAddress)
+            if (addresses.isEmpty()) {
+                throw IOException("Blocked: host '$hostname' has no private network address")
+            }
+            return addresses
+        }
+    }
+
     suspend fun hostRejectionReason(host: String?): String = withContext(Dispatchers.IO) {
         val normalized = host?.normalizeHost().orEmpty()
         if (normalized.isBlank()) return@withContext "Enter a valid Home Assistant URL."

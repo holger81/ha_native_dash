@@ -47,6 +47,7 @@ object CameraStreams {
 
     private val streamClient = OkHttpClient.Builder()
         .addInterceptor(NetworkGuard.interceptor)
+        .dns(NetworkGuard.dns)
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .callTimeout(0, TimeUnit.MILLISECONDS)
@@ -162,13 +163,14 @@ object CameraStreams {
         // long-lived poll job, and undisposed hooks would pile up forever.
         val cancelHook = coroutineContext.job.invokeOnCompletion { call.cancel() }
         try {
-            val response = call.execute()
-            if (!response.isSuccessful) {
-                throw CameraStreamException(httpErrorMessage(response.code, null))
+            call.execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw CameraStreamException(httpErrorMessage(response.code, null))
+                }
+                val bytes = response.body?.bytes() ?: return@withContext null
+                if (bytes.isEmpty() || looksLikeHtmlOrJson(bytes)) return@withContext null
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
             }
-            val bytes = response.body?.bytes() ?: return@withContext null
-            if (bytes.isEmpty() || looksLikeHtmlOrJson(bytes)) return@withContext null
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
         } finally {
             cancelHook.dispose()
             call.cancel()

@@ -335,6 +335,7 @@ class MediagenOutpaintClient(
         fun defaultClient(): OkHttpClient =
             OkHttpClient.Builder()
                 .addInterceptor(NetworkGuard.interceptor)
+                .dns(NetworkGuard.dns)
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .writeTimeout(60, TimeUnit.SECONDS)
