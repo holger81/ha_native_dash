@@ -5,6 +5,7 @@ import fi.iki.elonen.NanoHTTPD
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.net.URLDecoder
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
 import javax.net.ssl.SSLServerSocketFactory
@@ -39,6 +40,8 @@ class ManagementServer(
     }
 
     private val failures = ConcurrentHashMap<String, FailureState>()
+    /** Cross-client failure budget so distributed guesses cannot out-pace the per-IP lockout. */
+    private val globalFailure = FailureState()
     private val random = SecureRandom()
     private val sessions = ConcurrentHashMap<String, AdminSession>()
 
@@ -49,6 +52,11 @@ class ManagementServer(
     fun onPinChanged() {
         failures.clear()
         sessions.clear()
+        synchronized(globalFailure) {
+            globalFailure.count = 0
+            globalFailure.rounds = 0
+            globalFailure.lockedUntil = 0L
+        }
     }
 
     override fun serve(session: IHTTPSession): Response {
@@ -133,6 +141,11 @@ class ManagementServer(
     private fun handleKioskCommand(session: IHTTPSession): Response {
         val files = HashMap<String, String>()
         if (session.method == Method.POST) {
+            // Reject oversized payloads before parseBody touches disk (unauthenticated DoS guard).
+            val declaredLength = session.headers["content-length"]?.toLongOrNull() ?: 0L
+            if (declaredLength > MAX_COMMAND_BODY_BYTES) {
+                return json(session, Response.Status.BAD_REQUEST, errorJson("Command body too large."))
+            }
             runCatching { session.parseBody(files) }
         }
         val params = mutableMapOf<String, String>()
@@ -319,6 +332,7 @@ class ManagementServer(
     }
 
     private fun handleGetCrash(session: IHTTPSession): Response {
+        authorizeApi(session)?.let { return json(session, Response.Status.UNAUTHORIZED, errorJson(it)) }
         val crash = CrashLogger.latestCrash
         val (versionCode, versionName) = appVersionProvider()
         val snap = kioskStateProvider()
@@ -505,9 +519,13 @@ class ManagementServer(
 
     private fun pinError(pin: String, client: String): String? {
         val now = System.currentTimeMillis()
-        if (pin == pinProvider()) {
+        if (constantTimeMatches(pin, pinProvider())) {
             failures.remove(client)
+            synchronized(globalFailure) { globalFailure.count = 0 }
             return null
+        }
+        synchronized(globalFailure) {
+            if (now < globalFailure.lockedUntil) return LOCKOUT_MESSAGE
         }
         if (failures.size > MAX_TRACKED_CLIENTS) {
             failures.entries.removeIf {
@@ -521,6 +539,23 @@ class ManagementServer(
             }
             state.lastAttempt = now
             state.count += 1
+            val globalTripped = synchronized(globalFailure) {
+                if (now - globalFailure.lastAttempt > FAILURE_EXPIRY_MS) globalFailure.count = 0
+                globalFailure.lastAttempt = now
+                globalFailure.count += 1
+                if (globalFailure.count >= GLOBAL_MAX_FAILURES) {
+                    globalFailure.count = 0
+                    globalFailure.rounds += 1
+                    globalFailure.lockedUntil = now + lockoutMs(globalFailure.rounds)
+                    true
+                } else {
+                    false
+                }
+            }
+            if (globalTripped) {
+                state.count = 0
+                return LOCKOUT_MESSAGE
+            }
             return if (state.count >= MAX_FAILURES) {
                 state.count = 0
                 state.rounds += 1
@@ -531,6 +566,10 @@ class ManagementServer(
             }
         }
     }
+
+    /** Non-short-circuit comparison so a wrong PIN cannot be probed byte-by-byte via timing. */
+    private fun constantTimeMatches(a: String, b: String): Boolean =
+        MessageDigest.isEqual(a.toByteArray(Charsets.UTF_8), b.toByteArray(Charsets.UTF_8))
 
     private fun formParams(session: IHTTPSession, files: Map<String, String>): Map<String, String> {
         val fromSession = session.parameters.mapValues { (_, values) -> values.firstOrNull().orEmpty() }
@@ -889,6 +928,8 @@ class ManagementServer(
         private const val COOKIE_NAME = "mgmt_session"
         private const val SESSION_TTL_MS = 12 * 60 * 60 * 1000L
         private const val MAX_FAILURES = 5
+        private const val GLOBAL_MAX_FAILURES = 25
+        private const val MAX_COMMAND_BODY_BYTES = 64L * 1024
         private const val LOCKOUT_MS = 30_000L
         private const val MAX_LOCKOUT_MS = 15 * 60_000L
         private const val MAX_LOCKOUT_SHIFT = 5
