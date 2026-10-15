@@ -185,8 +185,8 @@ class HaClient {
     }
 
     @Volatile private var webSocket: WebSocket? = null
-    private var baseUrl: String = ""
-    private var token: String = ""
+    @Volatile private var baseUrl: String = ""
+    @Volatile private var token: String = ""
     private val nextId = AtomicInteger(1)
     private var initialStatesRequestId: Int? = null
     private val pending = ConcurrentHashMap<Int, (Result<JsonElement>) -> Unit>()
@@ -324,6 +324,8 @@ class HaClient {
     }
 
     private fun openSocket(): Unit = synchronized(messageLock) {
+        // Close any previous socket first so overlapping connects cannot leak a live one.
+        webSocket?.close(1000, "superseded")
         val wsUrl = baseUrl
             .replace(Regex("^http://"), "ws://")
             .replace(Regex("^https://"), "wss://") + "/api/websocket"
@@ -378,16 +380,30 @@ class HaClient {
         scope.launch {
             while (true) {
                 val (socket, text) = messageChannel.receive()
-                synchronized(messageLock) {
-                    // A message already dequeued when disconnect() ran belongs to the old session.
-                    if (socket === webSocket) runCatching { handleMessage(text) }
-                }
+                // A message already dequeued when disconnect() ran belongs to the old session.
+                runCatching { handleMessage(text, socket) }
             }
         }
     }
 
-    internal fun handleMessage(text: String): Unit = synchronized(messageLock) {
-        val obj = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
+    /**
+     * Applies [text] under [messageLock], then runs the app callbacks it produced
+     * after the lock is released. Kiosk/mmWave/forecast callbacks can re-enter
+     * HaClient or wait on unrelated locks; running them inside [messageLock]
+     * risks deadlocking the socket pipeline.
+     */
+    internal fun handleMessage(text: String, socket: WebSocket? = null) {
+        val deferred = synchronized(messageLock) {
+            if (socket != null && socket !== webSocket) emptyList() else handleMessageLocked(text)
+        }
+        deferred.forEach { action -> runCatching { action() } }
+    }
+
+    /** Caller must hold [messageLock]. */
+    private fun handleMessageLocked(text: String): List<() -> Unit> {
+        val deferred = mutableListOf<() -> Unit>()
+        val obj = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()
+            ?: return emptyList()
         when (obj["type"]?.jsonPrimitive?.contentOrNull) {
             "auth_required" -> {
                 send(buildJsonObject {
@@ -426,7 +442,7 @@ class HaClient {
                 setConnection(ConnectionState.Error("Invalid access token"))
             }
             "result" -> {
-                val id = obj["id"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: return
+                val id = obj["id"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: return deferred
                 val success = obj["success"]?.jsonPrimitive?.contentOrNull != "false"
                 val forecastCallback = forecastSubscriptions[id]
                 if (forecastCallback != null) {
@@ -436,7 +452,7 @@ class HaClient {
                         }
                     }
                     // success: wait for the forecast event (same subscription id)
-                    return
+                    return deferred
                 }
                 val callback = pending.remove(id)
                 if (callback != null) {
@@ -458,17 +474,19 @@ class HaClient {
                 if (forecastCallback != null) {
                     val event = obj["event"]?.jsonObject
                     val forecast = (event?.get("forecast") as? JsonArray)?.mapNotNull { it as? JsonObject } ?: emptyList()
-                    runCatching { forecastCallback(forecast) }
-                    unsubscribe(subscriptionId)
-                    return
+                    // Wrapper in handleMessage() runs deferred actions under runCatching,
+                    // so a throwing callback cannot kill the message pipeline here either.
+                    deferred += { forecastCallback(forecast) }
+                    deferred += { unsubscribe(subscriptionId) }
+                    return deferred
                 }
-                val event = obj["event"]?.jsonObject ?: return
+                val event = obj["event"]?.jsonObject ?: return deferred
                 when (event["event_type"]?.jsonPrimitive?.contentOrNull) {
                     "state_changed" -> {
-                        val data = event["data"]?.jsonObject ?: return
+                        val data = event["data"]?.jsonObject ?: return deferred
                         val newState = data["new_state"]
                         if (newState == JsonNull) {
-                            val entityId = data["entity_id"]?.jsonPrimitive?.contentOrNull ?: return
+                            val entityId = data["entity_id"]?.jsonPrimitive?.contentOrNull ?: return deferred
                             stateBatch[entityId] = null
                             scheduleBatchFlush()
                         } else if (newState is JsonObject) {
@@ -479,16 +497,20 @@ class HaClient {
                         }
                     }
                     KioskCommands.EVENT -> {
-                        val data = event["data"]?.jsonObject ?: return
-                        onKioskEvent?.invoke(jsonMap(data))
+                        val data = event["data"]?.jsonObject ?: return deferred
+                        val payload = jsonMap(data)
+                        deferred += { onKioskEvent?.invoke(payload) }
                     }
                     "zha_event" -> {
-                        val data = event["data"]?.jsonObject ?: return
-                        MmWaveLiveTracker.parseZhaEvent(data)?.let { onMmWaveTargetEvent?.invoke(it) }
+                        val data = event["data"]?.jsonObject ?: return deferred
+                        MmWaveLiveTracker.parseZhaEvent(data)?.let { target ->
+                            deferred += { onMmWaveTargetEvent?.invoke(target) }
+                        }
                     }
                 }
             }
         }
+        return deferred
     }
 
     private fun scheduleBatchFlush() {
@@ -1870,29 +1892,33 @@ class HaClient {
     private suspend fun forecastViaSubscribe(entityId: String, forecastType: String): List<JsonObject> {
         if (webSocket == null) return emptyList()
         val id = nextId.getAndIncrement()
-        return suspendCancellableCoroutine { cont ->
-            // One-shot: forecast event and drainPending/onFailure can race on the same waiter.
-            val settled = AtomicBoolean(false)
-            fun settle(forecast: List<JsonObject>) {
-                if (!settled.compareAndSet(false, true)) return
-                forecastSubscriptions.remove(id)
-                cont.resume(forecast)
+        // HA can accept the subscribe and never send an event (integration gone,
+        // service hang); without a deadline the caller waits forever.
+        return withTimeoutOrNull(COMMAND_TIMEOUT_MS) {
+            suspendCancellableCoroutine { cont ->
+                // One-shot: forecast event and drainPending/onFailure can race on the same waiter.
+                val settled = AtomicBoolean(false)
+                fun settle(forecast: List<JsonObject>) {
+                    if (!settled.compareAndSet(false, true)) return
+                    forecastSubscriptions.remove(id)
+                    cont.resume(forecast)
+                }
+                forecastSubscriptions[id] = { settle(it) }
+                cont.invokeOnCancellation {
+                    settled.set(true)
+                    forecastSubscriptions.remove(id)
+                }
+                val sent = webSocket?.send(
+                    buildJsonObject {
+                        put("id", id)
+                        put("type", "weather/subscribe_forecast")
+                        put("entity_id", entityId)
+                        put("forecast_type", forecastType)
+                    }.toString(),
+                ) == true
+                if (!sent) settle(emptyList())
             }
-            forecastSubscriptions[id] = { settle(it) }
-            cont.invokeOnCancellation {
-                settled.set(true)
-                forecastSubscriptions.remove(id)
-            }
-            val sent = webSocket?.send(
-                buildJsonObject {
-                    put("id", id)
-                    put("type", "weather/subscribe_forecast")
-                    put("entity_id", entityId)
-                    put("forecast_type", forecastType)
-                }.toString(),
-            ) == true
-            if (!sent) settle(emptyList())
-        }
+        } ?: emptyList()
     }
 
     private fun forecastFromAttributes(entityId: String): List<JsonObject> {
