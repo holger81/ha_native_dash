@@ -158,7 +158,9 @@ object CameraStreams {
         }.build()
         val call = streamClient.newCall(request)
         call.timeout().timeout(10, TimeUnit.SECONDS)
-        coroutineContext.job.invokeOnCompletion { call.cancel() }
+        // Dispose the hook afterwards: readJpeg runs every few hundred ms on one
+        // long-lived poll job, and undisposed hooks would pile up forever.
+        val cancelHook = coroutineContext.job.invokeOnCompletion { call.cancel() }
         try {
             val response = call.execute()
             if (!response.isSuccessful) {
@@ -168,6 +170,7 @@ object CameraStreams {
             if (bytes.isEmpty() || looksLikeHtmlOrJson(bytes)) return@withContext null
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
         } finally {
+            cancelHook.dispose()
             call.cancel()
         }
     }

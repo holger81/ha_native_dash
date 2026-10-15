@@ -240,10 +240,13 @@ fun matchMassPlayerInfo(haName: String, massPlayers: List<MassPlayerInfo>): Mass
     val target = normalizeMusicPlayerName(haName)
     if (target.isBlank()) return null
     massPlayers.firstOrNull { normalizeMusicPlayerName(it.name) == target }?.let { return it }
-    return massPlayers.firstOrNull {
-        val other = normalizeMusicPlayerName(it.name)
-        other.contains(target) || target.contains(other)
+    // Containment is only a convenience fallback: require it to be unique, so HA
+    // "Kitchen" can never silently drive "Kitchen Table" when "Kitchen Window" exists.
+    val contained = massPlayers.filter { player ->
+        val other = normalizeMusicPlayerName(player.name)
+        other.isNotEmpty() && (other.contains(target) || target.contains(other))
     }
+    return contained.singleOrNull()
 }
 
 internal fun parseQueueItem(element: JsonElement?): MusicAssistantQueueItem? {

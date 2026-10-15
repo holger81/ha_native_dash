@@ -275,6 +275,9 @@ class LiveCameraHub(
                     session.publish()
                     if (!ended.isCompleted) ended.complete(false)
                 }
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (playbackState == Player.STATE_ENDED && !ended.isCompleted) ended.complete(true)
+                }
             }
             session.listener = listener
             player.addListener(listener)
@@ -322,8 +325,10 @@ class LiveCameraHub(
             return false
         }
         session.jpegJob?.cancel()
-        ended.await()
-        return true
+        // Propagate the outcome: false means the player errored, so runSession
+        // sets skipHls and falls back to MJPEG/JPEG instead of re-trying the
+        // same broken HLS URL forever.
+        return ended.await()
     }
 
     private suspend fun pollJpeg(session: Session, candidate: StreamCandidate) {

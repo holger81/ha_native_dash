@@ -325,11 +325,6 @@ private fun MoreInfoHistory(entityId: String, entity: EntityState?, viewModel: H
             delay(45_000)
         }
     }
-    LaunchedEffect(entity?.state, entity?.lastChanged) {
-        if (entity == null) return@LaunchedEffect
-        delay(1_000)
-        refresh()
-    }
     val plotted = remember(buckets, entity?.state, entity?.lastChanged) {
         withLiveSample(buckets, entity, System.currentTimeMillis())
     }
