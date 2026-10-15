@@ -192,6 +192,13 @@ private fun LeafletMap(
                 )
             }
         },
+        onRelease = { webView ->
+            // The dialog opens/closes throughout the day; without destroy() the
+            // WebView (and its renderer + JS timers) leaks every time.
+            webView.stopLoading()
+            webView.setOnTouchListener(null)
+            webView.destroy()
+        },
     )
 }
 

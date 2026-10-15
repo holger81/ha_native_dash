@@ -16,7 +16,15 @@ object CrashLogger {
     private const val CRASH_FILE_NAME = "last_crash.txt"
     private const val PREFS_NAME = "crash_logger_prefs"
     private const val KEY_LAST_CRASH = "last_crash"
-    private const val DOCS_DIR = "Documents/HA Native"
+    private val DOCS_DIR = "Documents/${RecoverableFiles.DIR_NAME}"
+
+    /** Credential-shaped query parameters scrubbed before content leaves app-private storage. */
+    private val TOKEN_QUERY = Regex(
+        "([?&])(auth_token|token|access_token|view|sig|signature|key)=[^&#\\s]+",
+        RegexOption.IGNORE_CASE,
+    )
+
+    private fun redactSensitive(text: String): String = TOKEN_QUERY.replace(text, "$1$2=[redacted]")
 
     @Volatile
     private var appContext: Context? = null
@@ -91,18 +99,20 @@ object CrashLogger {
         }
 
         latestCrash = report
-        Log.e(TAG, report)
+        // One logcat line only: bug reports collect logcat and messages can embed URLs/keys.
+        Log.e(TAG, "Uncaught ${throwable::class.java.name} on thread ${thread.name}; full report stored as $CRASH_FILE_NAME")
 
         // 1. Write internal filesDir
         runCatching {
             File(app.filesDir, CRASH_FILE_NAME).writeText(report)
         }
 
-        // 2. Write external Documents/HA Native if accessible
+        // 2. Write external Documents/HA Native if accessible. Redacted: shared
+        // storage is world-readable, so token-bearing text stays in the private copies.
         runCatching {
             val extDir = File(Environment.getExternalStorageDirectory(), DOCS_DIR)
             if (extDir.exists() || extDir.mkdirs()) {
-                File(extDir, CRASH_FILE_NAME).writeText(report)
+                File(extDir, CRASH_FILE_NAME).writeText(redactSensitive(report))
             }
         }
 

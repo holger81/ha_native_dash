@@ -183,6 +183,10 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
+private val MARKDOWN_NOISE = Regex("[{}|]")
+private val HUMIDITY_SUFFIX = Regex("_temperature$")
+private val WHITESPACE_SPLIT = Regex("\\s+")
+
 private val CardShape = RoundedCornerShape(28.dp)
 private val ChipShape = RoundedCornerShape(24.dp)
 
@@ -337,7 +341,7 @@ fun WidgetItem(
         "markdown" -> {
             val overlay = LocalOverlay.current
             Text(
-                text = widget.content.orEmpty().replace(Regex("[{}|]"), "").take(400),
+                text = widget.content.orEmpty().replace(MARKDOWN_NOISE, "").take(400),
                 color = overlay.text,
                 modifier = modifier
                     .clip(CardShape)
@@ -2033,7 +2037,7 @@ fun RoomConditions(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifie
     val entityId = widget.entity ?: display?.tempEntity
     val watchedEntities = remember(widget, entityId, display) {
         val deducedHum = if (entityId?.endsWith("_temperature") == true) {
-            entityId.replace(Regex("_temperature$"), "_humidity")
+            entityId.replace(HUMIDITY_SUFFIX, "_humidity")
         } else null
         (display.entityIds() + listOfNotNull(entityId, deducedHum)).filterNotNull().distinct()
     }
@@ -3716,7 +3720,7 @@ fun PopupScaffold(
 }
 
 private fun parseRadius(raw: String?): List<Dp> {
-    val parts = raw?.split(Regex("\\s+"))?.mapNotNull { it.removeSuffix("px").toFloatOrNull() }
+    val parts = raw?.split(WHITESPACE_SPLIT)?.mapNotNull { it.removeSuffix("px").toFloatOrNull() }
     if (parts == null || parts.size < 4) return listOf(36.dp, 36.dp, 36.dp, 36.dp)
     return parts.take(4).map { it.dp }
 }

@@ -8,6 +8,8 @@ import java.time.Duration
 import java.time.Instant
 import kotlin.math.roundToInt
 
+private val HUMIDITY_SUFFIX = Regex("_temperature$")
+
 fun Map<String, EntityState>.getState(id: String?): EntityState? = id?.let { this[it] }
 
 fun Double?.format(decimals: Int = 1, suffix: String = ""): String {
@@ -71,7 +73,7 @@ fun Map<String, EntityState>.tempHum(display: DisplayNode?): String {
         ?: run {
             val t = display.tempEntity
             if (t?.endsWith("_temperature") == true) {
-                getState(t.replace(Regex("_temperature$"), "_humidity"))?.state?.toDoubleOrNull()
+                getState(t.replace(HUMIDITY_SUFFIX, "_humidity"))?.state?.toDoubleOrNull()
             } else null
         }
     if (temp == null) return "Unknown"
@@ -91,7 +93,7 @@ fun Map<String, EntityState>.roomHum(display: DisplayNode?, fallbackEntity: Stri
         ?: run {
             val t = display?.tempEntity ?: fallbackEntity
             if (t?.endsWith("_temperature") == true) {
-                getState(t.replace(Regex("_temperature$"), "_humidity"))?.state?.toDoubleOrNull()
+                getState(t.replace(HUMIDITY_SUFFIX, "_humidity"))?.state?.toDoubleOrNull()
             } else null
         }
 }

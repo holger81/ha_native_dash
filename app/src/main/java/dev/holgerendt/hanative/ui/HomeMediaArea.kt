@@ -71,6 +71,8 @@ import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.math.roundToInt
 
+private val TITLE_SEPARATOR = Regex("\\s+[-–—|:]\\s+")
+
 internal const val TV_ENTITY = "media_player.living_room"
 internal const val APPLE_TV_ENTITY = "media_player.living_room_appletv"
 
@@ -467,7 +469,7 @@ private fun BoxScope.PausedCoverBadge() {
 }
 
 internal fun musicDisplayTitle(rawTitle: String, artist: String): String {
-    val separator = Regex("\\s+[-–—|:]\\s+").find(rawTitle) ?: return rawTitle
+    val separator = TITLE_SEPARATOR.find(rawTitle) ?: return rawTitle
     val prefix = rawTitle.substring(0, separator.range.first).filterNot { it.isWhitespace() }
     val knownArtist = artist.filterNot { it.isWhitespace() }
     if (knownArtist.isBlank() || !prefix.equals(knownArtist, ignoreCase = true)) return rawTitle

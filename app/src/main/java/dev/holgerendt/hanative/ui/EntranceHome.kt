@@ -60,6 +60,9 @@ import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
+private val VENT_SUFFIX = Regex("\\s*-?\\s*vent$", RegexOption.IGNORE_CASE)
+private val HEX4_SUFFIX = Regex("-[a-f0-9]{4}$", RegexOption.IGNORE_CASE)
+
 private val TimeFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 private val ChipShape = RoundedCornerShape(20.dp)
 
@@ -528,8 +531,8 @@ private fun openWindows(states: Map<String, EntityState>, coverIds: List<String>
         val entity = states[id] ?: return@mapNotNull null
         if (entity.state in setOf("open", "opening")) {
             val raw = entity.friendlyName.ifBlank { id.substringAfter('.').replace('_', ' ') }
-            val cleanName = raw.replace(Regex("\\s*-?\\s*vent$", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("-[a-f0-9]{4}$", RegexOption.IGNORE_CASE), "")
+            val cleanName = raw.replace(VENT_SUFFIX, "")
+                .replace(HEX4_SUFFIX, "")
                 .trim()
             StatusItem(id, cleanName)
         } else {
