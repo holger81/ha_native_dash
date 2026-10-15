@@ -9,6 +9,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -116,6 +118,8 @@ data class HaCalendarEvent(
 
 private val CLIP_LINE_REGEX = Regex("""(?im)^clip:\s*(\S+)\s*$""")
 private val CLIP_URL_REGEX = Regex("""(/api/frigate/notifications/[^/\s"']+/clip\.mp4|/api/events/[^/\s"']+/clip\.mp4)""")
+private val HTTP_SCHEME_TO_WS = Regex("^http://")
+private val HTTPS_SCHEME_TO_WSS = Regex("^https://")
 
 internal fun splitClipFromDescription(description: String?): Pair<String?, String?> {
     if (description.isNullOrBlank()) return null to null
@@ -161,12 +165,14 @@ class HaClient {
     private val mediaType = "application/json; charset=utf-8".toMediaType()
     private val http = OkHttpClient.Builder()
         .addInterceptor(NetworkGuard.interceptor)
+        .dns(NetworkGuard.dns)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .pingInterval(30, TimeUnit.SECONDS)
         .callTimeout(30, TimeUnit.SECONDS)
         .build()
     private val massHttp = OkHttpClient.Builder()
         .addInterceptor(NetworkGuard.interceptor)
+        .dns(NetworkGuard.dns)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .callTimeout(60, TimeUnit.SECONDS)
@@ -212,6 +218,7 @@ class HaClient {
     private class SnapshotEntry(val bytes: ByteArray, val expiresAtMs: Long)
     private val snapshotCache = ConcurrentHashMap<String, SnapshotEntry>()
     @Volatile private var massIngress: MassIngressSession? = null
+    private val massIngressLock = Mutex()
     @Volatile private var massAddonSlug: String? = null
     @Volatile private var massPlayersCache: Pair<Long, List<MassPlayerInfo>>? = null
 
@@ -310,6 +317,12 @@ class HaClient {
     fun release() {
         disconnect()
         scope.cancel()
+        // Shared-elsewhere clients keep their pools; these two belong to this
+        // instance and must not survive a reconnect-with-new-client as idle threads.
+        http.dispatcher.executorService.shutdown()
+        http.connectionPool.evictAll()
+        massHttp.dispatcher.executorService.shutdown()
+        massHttp.connectionPool.evictAll()
     }
 
     private fun drainPending(error: Throwable) {
@@ -327,8 +340,8 @@ class HaClient {
         // Close any previous socket first so overlapping connects cannot leak a live one.
         webSocket?.close(1000, "superseded")
         val wsUrl = baseUrl
-            .replace(Regex("^http://"), "ws://")
-            .replace(Regex("^https://"), "wss://") + "/api/websocket"
+            .replace(HTTP_SCHEME_TO_WS, "ws://")
+            .replace(HTTPS_SCHEME_TO_WSS, "wss://") + "/api/websocket"
         val request = Request.Builder().url(wsUrl).build()
         webSocket = http.newWebSocket(request, object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -1079,6 +1092,19 @@ class HaClient {
         if (!force && cached != null && cached.expiresAtMs > System.currentTimeMillis()) {
             return cached
         }
+        // Single-flight: concurrent music callers queue here instead of each
+        // creating an ingress session + addon lookup, last write winning.
+        return massIngressLock.withLock {
+            val fresh = massIngress
+            if (!force && fresh != null && fresh.expiresAtMs > System.currentTimeMillis()) {
+                fresh
+            } else {
+                establishMassIngress()
+            }
+        }
+    }
+
+    private suspend fun establishMassIngress(): MassIngressSession {
         val sessionResult = command {
             put("type", "supervisor/api")
             put("endpoint", "/ingress/session")

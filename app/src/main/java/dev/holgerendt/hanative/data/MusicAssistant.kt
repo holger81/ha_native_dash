@@ -163,10 +163,13 @@ private fun JsonElement?.toBooleanOrNull(): Boolean? {
 
 fun parseMusicAssistantQueue(response: JsonElement?, entityId: String): MusicAssistantQueue? {
     val root = response as? JsonObject ?: return null
-    val payload = root[entityId]?.jsonObject
-        ?: root["response"]?.jsonObject?.get(entityId)?.jsonObject
-        ?: root["response"]?.jsonObject?.entries?.firstOrNull()?.value?.jsonObject
-        ?: root.entries.firstOrNull { it.key.startsWith("media_player.") }?.value?.jsonObject
+    // Batch shapes vary (entity maps, wrapped arrays): navigate with `as?` so an
+    // unexpected JsonArray member yields null instead of IllegalArgumentException.
+    fun JsonObject.member(key: String): JsonObject? = this[key] as? JsonObject
+    val payload = root.member(entityId)
+        ?: root.member("response")?.member(entityId)
+        ?: root.member("response")?.entries?.firstOrNull()?.value?.let { it as? JsonObject }
+        ?: root.entries.firstOrNull { it.key.startsWith("media_player.") }?.value?.let { it as? JsonObject }
         ?: root.takeIf { it.containsKey("current_item") || it.containsKey("queue_id") }
     payload ?: return null
     return MusicAssistantQueue(

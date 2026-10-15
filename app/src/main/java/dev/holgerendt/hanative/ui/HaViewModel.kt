@@ -1096,12 +1096,20 @@ class HaViewModel(
         }
     }
 
-    /** Home media card: volume for the displayed session entity. */
+    private var homeMediaVolumeDebounceJob: Job? = null
+
+    /**
+     * Home media card: volume for the displayed session entity. Trailing-debounced
+     * like [setMusicVolume] — a drag otherwise fires a service call per frame.
+     */
     fun homeMediaSetVolume(entityId: String, level: Float) {
         val id = CredentialsStore.normalizeEntityId(entityId)
         if (id.isBlank()) return
-        viewModelScope.launch {
-            runCatching { client.setMediaVolume(id, level.coerceIn(0f, 1f)) }
+        val value = level.coerceIn(0f, 1f)
+        homeMediaVolumeDebounceJob?.cancel()
+        homeMediaVolumeDebounceJob = viewModelScope.launch {
+            delay(45)
+            runCatching { client.setMediaVolume(id, value) }
         }
     }
 
