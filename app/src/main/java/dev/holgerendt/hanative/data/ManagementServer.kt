@@ -69,6 +69,7 @@ class ManagementServer(
             session.method == Method.GET && uri == "/screenshot" -> handleScreenshot(session)
             session.method == Method.OPTIONS &&
                 (uri == "/api/command" || uri == "/api/state" || uri == "/api/crash" ||
+                    uri == "/api/diag" ||
                     uri == "/api/update" || uri == "/api/tap" || uri == "/api/swipe") ->
                 corsPreflight(session)
             session.method == Method.GET && uri == "/api/state" -> handleKioskState(session)
@@ -79,6 +80,7 @@ class ManagementServer(
             (session.method == Method.GET || session.method == Method.POST) && uri == "/api/command" ->
                 handleKioskCommand(session)
             session.method == Method.GET && uri == "/api/crash" -> handleGetCrash(session)
+            session.method == Method.GET && uri == "/api/diag" -> handleDiag(session)
             session.method == Method.POST && uri == "/api/crash/clear" -> handleClearCrash(session)
             session.method == Method.POST && uri == "/setup" -> handleSetup(session)
             session.method == Method.POST && uri == "/wake" -> handleWake(session)
@@ -334,15 +336,29 @@ class ManagementServer(
     private fun handleGetCrash(session: IHTTPSession): Response {
         authorizeApi(session)?.let { return json(session, Response.Status.UNAUTHORIZED, errorJson(it)) }
         val crash = CrashLogger.latestCrash
+        return json(
+            session,
+            Response.Status.OK,
+            diagJson()
+                .put("hasCrash", crash != null)
+                .put("crash", crash ?: "")
+                .toString(2),
+        )
+    }
+
+    /**
+     * Connection snapshot without the admin PIN (wall panels that cannot reach HA must stay
+     * diagnosable). Contains no crash text, token or PIN material.
+     */
+    private fun handleDiag(session: IHTTPSession): Response =
+        json(session, Response.Status.OK, diagJson().toString(2))
+
+    private fun diagJson(): JSONObject {
         val (versionCode, versionName) = appVersionProvider()
         val snap = kioskStateProvider()
         val url = savedUrlProvider().trim()
-        // Unauthenticated diagnostic snapshot (no token/PIN): enough to see if the panel is
-        // on the expected APK and whether HA is connected without logging into admin.
-        val json = JSONObject()
+        return JSONObject()
             .put("ok", true)
-            .put("hasCrash", crash != null)
-            .put("crash", crash ?: "")
             .put("versionCode", versionCode)
             .put("versionName", versionName)
             .put("connected", snap.connected)
@@ -351,7 +367,6 @@ class ManagementServer(
             .put("haUrlConfigured", url.isNotBlank())
             .put("hasToken", snap.hasToken)
             .put("panel", KioskCommands.PANEL_ID)
-        return json(session, Response.Status.OK, json.toString(2))
     }
 
     private fun handleClearCrash(session: IHTTPSession): Response {
