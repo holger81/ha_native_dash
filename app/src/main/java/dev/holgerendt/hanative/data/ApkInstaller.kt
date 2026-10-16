@@ -134,26 +134,34 @@ class ApkInstaller(private val app: Context) {
         pm.getPackageInfo(app.packageName, signingFlags())
 
     @Suppress("DEPRECATION")
-    private fun signingFlags(): Int {
-        var flags = PackageManager.GET_SIGNATURES
+    private fun signingFlags(): Int =
+        // GET_SIGNATURES is deprecated and reports past signers after key rotation;
+        // the P+ API exposes the current chain, which is all an identity check may use.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            flags = flags or PackageManager.GET_SIGNING_CERTIFICATES
-        }
-        return flags
-    }
-
-    @Suppress("DEPRECATION")
-    private fun signingFingerprints(info: PackageInfo): Set<String> {
-        val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            info.signingInfo?.apkContentsSigners ?: info.signatures
+            PackageManager.GET_SIGNING_CERTIFICATES
         } else {
-            info.signatures
-        } ?: return emptySet()
-        val digest = MessageDigest.getInstance("SHA-256")
-        return signatures.map { signature ->
-            digest.reset()
-            digest.digest(signature.toByteArray()).joinToString("") { "%02x".format(it) }
+            PackageManager.GET_SIGNATURES
+        }
+
+    private fun signingFingerprints(info: PackageInfo): Set<String> =
+        currentSignatures(info).map { bytes ->
+            MessageDigest.getInstance("SHA-256")
+                .digest(bytes)
+                .joinToString("") { "%02x".format(it) }
         }.toSet()
+
+    /** DER bytes of the current signing certificates; empty when identity is ambiguous. */
+    @Suppress("DEPRECATION")
+    private fun currentSignatures(info: PackageInfo): List<ByteArray> {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val signingInfo = info.signingInfo ?: return emptyList()
+            // After key rotation `apkContentsSigners` can contain *past* signers, which would
+            // let a retired key pass as this panel's identity. The panels never rotate keys,
+            // so any past-signer chain fails closed here.
+            if (signingInfo.hasPastSigningCertificates()) return emptyList()
+            return signingInfo.apkContentsSigners.map { it.toByteArray() }
+        }
+        return (info.signatures ?: emptyArray()).map { it.toByteArray() }
     }
 
     @Suppress("DEPRECATION")
