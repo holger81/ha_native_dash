@@ -147,7 +147,7 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.5.1")
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.nanohttpd:nanohttpd:2.3.1")
-    implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.86")
     implementation("com.google.zxing:core:3.5.3")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
