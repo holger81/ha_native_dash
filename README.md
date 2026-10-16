@@ -51,7 +51,7 @@ On Android 11+, grant **All files access** after a reinstall if you skipped Keep
 
 Set a lasting PIN from **Settings → Remote setup PIN** (4–8 digits). Until you set one, remote setup uses a generated PIN as before.
 
-The app keeps the screen on. Greatroom is a landscape-style wall; entrance is a portrait header plus occupancy/planner layout. Credentials restore from `Documents/HA Native/` (greatroom) or `Documents/HA Native Entrance/` (entrance).
+The app keeps the screen on. Greatroom is a portrait wall; entrance is a landscape header plus occupancy/planner layout. Credentials restore from `Documents/HA Native/` (greatroom) or `Documents/HA Native Entrance/` (entrance).
 
 - **Menu** opens Weather / Power / Cars / Vacuum / Camera / Settings, plus the remote-setup PIN
 - **Hold menu** toggles `input_boolean.kiosk_mode_greatroom` (same as the Lovelace hold action)
