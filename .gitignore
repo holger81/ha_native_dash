@@ -11,5 +11,8 @@
 *.apk
 *.aab
 *.keystore
+*.jks
+.env
+__pycache__/
 local.properties
 .kotlin
