@@ -115,7 +115,7 @@ class CredentialsStore(context: Context) {
             persist()
         }
 
-    /** Seconds of idle time before the panel blanks. 0 keeps the screen on. */
+    /** Seconds of idle time before the panel blanks. 0 keeps the screen on; flavor default applies when unset. */
     var screenTimeoutSeconds: Int = 0
         set(value) {
             field = value.coerceIn(0, MAX_SCREEN_TIMEOUT_SECONDS)
@@ -170,7 +170,9 @@ class CredentialsStore(context: Context) {
     val isConfigured: Boolean
         get() = baseUrl.isNotBlank() && token.isNotBlank()
 
-    private val timeoutFromPrefs = prefs.contains(KEY_TIMEOUT_SECONDS) || prefs.contains(KEY_TIMEOUT_MINUTES_LEGACY)
+    /** A stored value (user choice or applied flavor default) outranks the recovery file. */
+    private val timeoutFromPrefs: Boolean
+        get() = prefs.contains(KEY_TIMEOUT_SECONDS) || prefs.contains(KEY_TIMEOUT_MINUTES_LEGACY)
 
     init {
         screenTimeoutSeconds = when {
@@ -178,11 +180,12 @@ class CredentialsStore(context: Context) {
                 prefs.getInt(KEY_TIMEOUT_SECONDS, 0).coerceIn(0, MAX_SCREEN_TIMEOUT_SECONDS)
             prefs.contains(KEY_TIMEOUT_MINUTES_LEGACY) ->
                 prefs.getInt(KEY_TIMEOUT_MINUTES_LEGACY, 0).coerceIn(0, 180) * 60
-            else -> 0
+            else -> PanelConfig.DEFAULT_SCREEN_TIMEOUT_SECONDS
         }
         migrateFromLegacy()
         restoreFromDocuments()
         migratePlaceholderHaUrl()
+        migrateMotionSleepDefault()
         if (!prefs.contains(KEY_DISPLAY_OFF) && displayOffEntityBacking.isBlank()) {
             displayOffEntityBacking = PanelConfig.DEFAULT_DISPLAY_OFF_ENTITY
         }
@@ -194,6 +197,20 @@ class CredentialsStore(context: Context) {
         }
         persistEnabled = true
         if (isConfigured || managementPin.isNotBlank() || baseUrl.isNotBlank()) persist()
+    }
+
+    /**
+     * Entrance moved from "always on" to presence-aware sleep. Panels that never moved the
+     * timeout off the old 0 default adopt the flavor default once; any explicit choice
+     * (including setting 0 again in Settings) survives later launches.
+     */
+    private fun migrateMotionSleepDefault() {
+        if (PanelConfig.DEFAULT_SCREEN_TIMEOUT_SECONDS <= 0) return
+        if (prefs.getBoolean(KEY_TIMEOUT_DEFAULT_APPLIED, false)) return
+        prefs.edit().putBoolean(KEY_TIMEOUT_DEFAULT_APPLIED, true).apply()
+        if (screenTimeoutSeconds == 0) {
+            screenTimeoutSeconds = PanelConfig.DEFAULT_SCREEN_TIMEOUT_SECONDS
+        }
     }
 
     /**
@@ -523,6 +540,7 @@ class CredentialsStore(context: Context) {
         private const val KEY_PIN = "management_pin"
         private const val KEY_TIMEOUT_SECONDS = "screen_timeout_seconds"
         private const val KEY_TIMEOUT_MINUTES_LEGACY = "screen_timeout_minutes"
+        private const val KEY_TIMEOUT_DEFAULT_APPLIED = "screen_timeout_default_applied"
         private const val KEY_DISPLAY_OFF = "display_off_entity"
         private const val KEY_DISPLAY_BRIGHTNESS = "display_brightness_entity"
         private const val KEY_DISPLAY_ILLUMINANCE = "display_illuminance_entity"

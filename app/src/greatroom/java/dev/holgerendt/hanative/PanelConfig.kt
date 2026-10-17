@@ -11,6 +11,8 @@ object PanelConfig {
     const val CAMERA_FLAG = "input_boolean.greatroom_wall_camera"
     const val USE_TABLET_MOTION = false
     const val MOTION_ENTITY = ""
+    /** UniFi Connect panel stays on; its power entity handles sleep. 0 keeps the idle timer off. */
+    const val DEFAULT_SCREEN_TIMEOUT_SECONDS = 0
     val PANEL_ALIASES = listOf("greatroom", "greatroom-wall", "greatroom_wall")
     /**
      * Prefill / placeholder for setup when prefs were wiped (e.g. UniFi app switch).

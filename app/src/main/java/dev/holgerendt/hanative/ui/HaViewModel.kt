@@ -2187,6 +2187,9 @@ class HaViewModel(
         if (_tabletMotion.value) return true
         val occupancyIds = occupancyEntityIds(_ui.value.dashboard?.home?.occupancyEntities.orEmpty())
         if (occupancyIds.any { isOn(allStates[it]?.state) }) return true
+        // The living-room mmWave belongs to the greatroom wall. On the entrance panel, where the
+        // front camera decides presence, someone in the living room must not hold the entry awake.
+        if (PanelConfig.USE_TABLET_MOTION) return false
         if (isOn(allStates[MMWAVE_OCCUPANCY_ENTITY]?.state)) return true
         if (live.count > 0 || live.slots.isNotEmpty()) return true
         val helperCount = allStates[MMWAVE_TARGET_COUNT_ENTITY]?.state?.toDoubleOrNull()?.roundToInt() ?: 0

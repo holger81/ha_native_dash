@@ -113,6 +113,8 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+            // BouncyCastle 1.86 ships the same license text in all three jars.
+            excludes += "META-INF/{LICENSE,LICENSE-notice}.md"
         }
     }
 }

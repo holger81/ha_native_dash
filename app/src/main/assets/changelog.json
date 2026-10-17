@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "1.0.297",
+      "date": "2026-10-17",
+      "notes": [
+        "Entrance wall now sleeps when nobody stands in front of it: the screen blanks about 90 s after the last movement and wakes on movement or touch.",
+        "Living-room occupancy no longer keeps the entrance panel awake; only motion in front of it counts.",
+        "Greatroom stays always-on as before; the timeout can be changed in Settings anytime."
+      ]
+    },
+    {
       "version": "1.0.96",
       "date": "2026-08-30",
       "notes": [
