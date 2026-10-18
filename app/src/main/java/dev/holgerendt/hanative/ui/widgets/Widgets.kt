@@ -131,6 +131,7 @@ import dev.holgerendt.hanative.ui.format
 import dev.holgerendt.hanative.ui.formatState
 import dev.holgerendt.hanative.ui.gridStatusChipLabel
 import dev.holgerendt.hanative.ui.isOn
+import dev.holgerendt.hanative.ui.isUnavailableState
 import dev.holgerendt.hanative.ui.isVisible
 import dev.holgerendt.hanative.ui.number
 import dev.holgerendt.hanative.ui.relativeToNow
@@ -156,6 +157,8 @@ import dev.holgerendt.hanative.ui.theme.ChipDark
 import dev.holgerendt.hanative.ui.theme.ChipOnDark
 import dev.holgerendt.hanative.ui.theme.HistoryGraph
 import dev.holgerendt.hanative.ui.theme.LocalOverlay
+import dev.holgerendt.hanative.ui.theme.OutageChipOnRed
+import dev.holgerendt.hanative.ui.theme.OutageChipRed
 import dev.holgerendt.hanative.ui.theme.OverlayColors
 import dev.holgerendt.hanative.ui.theme.OverlayLightPopup
 import dev.holgerendt.hanative.ui.theme.PopupScrim
@@ -218,6 +221,10 @@ private const val BatteryDischargingEntity = "binary_sensor.envoy_battery_discha
 private const val BatteryStoredEntity = "input_number.battery_energy_helper"
 private const val BatteryReserveEntity = "sensor.envoy_202234122877_reserve_battery_energy"
 private const val BatteryLoadEntity = "sensor.housepanel_total_consumption_house_consumption_1h_mean"
+/** Emporia-based outage flag (on = grid down). */
+private const val PowerOutageEntity = "binary_sensor.power_outage"
+/** Enpower grid connection (off = islanded / grid down). */
+private const val EnpowerGridStatusEntity = "binary_sensor.enpower_122216008760_grid_status"
 
 private val BatteryRuntimeEntities = listOf(
     BatteryDischargingEntity,
@@ -225,6 +232,8 @@ private val BatteryRuntimeEntities = listOf(
     BatteryLoadEntity,
     BatteryStoredEntity,
     BatteryReserveEntity,
+    PowerOutageEntity,
+    EnpowerGridStatusEntity,
     "sensor.envoy_202234122877_battery",
 )
 
@@ -238,6 +247,8 @@ private val ChipRowEnergyEntities = listOf(
     BatteryLoadEntity,
     BatteryReserveEntity,
     BatterySocEntity,
+    PowerOutageEntity,
+    EnpowerGridStatusEntity,
 )
 
 private val EnergyStatsEntities = listOf(
@@ -245,6 +256,8 @@ private val EnergyStatsEntities = listOf(
     GridNetEntity,
     BatteryStoredEntity,
     BatteryDischargingEntity,
+    PowerOutageEntity,
+    EnpowerGridStatusEntity,
 )
 
 private val MmWaveEntities = listOf(
@@ -397,26 +410,27 @@ fun ChipRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Mod
         widget.chips.filter { states.isVisible(it) }.forEach { chip ->
             val entity = states[chip.entity]
             val unlocked = chip.emphasizeUnlocked == true && entity?.state == "unlocked"
-            val gridOutage = isGridOutageChip(chip, states)
+            val gridOutageChip = isGridOutageChip(chip, states)
             val highlighted = when {
                 unlocked -> true
-                gridOutage -> true
+                gridOutageChip -> true
                 chip.accent == "active" || chip.accent == "active-big" -> true
                 else -> false
             }
             val label = chipStatusLabel(chip, states)
             val iconCircle = when {
                 unlocked -> ThemeWhite
+                gridOutageChip -> OutageChipOnRed
                 else -> Gray000
             }
             Row(
                 modifier = Modifier
                     .clip(ChipShape)
                     .then(
-                        if (highlighted) {
-                            Modifier.background(activeBigBrush())
-                        } else {
-                            Modifier.background(Gray800)
+                        when {
+                            gridOutageChip -> Modifier.background(OutageChipRed)
+                            highlighted -> Modifier.background(activeBigBrush())
+                            else -> Modifier.background(Gray800)
                         },
                     )
                     .widgetClicks(chip, viewModel)
@@ -431,13 +445,22 @@ fun ChipRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Mod
                         .background(iconCircle),
                     contentAlignment = Alignment.Center,
                 ) {
-                    MdiIcon(chip.icon, tint = Gray800, size = 22.dp)
+                    MdiIcon(
+                        chip.icon,
+                        tint = if (gridOutageChip) OutageChipRed else Gray800,
+                        size = 22.dp,
+                    )
                 }
                 if (!label.isNullOrBlank()) {
                     Text(
                         text = label,
-                        color = if (highlighted) ThemeBlack else Gray000,
+                        color = when {
+                            gridOutageChip -> OutageChipOnRed
+                            highlighted -> ThemeBlack
+                            else -> Gray000
+                        },
                         fontSize = 13.sp,
+                        fontWeight = if (gridOutageChip) FontWeight.SemiBold else FontWeight.Normal,
                         modifier = Modifier.padding(start = 8.dp),
                     )
                 }
@@ -446,15 +469,26 @@ fun ChipRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Mod
     }
 }
 
+/** True when Emporia/Enpower report the grid is down (or legacy Envoy fallback). */
+internal fun isPowerOutage(states: Map<String, EntityState>): Boolean {
+    if (states[PowerOutageEntity]?.state == "on") return true
+    if (states[EnpowerGridStatusEntity]?.state == "off") return true
+    // Legacy: Envoy net power unavailable while the battery is discharging.
+    // Only when the net entity is present — missing keys must not imply outage.
+    val net = states[GridNetEntity]?.state ?: return false
+    if (states[BatteryDischargingEntity]?.state != "on") return false
+    return isUnavailableState(net)
+}
+
 internal fun isGridOutageChip(chip: WidgetNode, states: Map<String, EntityState>): Boolean {
     val entityId = chip.entity ?: chip.state?.entity
     if (entityId != GridNetEntity) return false
-    if (states[BatteryDischargingEntity]?.state != "on") return false
-    return states[GridNetEntity]?.state?.toDoubleOrNull() == null
+    return isPowerOutage(states)
 }
 
 internal fun chipStatusLabel(chip: WidgetNode, states: Map<String, EntityState>): String? {
     if (chip.layout == "icon|name") return chip.name
+    val outage = isPowerOutage(states)
     val stateEntity = chip.state?.entity ?: chip.entity
     return when (stateEntity) {
         GridNetEntity -> {
@@ -462,7 +496,7 @@ internal fun chipStatusLabel(chip: WidgetNode, states: Map<String, EntityState>)
             gridStatusChipLabel(
                 netPowerKw = raw?.toDoubleOrNull(),
                 netPowerRaw = raw,
-                discharging = states[BatteryDischargingEntity]?.state == "on",
+                gridOutage = outage,
                 decimals = chip.state?.decimals ?: 2,
                 suffix = chip.state?.suffix ?: "kW",
             )
@@ -475,6 +509,7 @@ internal fun chipStatusLabel(chip: WidgetNode, states: Map<String, EntityState>)
             socPercent = states[BatterySocEntity]?.state?.toDoubleOrNull(),
             capacityWh = states[BatteryStoredEntity]?.attrDouble("max"),
             discharging = states[BatteryDischargingEntity]?.state == "on",
+            gridOutage = outage,
         ).ifBlank { null }
         else -> when {
             chip.state != null -> states.formatState(chip.state).ifBlank { null }
@@ -2365,13 +2400,19 @@ fun BatteryRuntimePanel(viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
     val states by viewModel.entitiesFlow(BatteryRuntimeEntities).collectAsState()
     val discharging = states[BatteryDischargingEntity]?.state == "on"
+    val gridOutage = isPowerOutage(states)
     val storedWh = states[BatteryStoredEntity]?.state?.toDoubleOrNull() ?: Double.NaN
     val reserveWh = states[BatteryReserveEntity]?.state?.toDoubleOrNull() ?: Double.NaN
     val loadW = states[BatteryLoadEntity]?.state?.toDoubleOrNull() ?: Double.NaN
-    val runtime = states.formatState(
-        StateFormat(kind = "text", entity = BatteryRuntimeEntity),
-    ).ifBlank {
-        batteryHeadlineRuntime(storedWh = storedWh, reserveWh = reserveWh, loadW = loadW).orEmpty()
+    // During outage prefer total pack time; the HA template is above-reserve only.
+    val runtime = if (gridOutage) {
+        batteryHeadlineRuntime(storedWh = storedWh, reserveWh = null, loadW = loadW).orEmpty()
+    } else {
+        states.formatState(
+            StateFormat(kind = "text", entity = BatteryRuntimeEntity),
+        ).ifBlank {
+            batteryHeadlineRuntime(storedWh = storedWh, reserveWh = reserveWh, loadW = loadW).orEmpty()
+        }
     }
     val load = states.number(BatteryLoadEntity, 0, " W")
     val stored = states.number(BatteryStoredEntity, 2, " kWh", 0.001)
@@ -2729,7 +2770,7 @@ fun EnergyStats(viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val net = gridStatusChipLabel(
         netPowerKw = netRaw?.toDoubleOrNull(),
         netPowerRaw = netRaw,
-        discharging = states[BatteryDischargingEntity]?.state == "on",
+        gridOutage = isPowerOutage(states),
     )
     val battery = states.number(BatteryStoredEntity, 3, " kWh", 0.001)
     val tiles = listOf(

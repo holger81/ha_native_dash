@@ -32,6 +32,18 @@ class BatteryRuntimeEstimateTest {
         )
     }
 
+    @Test fun outageHeadlineUsesTotalPackNotAboveReserve() {
+        // Same numbers that produced the misleading "50m" chip from the HA template.
+        assertEquals(
+            "50m",
+            batteryHeadlineRuntime(storedWh = 4905.0, reserveWh = 4032.0, loadW = 1044.0),
+        )
+        assertEquals(
+            "4h 42m",
+            batteryHeadlineRuntime(storedWh = 4905.0, reserveWh = null, loadW = 1044.0),
+        )
+    }
+
     @Test fun formatsWholeHoursAndSubHourRemainders() {
         assertEquals("2h", formatRuntimeHours(2.0))
         assertEquals("25m", formatRuntimeHours(25.0 / 60.0))

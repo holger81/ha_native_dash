@@ -71,9 +71,11 @@ fun batteryRuntimeEstimates(storedWh: Double, reserveWh: Double, loadW: Double):
 }
 
 /**
- * Headline runtime matching sensor.battery_runtime_remaining when Envoy energy
- * sensors are up. During outages those sensors go unavailable — fall back to
- * stored / load (total pack time) using battery_energy_helper.
+ * Headline runtime matching sensor.battery_runtime_remaining when the grid is
+ * up: (stored − reserve) / load. During a grid outage the battery drains into
+ * reserve, so pass reserveWh=null to report total pack time (stored / load)
+ * from battery_energy_helper — the HA template's above-reserve figure is
+ * misleading while islanded (e.g. ~50m vs ~4h).
  */
 fun batteryHeadlineRuntime(storedWh: Double, reserveWh: Double?, loadW: Double): String? {
     if (!storedWh.isFinite() || !loadW.isFinite() || loadW < 100.0) return null
@@ -90,25 +92,26 @@ fun estimatedBatterySocPercent(storedWh: Double, capacityWh: Double): Int? {
     return ((storedWh / capacityWh) * 100.0).roundToInt().coerceIn(0, 100)
 }
 
-/** Grid status chip: kW when known; labeled outage/offline when Envoy net power is down. */
+/** Grid status chip: kW when known; "Outage" when islanded; Offline when Envoy is down. */
 fun gridStatusChipLabel(
     netPowerKw: Double?,
     netPowerRaw: String?,
-    discharging: Boolean,
+    gridOutage: Boolean,
     decimals: Int = 2,
     suffix: String = "kW",
 ): String {
+    if (gridOutage) return "Outage"
     if (netPowerKw != null && netPowerKw.isFinite()) return netPowerKw.format(decimals, suffix)
     return when {
-        discharging -> "Outage"
         isUnavailableState(netPowerRaw) -> "Offline"
         else -> "—"
     }
 }
 
 /**
- * Battery status chip while discharging: prefer the HA runtime template, else
- * estimate from helper + load, else SoC, else a short discharging label.
+ * Battery status chip: when the grid is up, prefer the HA above-reserve template.
+ * During a grid outage ignore that template (it understates islanded runtime)
+ * and estimate total pack time from helper + load; else SoC / "On battery".
  */
 fun batteryStatusChipLabel(
     runtimeText: String?,
@@ -118,19 +121,23 @@ fun batteryStatusChipLabel(
     socPercent: Double?,
     capacityWh: Double?,
     discharging: Boolean,
+    gridOutage: Boolean = false,
 ): String {
-    runtimeText
-        ?.takeIf { it.isNotBlank() && !isUnavailableState(it) }
-        ?.let { return it }
+    if (!gridOutage) {
+        runtimeText
+            ?.takeIf { it.isNotBlank() && !isUnavailableState(it) }
+            ?.let { return it }
+    }
     batteryHeadlineRuntime(
         storedWh = storedWh ?: Double.NaN,
-        reserveWh = reserveWh,
+        // Islanded: drain includes reserve — do not subtract it.
+        reserveWh = if (gridOutage) null else reserveWh,
         loadW = loadW ?: Double.NaN,
     )?.let { return it }
     socPercent?.takeIf { it.isFinite() }?.let { return "${it.roundToInt()}%" }
     estimatedBatterySocPercent(storedWh ?: Double.NaN, capacityWh ?: Double.NaN)
         ?.let { return "$it%" }
-    return if (discharging) "On battery" else ""
+    return if (discharging || gridOutage) "On battery" else ""
 }
 
 fun Map<String, EntityState>.tempHum(display: DisplayNode?): String {
