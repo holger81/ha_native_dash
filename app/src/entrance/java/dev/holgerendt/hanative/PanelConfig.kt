@@ -13,6 +13,8 @@ object PanelConfig {
     const val MOTION_ENTITY = "input_boolean.entrance_tablet_motion"
     /** Blank the panel after this long without motion or touch; 0 = always on (Settings overrides). */
     const val DEFAULT_SCREEN_TIMEOUT_SECONDS = 90
+    /** Front-camera wake sensitivity 0=low 1=normal 2=high (Settings overrides). */
+    const val DEFAULT_MOTION_SENSITIVITY = 1
     val PANEL_ALIASES = listOf("entrance", "entrance-wall", "entrance_wall")
     /** Same household HA as greatroom; NetworkGuard requires private DNS resolution. */
     const val DEFAULT_HA_URL = "https://hrob.dnsalias.net:8123"

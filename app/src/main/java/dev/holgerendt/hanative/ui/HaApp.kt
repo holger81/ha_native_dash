@@ -863,6 +863,35 @@ private fun ScreenTimeoutCard(viewModel: HaViewModel) {
         ) {
             Text("Save timeout", color = Color.Black)
         }
+        if (PanelConfig.USE_TABLET_MOTION) {
+            Text(
+                "Wake sensitivity",
+                color = overlay.text,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                val levels = listOf("Low" to 0, "Normal" to 1, "High" to 2)
+                levels.forEach { (label, level) ->
+                    val active = ui.motionSensitivity == level
+                    Button(
+                        onClick = { viewModel.setMotionSensitivity(level) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (active) ActiveYellow else overlay.well,
+                            contentColor = if (active) Color.Black else overlay.text,
+                        ),
+                    ) {
+                        Text(label, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal)
+                    }
+                }
+            }
+            Text(
+                "How much movement in front of the tablet wakes the screen. Higher reacts sooner but can " +
+                    "trigger on shadows or the door camera view.",
+                color = overlay.muted,
+                fontSize = 13.sp,
+            )
+        }
         EntityPickerField(
             label = "Turn off display entity",
             hint = "switch.uc_display turns the panel off on sleep and on when waking",

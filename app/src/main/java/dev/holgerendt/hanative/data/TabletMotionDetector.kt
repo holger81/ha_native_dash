@@ -8,6 +8,7 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import dev.holgerendt.hanative.PanelConfig
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
@@ -17,6 +18,7 @@ import kotlin.math.abs
  */
 class TabletMotionDetector(
     context: Context,
+    sensitivityLevel: Int = PanelConfig.DEFAULT_MOTION_SENSITIVITY,
     private val onMotion: (Boolean) -> Unit,
 ) {
     private val app = context.applicationContext
@@ -28,6 +30,20 @@ class TabletMotionDetector(
     private var settleFrames = 0
     private var lastMotionAtMs = 0L
     private var reported = false
+
+    @Volatile private var motionFraction: Float = fractionFor(sensitivityLevel)
+    @Volatile private var pixelDelta: Int = deltaFor(sensitivityLevel)
+
+    /** Applies one of the Settings sensitivity levels; takes effect on the next analyzed frame. */
+    fun setSensitivity(level: Int) {
+        val fraction = fractionFor(level)
+        val delta = deltaFor(level)
+        if (fraction == motionFraction && delta == pixelDelta) return
+        motionFraction = fraction
+        pixelDelta = delta
+        previous = null
+        settleFrames = 0
+    }
 
     fun start(owner: LifecycleOwner) {
         if (!running.compareAndSet(false, true)) return
@@ -89,13 +105,14 @@ class TabletMotionDetector(
                 return
             }
             var changed = 0
+            val delta = pixelDelta
             for (i in sample.indices) {
-                if (abs((sample[i].toInt() and 0xFF) - (prior[i].toInt() and 0xFF)) >= PIXEL_DELTA) {
+                if (abs((sample[i].toInt() and 0xFF) - (prior[i].toInt() and 0xFF)) >= delta) {
                     changed++
                 }
             }
             val now = System.currentTimeMillis()
-            if (changed.toFloat() / sample.size >= MOTION_FRACTION) {
+            if (changed.toFloat() / sample.size >= motionFraction) {
                 lastMotionAtMs = now
                 setReported(true)
             } else if (reported && now - lastMotionAtMs >= CLEAR_AFTER_MS) {
@@ -137,11 +154,28 @@ class TabletMotionDetector(
     }
 
     companion object {
+        /** Settings levels for the front-camera wake threshold. */
+        const val SENSITIVITY_LOW = 0
+        const val SENSITIVITY_NORMAL = 1
+        const val SENSITIVITY_HIGH = 2
+
+        /** Share of the 48x36 grid that must change within one frame to count as motion. */
+        private fun fractionFor(level: Int): Float = when (level) {
+            SENSITIVITY_LOW -> 0.05f
+            SENSITIVITY_HIGH -> 0.012f
+            else -> 0.025f
+        }
+
+        /** Minimum luma step per sampled pixel before it counts as changed. */
+        private fun deltaFor(level: Int): Int = when (level) {
+            SENSITIVITY_LOW -> 24
+            SENSITIVITY_HIGH -> 12
+            else -> 16
+        }
+
         private const val GRID_W = 48
         private const val GRID_H = 36
         private const val SETTLE_FRAMES = 8
-        private const val PIXEL_DELTA = 22
-        private const val MOTION_FRACTION = 0.04f
         private const val CLEAR_AFTER_MS = 20_000L
     }
 }

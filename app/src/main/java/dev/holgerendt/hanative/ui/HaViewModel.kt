@@ -154,6 +154,8 @@ data class UiState(
     val remoteUrls: List<String> = emptyList(),
     val managementError: String? = null,
     val screenTimeoutSeconds: Int = 0,
+    /** Front-camera wake sensitivity: 0 = low, 1 = normal, 2 = high. */
+    val motionSensitivity: Int = PanelConfig.DEFAULT_MOTION_SENSITIVITY,
     val screenAsleep: Boolean = false,
     val displayOffEntity: String = "",
     val displayBrightnessEntity: String = "",
@@ -318,6 +320,7 @@ class HaViewModel(
             showSetup = !credentials.isConfigured,
             setupError = loadError,
             screenTimeoutSeconds = credentials.screenTimeoutSeconds,
+            motionSensitivity = credentials.motionSensitivity,
             displayOffEntity = credentials.displayOffEntity,
             displayBrightnessEntity = credentials.displayBrightnessEntity,
             displayIlluminanceEntity = credentials.displayIlluminanceEntity,
@@ -1669,6 +1672,12 @@ class HaViewModel(
         lastActivityMs = System.currentTimeMillis()
         _ui.value = _ui.value.copy(screenTimeoutSeconds = seconds)
         return Result.success(Unit)
+    }
+
+    /** Changes the front-camera wake sensitivity; the running detector picks it up within a frame. */
+    fun setMotionSensitivity(level: Int) {
+        credentials.motionSensitivity = level
+        _ui.value = _ui.value.copy(motionSensitivity = level.coerceIn(0, 2))
     }
 
     suspend fun setGo2rtcUrl(url: String): Result<Unit> {

@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "1.0.301",
+      "date": "2026-10-18",
+      "notes": [
+        "New Wake sensitivity setting (Entrance): pick Low, Normal or High for how easily movement in front of the tablet wakes the screen — applies live, no restart needed.",
+        "Wake detection is more sensitive than before by default, so a person at the door no longer has to wave around."
+      ]
+    },
+    {
       "version": "1.0.297",
       "date": "2026-10-17",
       "notes": [

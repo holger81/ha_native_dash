@@ -24,6 +24,8 @@ import dev.holgerendt.hanative.data.TabletMotionDetector
 import dev.holgerendt.hanative.ui.HaApp
 import dev.holgerendt.hanative.ui.HaViewModel
 import dev.holgerendt.hanative.ui.theme.HaNativeTheme
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -53,6 +55,14 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.ui.collect { applyScreenBrightness(it.screenAsleep) }
+            }
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.ui
+                    .map { it.motionSensitivity }
+                    .distinctUntilChanged()
+                    .collect { level -> motionDetector?.setSensitivity(level) }
             }
         }
         setContent {

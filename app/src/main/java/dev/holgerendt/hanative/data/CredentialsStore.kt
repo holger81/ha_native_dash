@@ -122,6 +122,14 @@ class CredentialsStore(context: Context) {
             persist()
         }
 
+    /** Front-camera wake sensitivity: 0 = low, 1 = normal, 2 = high. */
+    var motionSensitivity: Int =
+        prefs.getInt(KEY_MOTION_SENSITIVITY, PanelConfig.DEFAULT_MOTION_SENSITIVITY).coerceIn(0, 2)
+        set(value) {
+            field = value.coerceIn(0, 2)
+            persist()
+        }
+
     /** HA entity to turn off/on when the wall sleeps (e.g. switch.uc_display). Empty = app overlay only. */
     private var displayOffEntityBacking = readPref(KEY_DISPLAY_OFF)
     var displayOffEntity: String
@@ -330,6 +338,7 @@ class CredentialsStore(context: Context) {
             .putBoolean(KEY_FLUX_PAD_REJECT, fluxPadRejectEnabled)
             .putString(KEY_PIN, managementPin)
             .putInt(KEY_TIMEOUT_SECONDS, screenTimeoutSeconds)
+            .putInt(KEY_MOTION_SENSITIVITY, motionSensitivity)
             .putString(KEY_DISPLAY_OFF, displayOffEntity)
             .putString(KEY_DISPLAY_BRIGHTNESS, displayBrightnessEntity)
             .putString(KEY_DISPLAY_ILLUMINANCE, displayIlluminanceEntity)
@@ -372,6 +381,7 @@ class CredentialsStore(context: Context) {
             put("flux_pad_reject", fluxPadRejectEnabled)
             put("management_pin", pin)
             put("screen_timeout_seconds", screenTimeoutSeconds)
+            put("motion_sensitivity", motionSensitivity)
             if (displayOffEntity.isNotBlank()) put("display_off_entity", displayOffEntity)
             if (displayBrightnessEntity.isNotBlank()) put("display_brightness_entity", displayBrightnessEntity)
             if (displayIlluminanceEntity.isNotBlank()) put("display_illuminance_entity", displayIlluminanceEntity)
@@ -473,6 +483,10 @@ class CredentialsStore(context: Context) {
                         .coerceIn(0, 180) * 60
             }
         }
+        if (!prefs.contains(KEY_MOTION_SENSITIVITY) && obj.has("motion_sensitivity")) {
+            motionSensitivity = obj.optInt("motion_sensitivity", PanelConfig.DEFAULT_MOTION_SENSITIVITY)
+                .coerceIn(0, 2)
+        }
         if (!prefs.contains(KEY_DISPLAY_OFF) && obj.has("display_off_entity")) {
             displayOffEntity = normalizeEntityId(obj.optString("display_off_entity"))
         }
@@ -541,6 +555,7 @@ class CredentialsStore(context: Context) {
         private const val KEY_TIMEOUT_SECONDS = "screen_timeout_seconds"
         private const val KEY_TIMEOUT_MINUTES_LEGACY = "screen_timeout_minutes"
         private const val KEY_TIMEOUT_DEFAULT_APPLIED = "screen_timeout_default_applied"
+        private const val KEY_MOTION_SENSITIVITY = "motion_sensitivity"
         private const val KEY_DISPLAY_OFF = "display_off_entity"
         private const val KEY_DISPLAY_BRIGHTNESS = "display_brightness_entity"
         private const val KEY_DISPLAY_ILLUMINANCE = "display_illuminance_entity"
