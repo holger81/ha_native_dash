@@ -20,6 +20,9 @@ fun Double?.format(decimals: Int = 1, suffix: String = ""): String {
 
 fun String?.toDoubleOrNullSafe(): Double? = this?.toDoubleOrNull()
 
+fun isUnavailableState(state: String?): Boolean =
+    state.isNullOrBlank() || state in setOf("unavailable", "unknown", "none")
+
 fun Map<String, EntityState>.number(id: String?, decimals: Int = 1, suffix: String = "", scale: Double = 1.0): String {
     val value = getState(id)?.state?.toDoubleOrNull()?.times(scale)
     return value.format(decimals, suffix)
@@ -54,13 +57,80 @@ data class BatteryRuntimeEstimates(val reserve: String, val total: String)
  * reserve. The headline sensor is (stored − reserve) / load. Reserve runtime
  * is reserve / load. Total runtime is stored / load — time to empty the pack,
  * including the reserve — not (stored + reserve), which would double-count.
+ *
+ * When reserve is unavailable (common during Envoy outages), reserve shows "—"
+ * but total runtime is still estimated from stored / load.
  */
 fun batteryRuntimeEstimates(storedWh: Double, reserveWh: Double, loadW: Double): BatteryRuntimeEstimates? {
-    if (!storedWh.isFinite() || !reserveWh.isFinite() || !loadW.isFinite() || loadW < 100.0) return null
+    if (!storedWh.isFinite() || !loadW.isFinite() || loadW < 100.0) return null
+    val reserveOk = reserveWh.isFinite()
     return BatteryRuntimeEstimates(
-        reserve = formatRuntimeHours(reserveWh.coerceAtLeast(0.0) / loadW),
+        reserve = if (reserveOk) formatRuntimeHours(reserveWh.coerceAtLeast(0.0) / loadW) else "—",
         total = formatRuntimeHours(storedWh.coerceAtLeast(0.0) / loadW),
     )
+}
+
+/**
+ * Headline runtime matching sensor.battery_runtime_remaining when Envoy energy
+ * sensors are up. During outages those sensors go unavailable — fall back to
+ * stored / load (total pack time) using battery_energy_helper.
+ */
+fun batteryHeadlineRuntime(storedWh: Double, reserveWh: Double?, loadW: Double): String? {
+    if (!storedWh.isFinite() || !loadW.isFinite() || loadW < 100.0) return null
+    val usable = if (reserveWh != null && reserveWh.isFinite()) {
+        (storedWh - reserveWh).coerceAtLeast(0.0)
+    } else {
+        storedWh.coerceAtLeast(0.0)
+    }
+    return formatRuntimeHours(usable / loadW)
+}
+
+fun estimatedBatterySocPercent(storedWh: Double, capacityWh: Double): Int? {
+    if (!storedWh.isFinite() || !capacityWh.isFinite() || capacityWh <= 0.0) return null
+    return ((storedWh / capacityWh) * 100.0).roundToInt().coerceIn(0, 100)
+}
+
+/** Grid status chip: kW when known; labeled outage/offline when Envoy net power is down. */
+fun gridStatusChipLabel(
+    netPowerKw: Double?,
+    netPowerRaw: String?,
+    discharging: Boolean,
+    decimals: Int = 2,
+    suffix: String = "kW",
+): String {
+    if (netPowerKw != null && netPowerKw.isFinite()) return netPowerKw.format(decimals, suffix)
+    return when {
+        discharging -> "Outage"
+        isUnavailableState(netPowerRaw) -> "Offline"
+        else -> "—"
+    }
+}
+
+/**
+ * Battery status chip while discharging: prefer the HA runtime template, else
+ * estimate from helper + load, else SoC, else a short discharging label.
+ */
+fun batteryStatusChipLabel(
+    runtimeText: String?,
+    storedWh: Double?,
+    reserveWh: Double?,
+    loadW: Double?,
+    socPercent: Double?,
+    capacityWh: Double?,
+    discharging: Boolean,
+): String {
+    runtimeText
+        ?.takeIf { it.isNotBlank() && !isUnavailableState(it) }
+        ?.let { return it }
+    batteryHeadlineRuntime(
+        storedWh = storedWh ?: Double.NaN,
+        reserveWh = reserveWh,
+        loadW = loadW ?: Double.NaN,
+    )?.let { return it }
+    socPercent?.takeIf { it.isFinite() }?.let { return "${it.roundToInt()}%" }
+    estimatedBatterySocPercent(storedWh ?: Double.NaN, capacityWh ?: Double.NaN)
+        ?.let { return "$it%" }
+    return if (discharging) "On battery" else ""
 }
 
 fun Map<String, EntityState>.tempHum(display: DisplayNode?): String {

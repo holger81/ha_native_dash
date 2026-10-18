@@ -122,10 +122,14 @@ import dev.holgerendt.hanative.ui.LoadingSpinner
 import dev.holgerendt.hanative.ui.MdiIcon
 import dev.holgerendt.hanative.ui.MediaPreview
 import dev.holgerendt.hanative.ui.PinGateDialog
+import dev.holgerendt.hanative.ui.batteryHeadlineRuntime
 import dev.holgerendt.hanative.ui.batteryRuntimeEstimates
+import dev.holgerendt.hanative.ui.batteryStatusChipLabel
 import dev.holgerendt.hanative.ui.brightnessPct
+import dev.holgerendt.hanative.ui.estimatedBatterySocPercent
 import dev.holgerendt.hanative.ui.format
 import dev.holgerendt.hanative.ui.formatState
+import dev.holgerendt.hanative.ui.gridStatusChipLabel
 import dev.holgerendt.hanative.ui.isOn
 import dev.holgerendt.hanative.ui.isVisible
 import dev.holgerendt.hanative.ui.number
@@ -208,22 +212,39 @@ private val EnergyStatsTypes = setOf(
     "energy_self_sufficiency_gauge",
 )
 
+private const val GridNetEntity = "sensor.envoy_202234122877_current_net_power_consumption"
+private const val BatteryRuntimeEntity = "sensor.battery_runtime_remaining"
+private const val BatteryDischargingEntity = "binary_sensor.envoy_battery_discharging"
+private const val BatteryStoredEntity = "input_number.battery_energy_helper"
+private const val BatteryReserveEntity = "sensor.envoy_202234122877_reserve_battery_energy"
+private const val BatteryLoadEntity = "sensor.housepanel_total_consumption_house_consumption_1h_mean"
+
 private val BatteryRuntimeEntities = listOf(
-    "binary_sensor.envoy_battery_discharging",
-    "sensor.battery_runtime_remaining",
-    "sensor.housepanel_total_consumption_house_consumption_1h_mean",
-    "input_number.battery_energy_helper",
-    "sensor.envoy_202234122877_reserve_battery_energy",
+    BatteryDischargingEntity,
+    BatteryRuntimeEntity,
+    BatteryLoadEntity,
+    BatteryStoredEntity,
+    BatteryReserveEntity,
     "sensor.envoy_202234122877_battery",
 )
 
 /** House battery state-of-charge (%); used on live energy + battery panels. */
 private const val BatterySocEntity = "sensor.envoy_202234122877_battery"
 
+/** Extra entities for outage-aware grid/battery chip labels. */
+private val ChipRowEnergyEntities = listOf(
+    BatteryDischargingEntity,
+    BatteryStoredEntity,
+    BatteryLoadEntity,
+    BatteryReserveEntity,
+    BatterySocEntity,
+)
+
 private val EnergyStatsEntities = listOf(
     "sensor.envoy_202234122877_current_power_production",
-    "sensor.envoy_202234122877_current_net_power_consumption",
-    "input_number.battery_energy_helper",
+    GridNetEntity,
+    BatteryStoredEntity,
+    BatteryDischargingEntity,
 )
 
 private val MmWaveEntities = listOf(
@@ -364,7 +385,8 @@ fun WidgetItem(
 @Composable
 fun ChipRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val chipEntities = remember(widget) {
-        widget.chips.flatMap { listOf(it.entity, it.state?.entity, it.visibility?.entity) }
+        widget.chips.flatMap { listOf(it.entity, it.state?.entity, it.visibility?.entity) } +
+            ChipRowEnergyEntities
     }
     val states by viewModel.entitiesFlow(chipEntities).collectAsState()
     Row(
@@ -375,16 +397,14 @@ fun ChipRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Mod
         widget.chips.filter { states.isVisible(it) }.forEach { chip ->
             val entity = states[chip.entity]
             val unlocked = chip.emphasizeUnlocked == true && entity?.state == "unlocked"
+            val gridOutage = isGridOutageChip(chip, states)
             val highlighted = when {
                 unlocked -> true
+                gridOutage -> true
                 chip.accent == "active" || chip.accent == "active-big" -> true
                 else -> false
             }
-            val label = when {
-                chip.layout == "icon|name" -> chip.name
-                chip.state != null -> states.formatState(chip.state)
-                else -> chip.name
-            }
+            val label = chipStatusLabel(chip, states)
             val iconCircle = when {
                 unlocked -> ThemeWhite
                 else -> Gray000
@@ -422,6 +442,43 @@ fun ChipRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Mod
                     )
                 }
             }
+        }
+    }
+}
+
+internal fun isGridOutageChip(chip: WidgetNode, states: Map<String, EntityState>): Boolean {
+    val entityId = chip.entity ?: chip.state?.entity
+    if (entityId != GridNetEntity) return false
+    if (states[BatteryDischargingEntity]?.state != "on") return false
+    return states[GridNetEntity]?.state?.toDoubleOrNull() == null
+}
+
+internal fun chipStatusLabel(chip: WidgetNode, states: Map<String, EntityState>): String? {
+    if (chip.layout == "icon|name") return chip.name
+    val stateEntity = chip.state?.entity ?: chip.entity
+    return when (stateEntity) {
+        GridNetEntity -> {
+            val raw = states[GridNetEntity]?.state
+            gridStatusChipLabel(
+                netPowerKw = raw?.toDoubleOrNull(),
+                netPowerRaw = raw,
+                discharging = states[BatteryDischargingEntity]?.state == "on",
+                decimals = chip.state?.decimals ?: 2,
+                suffix = chip.state?.suffix ?: "kW",
+            )
+        }
+        BatteryRuntimeEntity -> batteryStatusChipLabel(
+            runtimeText = states[BatteryRuntimeEntity]?.state,
+            storedWh = states[BatteryStoredEntity]?.state?.toDoubleOrNull(),
+            reserveWh = states[BatteryReserveEntity]?.state?.toDoubleOrNull(),
+            loadW = states[BatteryLoadEntity]?.state?.toDoubleOrNull(),
+            socPercent = states[BatterySocEntity]?.state?.toDoubleOrNull(),
+            capacityWh = states[BatteryStoredEntity]?.attrDouble("max"),
+            discharging = states[BatteryDischargingEntity]?.state == "on",
+        ).ifBlank { null }
+        else -> when {
+            chip.state != null -> states.formatState(chip.state).ifBlank { null }
+            else -> chip.name
         }
     }
 }
@@ -2307,17 +2364,22 @@ fun HistoryChart(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier 
 fun BatteryRuntimePanel(viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
     val states by viewModel.entitiesFlow(BatteryRuntimeEntities).collectAsState()
-    val discharging = states["binary_sensor.envoy_battery_discharging"]?.state == "on"
+    val discharging = states[BatteryDischargingEntity]?.state == "on"
+    val storedWh = states[BatteryStoredEntity]?.state?.toDoubleOrNull() ?: Double.NaN
+    val reserveWh = states[BatteryReserveEntity]?.state?.toDoubleOrNull() ?: Double.NaN
+    val loadW = states[BatteryLoadEntity]?.state?.toDoubleOrNull() ?: Double.NaN
     val runtime = states.formatState(
-        StateFormat(kind = "text", entity = "sensor.battery_runtime_remaining"),
-    )
-    val load = states.number("sensor.housepanel_total_consumption_house_consumption_1h_mean", 0, " W")
-    val stored = states.number("input_number.battery_energy_helper", 2, " kWh", 0.001)
-    val reserve = states.number("sensor.envoy_202234122877_reserve_battery_energy", 0, " Wh")
+        StateFormat(kind = "text", entity = BatteryRuntimeEntity),
+    ).ifBlank {
+        batteryHeadlineRuntime(storedWh = storedWh, reserveWh = reserveWh, loadW = loadW).orEmpty()
+    }
+    val load = states.number(BatteryLoadEntity, 0, " W")
+    val stored = states.number(BatteryStoredEntity, 2, " kWh", 0.001)
+    val reserve = states.number(BatteryReserveEntity, 0, " Wh")
     val estimates = batteryRuntimeEstimates(
-        storedWh = states["input_number.battery_energy_helper"]?.state?.toDoubleOrNull() ?: Double.NaN,
-        reserveWh = states["sensor.envoy_202234122877_reserve_battery_energy"]?.state?.toDoubleOrNull() ?: Double.NaN,
-        loadW = states["sensor.housepanel_total_consumption_house_consumption_1h_mean"]?.state?.toDoubleOrNull() ?: Double.NaN,
+        storedWh = storedWh,
+        reserveWh = reserveWh,
+        loadW = loadW,
     )
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -2329,7 +2391,7 @@ fun BatteryRuntimePanel(viewModel: HaViewModel, modifier: Modifier = Modifier) {
                 .fillMaxWidth()
                 .clip(CardShape)
                 .background(overlay.card)
-                .clickable { viewModel.openMoreInfo("sensor.battery_runtime_remaining") }
+                .clickable { viewModel.openMoreInfo(BatteryRuntimeEntity) }
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -2391,7 +2453,13 @@ private fun BatterySocChart(viewModel: HaViewModel, modifier: Modifier = Modifie
             delay(45_000L)
         }
     }
-    val socText = entity?.state?.toDoubleOrNull()?.let { "${it.roundToInt()}%" } ?: "—"
+    val stored by viewModel.entityFlow(BatteryStoredEntity).collectAsState()
+    val socText = entity?.state?.toDoubleOrNull()?.let { "${it.roundToInt()}%" }
+        ?: estimatedBatterySocPercent(
+            storedWh = stored?.state?.toDoubleOrNull() ?: Double.NaN,
+            capacityWh = stored?.attrDouble("max") ?: Double.NaN,
+        )?.let { "~$it%" }
+        ?: "—"
     Column(
         modifier = modifier
             .height(228.dp)
@@ -2657,12 +2725,17 @@ fun EnergyStats(viewModel: HaViewModel, modifier: Modifier = Modifier) {
     val overlay = LocalOverlay.current
     val states by viewModel.entitiesFlow(EnergyStatsEntities).collectAsState()
     val solar = states.number("sensor.envoy_202234122877_current_power_production", 2, " kW")
-    val net = states.number("sensor.envoy_202234122877_current_net_power_consumption", 2, " kW")
-    val battery = states.number("input_number.battery_energy_helper", 3, " kWh", 0.001)
+    val netRaw = states[GridNetEntity]?.state
+    val net = gridStatusChipLabel(
+        netPowerKw = netRaw?.toDoubleOrNull(),
+        netPowerRaw = netRaw,
+        discharging = states[BatteryDischargingEntity]?.state == "on",
+    )
+    val battery = states.number(BatteryStoredEntity, 3, " kWh", 0.001)
     val tiles = listOf(
         Triple("Solar", solar, "sensor.envoy_202234122877_current_power_production"),
-        Triple("Grid", net, "sensor.envoy_202234122877_current_net_power_consumption"),
-        Triple("Battery", battery, "input_number.battery_energy_helper"),
+        Triple("Grid", net, GridNetEntity),
+        Triple("Battery", battery, BatteryStoredEntity),
     )
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         tiles.forEach { (name, value, entityId) ->
