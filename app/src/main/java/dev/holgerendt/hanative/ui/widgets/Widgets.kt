@@ -469,10 +469,20 @@ fun ChipRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Mod
     }
 }
 
-/** True when Emporia/Enpower report the grid is down (or legacy Envoy fallback). */
+/**
+ * True when the grid is down (or legacy Envoy fallback).
+ *
+ * Enpower [EnpowerGridStatusEntity] is authoritative when known (`on` = grid up,
+ * `off` = islanded). Emporia [PowerOutageEntity] is only used when Enpower is
+ * missing/unavailable — its "phase B < 80W" heuristic false-fires during low
+ * grid exchange while the house is on battery with the grid still connected.
+ */
 internal fun isPowerOutage(states: Map<String, EntityState>): Boolean {
+    when (states[EnpowerGridStatusEntity]?.state) {
+        "on" -> return false
+        "off" -> return true
+    }
     if (states[PowerOutageEntity]?.state == "on") return true
-    if (states[EnpowerGridStatusEntity]?.state == "off") return true
     // Legacy: Envoy net power unavailable while the battery is discharging.
     // Only when the net entity is present — missing keys must not imply outage.
     val net = states[GridNetEntity]?.state ?: return false
