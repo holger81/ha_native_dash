@@ -131,7 +131,6 @@ import dev.holgerendt.hanative.ui.format
 import dev.holgerendt.hanative.ui.formatState
 import dev.holgerendt.hanative.ui.gridStatusChipLabel
 import dev.holgerendt.hanative.ui.isOn
-import dev.holgerendt.hanative.ui.isUnavailableState
 import dev.holgerendt.hanative.ui.isVisible
 import dev.holgerendt.hanative.ui.number
 import dev.holgerendt.hanative.ui.relativeToNow
@@ -221,10 +220,12 @@ private const val BatteryDischargingEntity = "binary_sensor.envoy_battery_discha
 private const val BatteryStoredEntity = "input_number.battery_energy_helper"
 private const val BatteryReserveEntity = "sensor.envoy_202234122877_reserve_battery_energy"
 private const val BatteryLoadEntity = "sensor.housepanel_total_consumption_house_consumption_1h_mean"
-/** Emporia-based outage flag (on = grid down). */
+/**
+ * Trusted HA outage flag (`on` = grid down / islanded).
+ * Defined in HA as a Template Helper from Enpower `grid_status` (off = islanded);
+ * the tablet must not re-derive outage from Enpower/Emporia/Envoy.
+ */
 private const val PowerOutageEntity = "binary_sensor.power_outage"
-/** Enpower grid connection (off = islanded / grid down). */
-private const val EnpowerGridStatusEntity = "binary_sensor.enpower_122216008760_grid_status"
 
 private val BatteryRuntimeEntities = listOf(
     BatteryDischargingEntity,
@@ -233,7 +234,6 @@ private val BatteryRuntimeEntities = listOf(
     BatteryStoredEntity,
     BatteryReserveEntity,
     PowerOutageEntity,
-    EnpowerGridStatusEntity,
     "sensor.envoy_202234122877_battery",
 )
 
@@ -248,7 +248,6 @@ private val ChipRowEnergyEntities = listOf(
     BatteryReserveEntity,
     BatterySocEntity,
     PowerOutageEntity,
-    EnpowerGridStatusEntity,
 )
 
 private val EnergyStatsEntities = listOf(
@@ -257,7 +256,6 @@ private val EnergyStatsEntities = listOf(
     BatteryStoredEntity,
     BatteryDischargingEntity,
     PowerOutageEntity,
-    EnpowerGridStatusEntity,
 )
 
 private val MmWaveEntities = listOf(
@@ -469,26 +467,9 @@ fun ChipRow(widget: WidgetNode, viewModel: HaViewModel, modifier: Modifier = Mod
     }
 }
 
-/**
- * True when the grid is down (or legacy Envoy fallback).
- *
- * Enpower [EnpowerGridStatusEntity] is authoritative when known (`on` = grid up,
- * `off` = islanded). Emporia [PowerOutageEntity] is only used when Enpower is
- * missing/unavailable — its "phase B < 80W" heuristic false-fires during low
- * grid exchange while the house is on battery with the grid still connected.
- */
-internal fun isPowerOutage(states: Map<String, EntityState>): Boolean {
-    when (states[EnpowerGridStatusEntity]?.state) {
-        "on" -> return false
-        "off" -> return true
-    }
-    if (states[PowerOutageEntity]?.state == "on") return true
-    // Legacy: Envoy net power unavailable while the battery is discharging.
-    // Only when the net entity is present — missing keys must not imply outage.
-    val net = states[GridNetEntity]?.state ?: return false
-    if (states[BatteryDischargingEntity]?.state != "on") return false
-    return isUnavailableState(net)
-}
+/** True when HA [PowerOutageEntity] reports an outage (`on`). */
+internal fun isPowerOutage(states: Map<String, EntityState>): Boolean =
+    states[PowerOutageEntity]?.state == "on"
 
 internal fun isGridOutageChip(chip: WidgetNode, states: Map<String, EntityState>): Boolean {
     val entityId = chip.entity ?: chip.state?.entity

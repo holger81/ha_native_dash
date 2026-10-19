@@ -121,3 +121,7 @@ Site-specific hand-added content (the `#presence` popup with its
 `sensor.battery_runtime_remaining`, room/entity ordering, and extra entities)
 lives in `scripts/local_overrides.json`, which the extractor merges into the
 output. Regenerating is safe and reproduces the committed asset exactly.
+
+**Grid outage:** the wall tablet trusts only `binary_sensor.power_outage` (HA
+Template Helper: Enpower `binary_sensor.enpower_122216008760_grid_status` is
+`off` ⇒ outage `on`, with 30s on/off delay). Do not re-derive outage in the app.
