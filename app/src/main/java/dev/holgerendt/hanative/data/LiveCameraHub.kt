@@ -88,6 +88,31 @@ class LiveCameraHub(
         val session = session(target)
         clearIdleRelease(session)
         session.attached.incrementAndGet()
+        if (!target.hasLiveSource()) return
+        // A viewer is waiting now: retry HLS immediately instead of waiting out
+        // the backoff, and reload the decode loop if it is wedged (no player or a
+        // dead one), so the popup never sits on a black rectangle.
+        session.unblockHls()
+        if (session.job?.isActive != true) {
+            startOne(session)
+            return
+        }
+        if (session.player == null || session.errored || !session.videoReady.value) {
+            reloadSession(session)
+            return
+        }
+        runOnMain {
+            val player = session.player ?: return@runOnMain
+            val hasItem = player.currentMediaItem != null
+            val state = player.playbackState
+            if (hasItem && (session.errored || state == Player.STATE_IDLE || state == Player.STATE_ENDED)) {
+                session.errored = false
+                runCatching {
+                    player.seekToDefaultPosition()
+                    player.prepare()
+                }
+            }
+        }
     }
 
     fun restorePlaceholder(target: CameraTarget) {
@@ -122,32 +147,71 @@ class LiveCameraHub(
                 // Already kept alive through sleep; nudge playback and heal if dead.
                 runOnMain { session.player?.playWhenReady = true }
                 if (session.job?.isActive != true) {
-                    session.skipHls = false
+                    session.unblockHls()
                     startOne(session)
                 }
                 return@forEach
             }
-            session.skipHls = false
+            session.unblockHls()
             startOne(session)
             // A pending idle timer aborted while asleep; restart the clock.
             armIdleRelease(session)
         }
     }
 
-    /** Restart any warm session whose decode loop has died. */
+    /**
+     * Restart any warm (or viewed) session whose decode loop has died **or**
+     * whose stream silently stalled: a dead camera behind go2rtc can leave the
+     * ExoPlayer neither errored nor advancing, and a JPEG-only fallback never
+     * returns to HLS on its own. Sampling compares decode progress between
+     * ticks; no progress for [STALL_RELOAD_MS] triggers a full stream reload.
+     */
     fun keepWarmAlive() {
+        val now = System.currentTimeMillis()
         sessions.values.forEach { session ->
-            if (!session.warm || !session.target.hasLiveSource()) return@forEach
+            if (!session.target.hasLiveSource()) return@forEach
+            if (!session.warm && session.attached.get() == 0) return@forEach
             if (session.job?.isActive == true) {
-                runOnMain {
-                    val player = session.player ?: return@runOnMain
-                    if (!player.playWhenReady) player.playWhenReady = true
-                }
+                runOnMain { sampleStall(session, now) }
                 return@forEach
             }
-            session.skipHls = false
+            session.unblockHls()
             startOne(session)
         }
+    }
+
+    /** Main-thread half of [keepWarmAlive]: decide whether this session stalled. */
+    private fun sampleStall(session: Session, now: Long) {
+        val player = session.player
+        if (player != null && !player.playWhenReady) player.playWhenReady = true
+        val position = player?.currentPosition ?: -1L
+        val videoAdvancing = player != null && player.isPlaying && position > session.lastPosSampleMs
+        val bitmap = session.bitmap.value
+        val bitmapAdvancing = bitmap != null && bitmap !== session.lastBitmapSample
+        session.lastPosSampleMs = position
+        session.lastBitmapSample = bitmap
+        if (videoAdvancing || bitmapAdvancing) {
+            session.stalledSinceMs = 0L
+            return
+        }
+        if (session.stalledSinceMs == 0L) {
+            session.stalledSinceMs = now
+            return
+        }
+        if (now - session.stalledSinceMs >= STALL_RELOAD_MS) {
+            session.stalledSinceMs = 0L
+            reloadSession(session)
+        }
+    }
+
+    /** Tear the decode loop down and start it fresh; HLS is un-blocked for the retry. */
+    private fun reloadSession(session: Session) {
+        session.unblockHls()
+        session.jpegJob?.cancel()
+        session.jpegJob = null
+        session.job?.cancel()
+        session.job = null
+        startOne(session)
     }
 
     fun release() {
@@ -238,12 +302,14 @@ class LiveCameraHub(
             }
             val mjpeg = candidates.firstOrNull { it.kind == StreamKind.MJPEG }
             when {
-                hls != null && !session.skipHls -> {
+                hls != null && !session.hlsBlocked() -> {
                     val ok = playHls(session, hls)
-                    if (!ok) session.skipHls = true
+                    if (!ok) session.blockHls()
                 }
                 mjpeg != null -> playMjpeg(session, mjpeg)
-                else -> session.jpegJob?.join() ?: delay(5_000)
+                // Bounded wait: a wedged JPEG poll (camera down) must not strand
+                // this loop forever, or HLS can never be retried after recovery.
+                else -> withTimeoutOrNull(JPEG_JOIN_RETRY_MS) { session.jpegJob?.join() } ?: delay(5_000)
             }
             if (currentCoroutineContext().isActive && sessionShouldRun(session)) delay(1_500)
         }
@@ -326,8 +392,8 @@ class LiveCameraHub(
         }
         session.jpegJob?.cancel()
         // Propagate the outcome: false means the player errored, so runSession
-        // sets skipHls and falls back to MJPEG/JPEG instead of re-trying the
-        // same broken HLS URL forever.
+        // benches HLS (time-boxed) and falls back to MJPEG/JPEG instead of
+        // re-trying the same broken HLS URL in a tight loop.
         return ended.await()
     }
 
@@ -400,7 +466,29 @@ class LiveCameraHub(
         var job: Job? = null
         var jpegJob: Job? = null
         var idleJob: Job? = null
-        @Volatile var skipHls: Boolean = false
+
+        /**
+         * HLS failures only block HLS until this deadline. A camera drop that
+         * errors the player must not permanently strand the warm session on
+         * JPEG stills — once the deadline passes, [runSession] retries HLS.
+         */
+        @Volatile var hlsBlockedUntilMs: Long = 0L
+        fun hlsBlocked(): Boolean =
+            System.currentTimeMillis() < hlsBlockedUntilMs
+
+        fun blockHls() {
+            hlsBlockedUntilMs = System.currentTimeMillis() + HLS_RETRY_BACKOFF_MS
+        }
+
+        fun unblockHls() {
+            hlsBlockedUntilMs = 0L
+        }
+
+        // Stall sampling for [keepWarmAlive]: last observed decode progress.
+        @Volatile var lastPosSampleMs: Long = -1L
+        @Volatile var lastBitmapSample: Bitmap? = null
+        @Volatile var stalledSinceMs: Long = 0L
+
         val attached = AtomicInteger(0)
         @Volatile var warm: Boolean = false
         @Volatile var errored: Boolean = false
@@ -416,6 +504,15 @@ class LiveCameraHub(
     companion object {
         /** Idle (no viewer, non-warm) sessions are released after this long. */
         const val IDLE_RELEASE_MS = 60_000L
+
+        /** How long an HLS failure keeps HLS on the bench before it is retried. */
+        const val HLS_RETRY_BACKOFF_MS = 30_000L
+
+        /** Max time the JPEG-only fallback may strand the resolve loop. */
+        const val JPEG_JOIN_RETRY_MS = 30_000L
+
+        /** No decode progress for this long (and no fresh JPEG) → reload stream. */
+        const val STALL_RELOAD_MS = 20_000L
 
         fun key(target: CameraTarget): String =
             target.entityId?.takeIf { it.isNotBlank() }
