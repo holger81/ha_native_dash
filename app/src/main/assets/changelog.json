@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "1.0.305",
+      "date": "2026-10-22",
+      "notes": [
+        "Frontdoor and garage camera streams now recover by themselves after a camera or go2rtc dropout — a stalled or dead stream reloads within seconds instead of showing a black frame.",
+        "Opening the camera popup on a person detection retries the live stream immediately, so detection is visible right away even after a drop."
+      ]
+    },
+    {
       "version": "1.0.301",
       "date": "2026-10-18",
       "notes": [
