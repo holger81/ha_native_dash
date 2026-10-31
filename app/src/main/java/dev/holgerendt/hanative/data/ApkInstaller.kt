@@ -41,7 +41,17 @@ class ApkInstaller(private val app: Context) {
                     data = Uri.parse("package:${app.packageName}")
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
-                Handler(Looper.getMainLooper()).post { app.startActivity(settings) }
+                // UniFi Display has no MANAGE_UNKNOWN_APP_SOURCES settings screen; an
+                // uncaught ActivityNotFound here killed the whole app mid-upload. Fall back
+                // to the app details page, where “Install unknown apps” can be toggled.
+                Handler(Looper.getMainLooper()).post {
+                    val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = Uri.parse("package:${app.packageName}")
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    runCatching { app.startActivity(settings) }
+                        .onFailure { runCatching { app.startActivity(fallback) } }
+                }
                 error("Allow “Install unknown apps” for this panel, then upload again.")
             }
             val incoming = packageInfo(apkFile) ?: error("Not a valid APK")
