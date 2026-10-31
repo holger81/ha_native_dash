@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "1.0.307",
+      "date": "2026-10-31",
+      "notes": [
+        "Fixed: the 1.0.305 stream self-heal could reload a stalled camera stream without actually re-fetching it, so a stalled frontdoor stream stayed black forever — reloads now force a real stream restart.",
+        "When the camera popup opens on a person detection, the frontdoor stream is verified within a few seconds: if it is frozen, it restarts immediately instead of waiting up to 35 seconds for the background watchdog.",
+        "A camera frame that has not started playing now shows the loading spinner instead of a pure black rectangle."
+      ]
+    },
+    {
       "version": "1.0.305",
       "date": "2026-10-22",
       "notes": [

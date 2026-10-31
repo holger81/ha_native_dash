@@ -284,7 +284,9 @@ private fun LiveCameraSurface(
                 },
                 modifier = Modifier.fillMaxSize(),
             )
-        } else if (player == null && still == null) {
+        } else if (still == null && !live.videoReady) {
+            // Covers a player that exists but has not rendered a frame yet
+            // (cold start or forced re-prepare): honest feedback, not black.
             LoadingSpinner(color = ChipOnDark)
         }
         if (showOverlayTitle) CameraTitle(widget.name)

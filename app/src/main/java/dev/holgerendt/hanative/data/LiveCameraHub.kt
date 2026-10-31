@@ -111,8 +111,35 @@ class LiveCameraHub(
                     player.seekToDefaultPosition()
                     player.prepare()
                 }
+                return@runOnMain
             }
+            // The player claims live video: verify it. A warm stream can stall
+            // without ever erroring, and [sampleStall] needs up to a keepalive
+            // tick plus the stall window to notice — too slow for a popup that
+            // is open for seconds, not minutes.
+            armAttachProbe(session)
         }
+    }
+
+    /**
+     * Main-thread half of [markAttached]: if nothing decodes within
+     * [ATTACH_PROBE_MS] of the viewer attaching, force a real stream reload so
+     * the popup shows live video instead of a black frozen frame.
+     */
+    private fun armAttachProbe(session: Session) {
+        session.attachProbe?.let { mainHandler.removeCallbacks(it) }
+        val startPos = session.player?.currentPosition ?: -1L
+        val startBitmap = session.bitmap.value
+        val probe = Runnable {
+            session.attachProbe = null
+            if (session.attached.get() == 0 && !session.warm) return@Runnable
+            val player = session.player ?: return@Runnable
+            val advancing = player.isPlaying &&
+                (player.currentPosition > startPos || session.bitmap.value !== startBitmap)
+            if (!advancing) reloadSession(session)
+        }
+        session.attachProbe = probe
+        mainHandler.postDelayed(probe, ATTACH_PROBE_MS)
     }
 
     fun restorePlaceholder(target: CameraTarget) {
@@ -211,6 +238,14 @@ class LiveCameraHub(
         session.jpegJob = null
         session.job?.cancel()
         session.job = null
+        session.stalledSinceMs = 0L
+        session.lastPosSampleMs = -1L
+        session.lastBitmapSample = null
+        // The retry resolves the same stream URL; without this the same-item
+        // fast path in [playHls] would only flip playWhenReady and the stalled
+        // player would never re-fetch the playlist — the reload would be a
+        // no-op and a dead go2rtc source would keep the popup black forever.
+        session.forceReprepare = true
         startOne(session)
     }
 
@@ -261,6 +296,8 @@ class LiveCameraHub(
         session.job = null
         session.jpegJob = null
         runOnMain {
+            session.attachProbe?.let { mainHandler.removeCallbacks(it) }
+            session.attachProbe = null
             session.listener?.let { listener -> session.player?.removeListener(listener) }
             session.player?.release()
             session.placeholder?.release()
@@ -351,7 +388,8 @@ class LiveCameraHub(
             val state = player.playbackState
             // An errored player is terminal: playWhenReady alone won't
             // recover, so it always takes the re-prepare path.
-            val sameItem = player.currentMediaItem?.localConfiguration?.uri?.toString() == candidate.url &&
+            val sameItem = !session.forceReprepare &&
+                player.currentMediaItem?.localConfiguration?.uri?.toString() == candidate.url &&
                 state != Player.STATE_IDLE &&
                 state != Player.STATE_ENDED &&
                 !session.errored
@@ -360,7 +398,12 @@ class LiveCameraHub(
                 session.publish()
                 firstFrame.complete(Unit)
             } else {
+                session.forceReprepare = false
                 session.errored = false
+                // A re-prepare of a stalled stream must not keep advertising
+                // live video while the fresh playlist loads; the poster or the
+                // spinner is more honest than a frozen black frame.
+                session.videoReady.value = false
                 // Per-session factory: this stream's headers can't be clobbered
                 // by another session setting its own between here and load.
                 session.factory.setDefaultRequestProperties(candidate.headers)
@@ -489,6 +532,12 @@ class LiveCameraHub(
         @Volatile var lastBitmapSample: Bitmap? = null
         @Volatile var stalledSinceMs: Long = 0L
 
+        /** Set by [reloadSession] to make [playHls] skip the same-item fast path. */
+        @Volatile var forceReprepare: Boolean = false
+
+        /** Pending attach-progress probe; main thread only. */
+        var attachProbe: Runnable? = null
+
         val attached = AtomicInteger(0)
         @Volatile var warm: Boolean = false
         @Volatile var errored: Boolean = false
@@ -513,6 +562,13 @@ class LiveCameraHub(
 
         /** No decode progress for this long (and no fresh JPEG) → reload stream. */
         const val STALL_RELOAD_MS = 20_000L
+
+        /**
+         * How long an attached viewer tolerates a "ready" but frozen stream
+         * before the session is force-reloaded. Keep well under [STALL_RELOAD_MS]:
+         * a door-triggered popup is only open for tens of seconds.
+         */
+        const val ATTACH_PROBE_MS = 4_000L
 
         fun key(target: CameraTarget): String =
             target.entityId?.takeIf { it.isNotBlank() }
