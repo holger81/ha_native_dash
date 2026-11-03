@@ -2640,7 +2640,7 @@
                 "type": "camera",
                 "entity": "camera.reolink_video_doorbell_poe_fluent",
                 "name": "Front door",
-                "stream_server": "http://192.168.10.31:1984/",
+                "stream_server": "http://192.168.10.37:1984/",
                 "stream_name": "frontdoor_sub",
                 "camera_view": "live",
                 "muted": true,
@@ -2650,7 +2650,7 @@
                 "type": "camera",
                 "entity": "camera.garagefront_2",
                 "name": "Garage",
-                "stream_server": "http://192.168.10.31:1984/",
+                "stream_server": "http://192.168.10.37:1984/",
                 "stream_name": "garagefront_sub",
                 "camera_view": "live",
                 "muted": true,
@@ -2772,7 +2772,7 @@
           "type": "camera",
           "entity": "camera.gardennorth_2",
           "name": "Garden North",
-          "stream_server": "http://192.168.10.31:1984/",
+          "stream_server": "http://192.168.10.37:1984/",
           "stream_name": "gardennorth_sub",
           "muted": true
         },
@@ -2781,7 +2781,7 @@
           "type": "camera",
           "entity": "camera.gardensoutheast_2",
           "name": "Garden Southeast",
-          "stream_server": "http://192.168.10.31:1984/",
+          "stream_server": "http://192.168.10.37:1984/",
           "stream_name": "gardensoutheast_sub",
           "muted": true
         },
@@ -2790,7 +2790,7 @@
           "type": "camera",
           "entity": "camera.north_2",
           "name": "North",
-          "stream_server": "http://192.168.10.31:1984/",
+          "stream_server": "http://192.168.10.37:1984/",
           "stream_name": "north_sub",
           "muted": true
         }

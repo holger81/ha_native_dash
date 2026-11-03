@@ -1290,7 +1290,7 @@ private fun Go2rtcUrlCard(viewModel: HaViewModel) {
                 message = null
             },
             label = { Text("go2rtc base URL") },
-            placeholder = { Text("http://192.168.10.31:1984/") },
+            placeholder = { Text("http://192.168.10.37:1984/") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
             colors = fieldColors,

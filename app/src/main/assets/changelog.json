@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "1.0.309",
+      "date": "2026-11-03",
+      "notes": [
+        "Camera streams now point at the go2rtc server on the new Frigate host (192.168.10.37) — Frigate moved off the old box, so the baked 192.168.10.31:1984 addresses were dead and every live camera feed was black.",
+        "The go2rtc base URL in Settings now shows the current host as its placeholder."
+      ]
+    },
+    {
       "version": "1.0.308",
       "date": "2026-10-31",
       "notes": [

@@ -17,6 +17,20 @@ ENTITY_ATTR_RE = re.compile(
 MDI_RE = re.compile(r"mdi:[a-z0-9-]+")
 HASH_RE = re.compile(r"#[a-z0-9_]+")
 
+# go2rtc moved to the Frigate host (CT204 / 192.168.10.37) in 2026-11. The
+# source Lovelace YAML still carries the old host, so any :1984 server is
+# rewritten here; without this, a regeneration silently reverts the committed
+# asset to the dead address and breaks every live camera feed.
+GO2RTC_BASE = "http://192.168.10.37:1984/"
+GO2RTC_SERVER_RE = re.compile(r"^https?://[^/]+:1984/?$")
+
+
+def go2rtc_server(value):
+    """Pin a legacy go2rtc host from the source YAML to GO2RTC_BASE."""
+    if isinstance(value, str) and GO2RTC_SERVER_RE.match(value.strip()):
+        return GO2RTC_BASE
+    return value
+
 
 def load_yaml(path: Path) -> dict:
     with path.open() as f:
@@ -353,7 +367,7 @@ def convert_card(card, context: str = "") -> dict | list | None:
             "type": "camera",
             "entity": poster,
             "name": card.get("title") or card.get("name"),
-            "stream_server": card.get("server"),
+            "stream_server": go2rtc_server(card.get("server")),
             "stream_name": stream if isinstance(stream, str) and not stream.startswith("http") else None,
             "camera_view": "live",
             "muted": card.get("muted", True),
